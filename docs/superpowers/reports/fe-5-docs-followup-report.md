@@ -4,7 +4,7 @@ Outcome: done
 
 Worker W-174, branch `hq/fe-5-docs-followup`, base `origin/main` `6f0a3514`.
 
-PR: PR_URL_PENDING
+PR: https://github.com/AlobarQuest/orchestrator/pull/717
 
 ## What I built
 
@@ -58,7 +58,11 @@ registry content, outside this handoff's notes-only scope; HQ decides where it g
 - Registry-reading suites (`tests/rotation_worker`, `tests/rotation_proposer`,
   `tests/rotation_decomposer`, `tests/membership_check`), before the claim corrections:
   2,235 passed.
-- `make check` on the committed, clean tree: MAKE_CHECK_PENDING
+- `make check` on the committed, clean tree (`2c3da7d1`): exit 0. Ruff and pyright are clean, and
+  pytest collected 15,002 items (10 workers): 15,001 passed, 1 skipped.
+- `/code-review`: not run. The diff is docs and TOML notes only (repo `CLAUDE.md` lets trivial
+  changes skip it). I reviewed the diff by hand and through an advisor pass, which led to the
+  claim corrections in "Self-review".
 
 Test database: `orchestrator_test_hq_w_174`.
 
