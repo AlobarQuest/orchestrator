@@ -29,7 +29,7 @@ at `cb372bf3`, commit `a0c73111`). Not merged, released, or deployed: HQ owns th
 ## Item 2: who still reads the old secret
 
 Nothing in this repository reads `bbd71f41-…` after the change. A grep of `src/`, `scripts/`,
-`lanes/`, `docs/operations/`, `layers.toml`, and every `CLAUDE.md` finds it only in the two
+`lanes/`, `docs/operations/`, `docs/decisions/`, `layers.toml`, and every `CLAUDE.md` finds it only in the two
 manifests and the rows test. The deployed orchestrator doesn't read it (the only
 `REVISION_WATCHER_PLATFORM_TOKEN` reader is `src/revision_watcher/cli.py`, fed by this launcher).
 The estate lander uses its own Coolify token (`f9f59233-…`).
@@ -48,6 +48,10 @@ followed:
   old UUID in `lanes`.
 - `test_the_repositorys_manifest_lists_the_watchers_secrets` requires the launcher to name every
   `lanes` UUID, which the launcher no longer does for the old one.
+
+The declared reach is read only at bind time: `build_provider` in `adapters/bws_lane_token.py`
+turns it into `reach_digest`, and nothing in `src/rotation_proposer` or the package content reads
+`reach_secrets`. So merging this changes no derived plan or package revision for the due row.
 
 `reach_secrets` must name exactly what the account sees: `bws_lane_token`'s bind refuses a token
 whose reach isn't exactly the declared set (`adapters/bws_lane_token.py` ~205). `lanes` means
@@ -102,7 +106,7 @@ These records are from June to September 2026, outside this repository, and not 
 - Security scanner from the repo root: 0 BLOCK, 2 WARN. One is `bws.secret-files-gitignored`.
   The other is `bws.manifest-matches-usage` for an undeclared `aaff45ca-…`, which isn't in this
   diff. Neither old nor new UUID is flagged.
-- `/code-review` (low) on `main...HEAD`: no findings.
+- `/code-review` (low) on `main...HEAD`: the skill returned an empty result (`(none)`), with no findings listed.
 - CI on PR #712: green (see the final section).
 
 ## Files changed
