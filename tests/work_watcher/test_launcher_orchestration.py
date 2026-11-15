@@ -99,9 +99,14 @@ def _run(tree: Path, *args: str, watcher: int = 0, carrier: int = 0, **env_overr
     _stub(tree, "work-watcher", watcher)
     _stub(tree, "work-carrier", carrier)
     log = tree / "invocations.log"
+    # An empty home, so nothing in the real one reaches the script: its activation helper, a
+    # factory-events switch file (`~/.factory/chain-db.env`), or `gh`'s login.
+    home = tree / "home"
+    home.mkdir(exist_ok=True)
     env = {
         **os.environ,
         **CREDENTIALS,
+        "HOME": str(home),
         # An acting pass creates this; never the real home's.
         "WORK_WATCHER_STATE_DIR": str(tree / "alert-state"),
         "PATH": _no_bws(tree),
