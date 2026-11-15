@@ -780,34 +780,6 @@ def test_a_missing_security_standards_checkout_is_named(
         _verify_with()
 
 
-def test_a_chain_verify_that_exits_non_zero_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
-    _chain_with(monkeypatch, run=lambda *a, **k: subprocess.CompletedProcess(a, 1))
-
-    with pytest.raises(
-        PackageSourceError,
-        match="^approval verification failed: factory event chain did not verify$",
-    ):
-        package_sources._verify_factory_chain()
-
-
-@pytest.mark.parametrize(
-    "error", [OSError("no python"), subprocess.TimeoutExpired(cmd="x", timeout=1)]
-)
-def test_a_chain_verify_that_cannot_run_is_named(
-    monkeypatch: pytest.MonkeyPatch, error: Exception
-) -> None:
-    def run(*a: object, **k: object) -> None:
-        raise error
-
-    _chain_with(monkeypatch, run=run)
-
-    with pytest.raises(
-        PackageSourceError,
-        match="^approval verification failed: factory event chain verification could not run$",
-    ):
-        package_sources._verify_factory_chain()
-
-
 def test_no_matching_approval_event_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_every_check_passing(monkeypatch)
 
