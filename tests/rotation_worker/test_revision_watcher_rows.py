@@ -35,12 +35,9 @@ OTHER_LANE_TOKENS = (
 )
 LANE = "revision-watcher"
 LAUNCHER = "scripts/run-revision-watcher.sh"
-# The write-capable Coolify token the launcher read until G-62. The lane's account keeps its direct
-# grant until a later gate removes it, so the row's reach still names it, though no lane reads it.
-STILL_GRANTED = frozenset({"bbd71f41-b7df-4ae9-8fdb-b41501447308"})  # prod-coolify-api-token
-# The secrets Devon granted the lane's account a direct read on: six at HQ gate G-30, and the
-# read-only Coolify token at G-62.
-GRANTED = STILL_GRANTED | frozenset(
+# The secrets the lane's account has a direct read on: six granted at HQ gate G-30, and the
+# read-only Coolify token at G-62. The write-capable Coolify token's grant was removed at G-64.
+GRANTED = frozenset(
     {
         "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
         "0bf066e9-28c1-4aa7-8c3d-b50300d492a6",  # prod-coolify-read-token
@@ -90,17 +87,8 @@ def test_the_token_row_declares_the_lane_s_manifest_secrets_and_its_ping_url_kee
     projects, secrets = bws_lane_token.declared_reach(rows[TOKEN].credential)
     assert projects == frozenset()
     assert ping_keeper in _lane_secrets()
-    assert secrets == _lane_secrets() | STILL_GRANTED
+    assert secrets == _lane_secrets()
     assert secrets == GRANTED
-
-
-def test_a_secret_still_granted_is_neither_a_lane_secret_nor_read_by_the_launcher() -> None:
-    """The exception above names only grants the lane no longer uses: once the launcher reads one
-    again, it belongs in `lanes`, and once its grant is removed it leaves `reach_secrets`."""
-    launcher = (ROOT / LAUNCHER).read_text()
-    for uuid in STILL_GRANTED:
-        assert uuid not in _lane_secrets()
-        assert uuid not in launcher
 
 
 @pytest.mark.parametrize("other", OTHER_LANE_TOKENS)
