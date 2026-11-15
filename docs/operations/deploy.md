@@ -287,11 +287,10 @@ run of its lane is `unfinished`.
 `lanes-finish` checks the digest, the schedule, and the volume (and, for an `--add` or a
 `--token`, that a token is present), never which secrets the lane's launcher reads. So a change
 that alters the lane's BWS reads, such as a `--tag` to a release whose launcher reads a new UUID,
-isn't verified when `lanes-finish` passes. Before you call it verified, prove the new reads in the
-container: `lane-run --read <uuid>...` over the new UUIDs, or, for a lane whose crontab line has
-no flag, one pass (`lane-run <lane>`). A lane whose crontab line has a flag (`--submit`) takes its
-full-pass proof from its next scheduled pass, because a hand pass with the flag acts and one
-without it isn't the scheduled pass.
+isn't verified when `lanes-finish` passes. Before you call it verified, for a lane whose crontab
+line has no flag, run one pass (`lane-run <lane>`) or `lane-run --read <uuid>...` over the new
+UUIDs in the container. Verify a lane whose crontab line has a flag (`--submit`) from its next
+scheduled pass.
 
 ### Before a lane token's revoke
 
