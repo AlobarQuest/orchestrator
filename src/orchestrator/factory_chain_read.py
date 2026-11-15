@@ -18,7 +18,7 @@ an error's type, never the password or a driver's text, which can repeat connect
 `ChainError`: the caller never relays the child's stderr, and the record carries types only.
 
 The module imports psycopg and `factory_events` lazily: `factory_events` lives in another
-repository, and the caller's interpreter loads neither for the file chain.
+repository, and the caller's interpreter loads neither itself.
 """
 
 from __future__ import annotations

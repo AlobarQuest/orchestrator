@@ -2,10 +2,11 @@
 
 With `FACTORY_EVENTS_READ_PASSWORD` set, `package_sources` verifies the chain and reads its
 `package.approved` events in one snapshot, through `orchestrator.factory_chain_read`, and refuses
-on anything else; the file is never read. With only the append password set it refuses, and a set
-retired whole-DSN variable refuses by name (ADR-0055 amendment 26). With none set, the file chain
-answers as before. No test here reaches a database: the walk against a real one is
-in `test_package_chain_database_integration.py`, run by `scripts/check-integration.sh`.
+on anything else. With only the append password set it refuses, and a set retired whole-DSN
+variable refuses by name (ADR-0055 amendment 26). With no read password the read refuses by name:
+the database is the chain of record, and no events file is read (FE-5). No test here reaches a
+database: the walk against a real one is in `test_package_chain_database_integration.py`, run by
+`scripts/check-integration.sh`.
 """
 
 from __future__ import annotations
@@ -54,7 +55,6 @@ _APPROVAL = {"approver": "devon", "commit": "c1", "event_id": "evt-1"}
 def _no_chain_variable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for name in CHAIN_VARS:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path / "factory"))
     monkeypatch.setattr(package_sources, "_is_recognised_approver", lambda approver: True)
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
     monkeypatch.setattr(package_sources, "_security_standards_dir", lambda: tmp_path / "sec")
@@ -85,18 +85,11 @@ def _verify() -> VerifiedApproval:
     return package_sources._verify_current_approval(Path("."), "pkg-1", "h1", 1, _APPROVAL)
 
 
-def _file_holds_the_match(tmp_path: Path) -> None:
-    home = tmp_path / "factory"
-    home.mkdir()
-    (home / "events.jsonl").write_text(json.dumps({"event": _EVENT}) + "\n", encoding="utf-8")
-
-
-def _forbid_the_file_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+def _forbid_the_file_verify(monkeypatch: pytest.MonkeyPatch) -> None:
     def forbidden(*args: object) -> None:
-        raise AssertionError("the file chain was consulted")
+        raise AssertionError("`factory_events verify` was run")
 
     monkeypatch.setattr(package_sources, "_verify_factory_chain", forbidden)
-    monkeypatch.setattr(package_sources, "_iter_package_approval_events", forbidden)
 
 
 def _child(
@@ -121,7 +114,7 @@ def _record(outcome: str, **fields: object) -> str:
 
 def test_a_verified_walk_holding_the_approval_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
     _read_chain(monkeypatch)
-    _forbid_the_file_chain(monkeypatch)
+    _forbid_the_file_verify(monkeypatch)
     calls = _child(monkeypatch, returncode=0, stdout=_record("verified", package_approved=[_EVENT]))
 
     assert _verify() == VerifiedApproval("devon", "2026-07-05T00:02:00Z", "evt-1", "c1")
@@ -133,10 +126,7 @@ def test_a_verified_walk_holding_the_approval_verifies(monkeypatch: pytest.Monke
     assert call["capture_output"] is True
 
 
-def test_a_verified_walk_without_the_approval_refuses_even_when_the_file_holds_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    _file_holds_the_match(tmp_path)
+def test_a_verified_walk_without_the_approval_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
     _read_chain(monkeypatch)
     _child(monkeypatch, returncode=0, stdout=_record("verified", package_approved=[]))
 
@@ -167,13 +157,11 @@ def test_a_verified_walk_without_the_approval_refuses_even_when_the_file_holds_i
 )
 def test_anything_but_a_verified_walk_refuses(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
     capfd: pytest.CaptureFixture[str],
     returncode: int,
     stdout: str,
     cause: str,
 ) -> None:
-    _file_holds_the_match(tmp_path)
     _read_chain(monkeypatch)
     _child(monkeypatch, returncode=returncode, stdout=stdout, stderr=f"driver said {SECRET}")
 
@@ -204,7 +192,7 @@ def test_a_read_that_cannot_run_refuses_with_its_cause_chained(
     monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
     _read_chain(monkeypatch)
-    _forbid_the_file_chain(monkeypatch)
+    _forbid_the_file_verify(monkeypatch)
 
     def run(*args: object, **kwargs: object) -> None:
         raise error
@@ -264,7 +252,7 @@ def test_an_unreachable_database_refuses_through_the_real_child_without_the_pass
     (store / "store.py").write_text("def walk_records(records):\n    raise SystemExit(9)\n")
     (store / "chain.py").write_text(_CHAIN_STUB, encoding="utf-8")
     _read_chain(monkeypatch)
-    _forbid_the_file_chain(monkeypatch)
+    _forbid_the_file_verify(monkeypatch)
 
     with pytest.raises(
         PackageSourceError, match=r"could not be read \(OperationalError\)$"
@@ -276,20 +264,19 @@ def test_an_unreachable_database_refuses_through_the_real_child_without_the_pass
     assert SECRET not in str(info.value)
 
 
-# ---- Append password only: refuse rather than verify one chain and match another ---------------
+# ---- Append password only: the append role can't read the chain --------------------------------
 
 
-def test_the_append_password_alone_refuses_without_reading_the_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+def test_the_append_password_alone_refuses_without_reading_the_chain(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    _file_holds_the_match(tmp_path)
     monkeypatch.setenv("FACTORY_EVENTS_APPEND_PASSWORD", SECRET)
     for name, value in SETTINGS.items():
         monkeypatch.setenv(name, value)
-    _forbid_the_file_chain(monkeypatch)
+    _forbid_the_file_verify(monkeypatch)
     calls = _child(monkeypatch, returncode=0, stdout="")
 
-    with pytest.raises(PackageSourceError, match="refusing to read the file chain$") as info:
+    with pytest.raises(PackageSourceError, match="the append role can't read the chain$") as info:
         _verify()
     assert SECRET not in str(info.value)
     assert SECRET not in _streams(capfd)
@@ -300,19 +287,17 @@ def test_the_append_password_alone_refuses_without_reading_the_file(
 
 
 @pytest.mark.parametrize("retired", RETIRED)
-@pytest.mark.parametrize("password", [None, "FACTORY_EVENTS_READ_PASSWORD"], ids=["file", "read"])
+@pytest.mark.parametrize("password", [None, "FACTORY_EVENTS_READ_PASSWORD"], ids=["unset", "read"])
 def test_a_set_retired_variable_refuses_by_name_without_reading_either_chain(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
     capfd: pytest.CaptureFixture[str],
     retired: str,
     password: str | None,
 ) -> None:
-    _file_holds_the_match(tmp_path)
     if password:
         _read_chain(monkeypatch)
     monkeypatch.setenv(retired, f"postgresql://factory_events_read:{SECRET}@127.0.0.1:1/x")
-    _forbid_the_file_chain(monkeypatch)
+    _forbid_the_file_verify(monkeypatch)
     calls = _child(monkeypatch, returncode=0, stdout="")
 
     with pytest.raises(PackageSourceError, match=f"{retired} is retired") as info:
@@ -322,36 +307,33 @@ def test_a_set_retired_variable_refuses_by_name_without_reading_either_chain(
     assert calls == []
 
 
-# ---- No chain variable set: the file chain, as before ------------------------------------------
+# ---- No read password: refused by name, and neither chain is read ------------------------------
+
+_UNSET_REFUSAL = (
+    "^approval verification failed: FACTORY_EVENTS_READ_PASSWORD is unset: "
+    "the factory-events database is the chain$"
+)
 
 
-def test_with_no_password_the_file_chain_answers_and_the_database_is_never_read(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_with_no_read_password_the_read_refuses_by_name_and_reads_neither_chain(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _file_holds_the_match(tmp_path)
-    verified_file: list[bool] = []
-    monkeypatch.setattr(
-        package_sources, "_verify_factory_chain", lambda: verified_file.append(True)
-    )
+    _forbid_the_file_verify(monkeypatch)
+    calls = _child(monkeypatch, returncode=0, stdout="")
 
-    def no_database() -> None:
-        raise AssertionError("the database chain was read")
-
-    monkeypatch.setattr(package_sources, "_database_package_approval_events", no_database)
-
-    assert _verify() == VerifiedApproval("devon", "2026-07-05T00:02:00Z", "evt-1", "c1")
-    assert verified_file == [True]
+    with pytest.raises(PackageSourceError, match=_UNSET_REFUSAL):
+        _verify()
+    assert calls == []
 
 
 @pytest.mark.parametrize("name", ["FACTORY_EVENTS_READ_PASSWORD", *RETIRED])
-def test_an_empty_chain_variable_is_unset(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
-) -> None:
-    _file_holds_the_match(tmp_path)
+def test_an_empty_chain_variable_is_unset(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setenv(name, "")
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
+    calls = _child(monkeypatch, returncode=0, stdout="")
 
-    assert _verify().approval_event_id == "evt-1"
+    with pytest.raises(PackageSourceError, match=_UNSET_REFUSAL):
+        _verify()
+    assert calls == []
 
 
 # ---- The child: one snapshot, one record, never the password ---------------------------------
@@ -574,7 +556,7 @@ def test_emit_intake_payload_under_the_read_password_prints_only_the_payload(
 ) -> None:
     _read_chain(monkeypatch)
     monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
-    _forbid_the_file_chain(monkeypatch)
+    _forbid_the_file_verify(monkeypatch)
     record = _record("verified", seq=9, head="abc", package_approved=[_FIXTURE_EVENT])
     _child(monkeypatch, returncode=0, stdout=record)
 
@@ -591,7 +573,7 @@ def test_emit_intake_payload_under_the_read_password_refuses_without_the_passwor
 ) -> None:
     _read_chain(monkeypatch)
     monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
-    _forbid_the_file_chain(monkeypatch)
+    _forbid_the_file_verify(monkeypatch)
     _child(
         monkeypatch,
         returncode=2,
@@ -605,3 +587,37 @@ def test_emit_intake_payload_under_the_read_password_refuses_without_the_passwor
     assert "could not be read (OperationalError)" in result.stdout + result.stderr
     assert SECRET not in result.stdout + result.stderr
     assert '"outcome"' not in result.stdout  # the child's record is never relayed
+
+
+def test_emit_intake_payload_with_no_chain_variable_refuses_and_opens_no_events_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """FE-3's deferred refusal: with no read password, intake refuses by name.
+
+    The scratch home holds a well-formed events file with the matching approval, and the file
+    chain's verify is stubbed to pass, so the base's file path would emit the payload.
+    """
+    home = tmp_path / "factory-home"
+    home.mkdir()
+    events_file = home / "events.jsonl"
+    events_file.write_text(json.dumps({"event": _FIXTURE_EVENT}) + "\n", encoding="utf-8")
+    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(home))
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
+    calls = _child(monkeypatch, returncode=0, stdout="")
+    opened: list[Path] = []
+    real_open = Path.open
+
+    def recording_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        opened.append(self.resolve())
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", recording_open)
+
+    result = _emit_intake_payload()
+
+    assert result.exit_code != 0
+    assert "FACTORY_EVENTS_READ_PASSWORD" in result.stdout + result.stderr
+    assert '"package_id"' not in result.stdout
+    assert events_file.resolve() not in opened
+    assert calls == []

@@ -177,9 +177,9 @@ def _emit(action: str, evidence: dict[str, Any], **env: str) -> str:
     return result.stdout.strip().splitlines()[-1]
 
 
-def _approve(chain_db: ChainDb | None, evidence: dict[str, Any] = EVIDENCE) -> str:
-    """Append through FE-1's real `emit`: to the database under the append role, else the file."""
-    env = chain_db.append_env() if chain_db else {}
+def _approve(chain_db: ChainDb, evidence: dict[str, Any] = EVIDENCE) -> str:
+    """Append through FE-1's real `emit`, to the database under the append role."""
+    env = chain_db.append_env()
     _emit("package.transitioned", {"to": "ready_for_review"}, **env)
     return _emit("package.approved", evidence, **env)
 
@@ -263,25 +263,28 @@ def test_a_refused_role_refuses_without_the_password(
     assert ROLE_PASSWORD not in _refusal_text(info, capfd)
 
 
-def test_the_read_password_set_never_reads_the_file_that_holds_the_match(
+def test_the_file_that_holds_the_match_is_never_read_with_or_without_the_read_password(
     monkeypatch: pytest.MonkeyPatch, chain_db: ChainDb, tmp_path: Path
 ) -> None:
-    event_id = _approve(None)  # FE-1's real file append: the file holds the approval
-    assert (tmp_path / "factory" / "events.jsonl").is_file()
-    assert _verify(event_id).approval_event_id == event_id  # no password set: the file answers
+    """Planted by hand, not by FE-1's `emit`, which writes no file once R-SS lands."""
+    event = {
+        "action": "package.approved",
+        "event_id": "evt-file",
+        "timestamp": "2026-07-05T00:02:00Z",
+        "source": {"ref": "pkg-1"},
+        "evidence": [EVIDENCE],
+    }
+    (tmp_path / "factory").mkdir()
+    (tmp_path / "factory" / "events.jsonl").write_text(
+        json.dumps({"event": event}) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(PackageSourceError, match="FACTORY_EVENTS_READ_PASSWORD is unset"):
+        _verify("evt-file")
 
     _read_chain(monkeypatch, chain_db)
     with pytest.raises(PackageSourceError, match="no matching package.approved event"):
-        _verify(event_id)
-
-
-def test_with_no_password_the_file_chain_verifies_as_before(tmp_path: Path) -> None:
-    event_id = _approve(None)
-
-    assert _verify(event_id).approval_event_id == event_id
-    (tmp_path / "factory" / "events.jsonl").write_text("not a chain\n", encoding="utf-8")
-    with pytest.raises(PackageSourceError, match="factory event chain did not verify$"):
-        _verify(event_id)
+        _verify("evt-file")
 
 
 @pytest.mark.parametrize(

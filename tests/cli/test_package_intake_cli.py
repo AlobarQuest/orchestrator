@@ -26,6 +26,28 @@ def _verified_approval() -> VerifiedApproval:
     )
 
 
+_FIXTURE_EVENT: dict[str, object] = {
+    "action": "package.approved",
+    "event_id": "22222222-2222-2222-2222-222222222222",
+    "timestamp": "2026-07-05T00:02:00Z",
+    "source": {"ref": "ws32-approved-software"},
+    "evidence": [
+        {
+            "approved_hash": "bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2",
+            "revision": 1,
+            "approver": "devon",
+            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }
+    ],
+}
+
+
+def _database_holds(monkeypatch: pytest.MonkeyPatch, events: list[dict[str, object]]) -> None:
+    """The read password set, and the database chain's verified read answering with `events`."""
+    monkeypatch.setenv("FACTORY_EVENTS_READ_PASSWORD", "placeholder-read-password")
+    monkeypatch.setattr(package_sources, "_database_package_approval_events", lambda: events)
+
+
 def test_the_payload_carries_the_change_record_when_one_caused_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -333,49 +355,31 @@ def test_protocol_fixture_reader_accepts_closed_package(
 
 
 def test_package_source_reader_requires_cli_verifier_for_cli_verified_mode(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: None)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
+    _database_holds(monkeypatch, [_FIXTURE_EVENT])
 
-    events_file = tmp_path / "events.jsonl"
-    events_file.write_text(
-        '{"event":{"action":"package.approved","event_id":"22222222-2222-2222-2222-222222222222",'
-        '"timestamp":"2026-07-05T00:02:00Z","source":{"ref":"ws32-approved-software"},'
-        '"evidence":[{"approved_hash":"bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2",'
-        '"revision":1,"approver":"devon","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}\n',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(PackageSourceError, match="approval verification failed"):
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: intent-packages checkout is unavailable$",
+    ):
         load_package_intake_payload(
             Path("tests/fixtures/intent-packages/ws32-approved-software"),
             source_repository="AlobarQuest/intent-packages",
         )
 
 
-def test_package_source_reader_rejects_false_cli_verifier(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
+def test_package_source_reader_rejects_false_cli_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: False)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
+    _database_holds(monkeypatch, [_FIXTURE_EVENT])
 
-    events_file = tmp_path / "events.jsonl"
-    events_file.write_text(
-        '{"event":{"action":"package.approved","event_id":"22222222-2222-2222-2222-222222222222",'
-        '"timestamp":"2026-07-05T00:02:00Z","source":{"ref":"ws32-approved-software"},'
-        '"evidence":[{"approved_hash":"bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2",'
-        '"revision":1,"approver":"devon","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}\n',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(PackageSourceError, match="approval verification failed"):
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: intent-packages verify-approval failed$",
+    ):
         load_package_intake_payload(
             Path("tests/fixtures/intent-packages/ws32-approved-software"),
             source_repository="AlobarQuest/intent-packages",
@@ -558,19 +562,9 @@ def test_package_source_reader_exact_event_verification_rejects_forged_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
-
-    events_file = tmp_path / "events.jsonl"
-    events_file.write_text(
-        '{"event":{"action":"package.approved","event_id":"evt-real",'
-        '"timestamp":"2026-07-05T00:02:00Z","source":{"ref":"ws32-approved-software"},'
-        '"evidence":[{"approved_hash":"bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2",'
-        '"revision":1,"approver":"devon","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}\n',
-        encoding="utf-8",
-    )
+    _database_holds(monkeypatch, [{**_FIXTURE_EVENT, "event_id": "evt-real"}])
 
     package_dir = tmp_path / "ws32-approved-software"
     shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
@@ -583,7 +577,10 @@ def test_package_source_reader_exact_event_verification_rejects_forged_metadata(
         encoding="utf-8",
     )
 
-    with pytest.raises(PackageSourceError, match="approval verification failed"):
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: no matching package.approved event$",
+    ):
         load_package_intake_payload(
             package_dir,
             source_repository="AlobarQuest/intent-packages",
@@ -703,8 +700,7 @@ _GOOD_APPROVAL = {"approver": "devon", "commit": "abc123", "event_id": "evt-1"}
 def _stub_every_check_passing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(package_sources, "_is_recognised_approver", lambda approver: True)
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
-    monkeypatch.setattr(package_sources, "_iter_package_approval_events", lambda: [])
+    _database_holds(monkeypatch, [])
 
 
 def _verify_with(
@@ -774,6 +770,7 @@ def test_a_missing_security_standards_checkout_is_named(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _chain_with(monkeypatch, run=None)
+    monkeypatch.setenv("FACTORY_EVENTS_READ_PASSWORD", "placeholder-read-password")
     monkeypatch.setattr(package_sources, "_security_standards_dir", lambda: None)
 
     with pytest.raises(
@@ -790,7 +787,7 @@ def test_a_chain_verify_that_exits_non_zero_is_named(monkeypatch: pytest.MonkeyP
         PackageSourceError,
         match="^approval verification failed: factory event chain did not verify$",
     ):
-        _verify_with()
+        package_sources._verify_factory_chain()
 
 
 @pytest.mark.parametrize(
@@ -808,18 +805,7 @@ def test_a_chain_verify_that_cannot_run_is_named(
         PackageSourceError,
         match="^approval verification failed: factory event chain verification could not run$",
     ):
-        _verify_with()
-
-
-def test_an_unreadable_event_log_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_every_check_passing(monkeypatch)
-    monkeypatch.setattr(package_sources, "_iter_package_approval_events", lambda: None)
-
-    with pytest.raises(
-        PackageSourceError,
-        match="^approval verification failed: factory event log is unreadable$",
-    ):
-        _verify_with()
+        package_sources._verify_factory_chain()
 
 
 def test_no_matching_approval_event_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -843,9 +829,7 @@ _EVENT = {
 }
 
 
-def _verify_event_log() -> VerifiedApproval:
-    events = package_sources._iter_package_approval_events()
-    assert events is not None
+def _verify_events(events: list[dict[str, object]]) -> VerifiedApproval:
     return package_sources._verified_approval_from_events(
         events,
         package_id="pkg-1",
@@ -865,19 +849,8 @@ def _evidence_with(**changes: object) -> list[dict[str, object]]:
     return [{**_EVENT["evidence"][0], **changes}]
 
 
-def _log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, events: list[object]) -> None:
-    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
-    (tmp_path / "events.jsonl").write_text(
-        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
-    )
-
-
-def test_an_event_carrying_every_claimed_field_verifies(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _log(tmp_path, monkeypatch, [{"event": _EVENT}])
-
-    verified = _verify_event_log()
+def test_an_event_carrying_every_claimed_field_verifies() -> None:
+    verified = _verify_events([_EVENT])
 
     assert verified == VerifiedApproval("devon", "2026-07-05T00:02:00Z", "evt-1", "c1")
 
@@ -896,7 +869,6 @@ def test_an_event_carrying_every_claimed_field_verifies(
         _event_with(evidence=None),
         _event_with(timestamp=""),
         _event_with(timestamp=None),
-        _event_with(action="package.rejected"),
     ],
     ids=[
         "event-id",
@@ -910,16 +882,11 @@ def test_an_event_carrying_every_claimed_field_verifies(
         "evidence-null",
         "timestamp-empty",
         "timestamp-null",
-        "other-action",
     ],
 )
-def test_an_event_deviating_in_one_field_does_not_verify(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event: dict[str, object]
-) -> None:
-    _log(tmp_path, monkeypatch, [{"event": event}])
-
+def test_an_event_deviating_in_one_field_does_not_verify(event: dict[str, object]) -> None:
     with pytest.raises(PackageSourceError, match="no matching package.approved event"):
-        _verify_event_log()
+        _verify_events([event])
 
 
 def test_evidence_that_is_not_a_list_matches_nothing() -> None:
@@ -930,18 +897,6 @@ def test_evidence_that_is_not_a_list_matches_nothing() -> None:
         approver="devon",
         commit="c1",
     )
-
-
-def test_the_log_skips_other_actions_and_blank_or_broken_lines(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _log(tmp_path, monkeypatch, [{"event": _event_with(action="package.proposed")}, _EVENT])
-    with (tmp_path / "events.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write("\n not json\n")
-
-    events = package_sources._iter_package_approval_events()
-
-    assert events == [_EVENT]
 
 
 # ---- The sibling CLI's answer, and who counts as an approver ------------------------------------

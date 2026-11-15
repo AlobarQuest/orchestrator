@@ -225,11 +225,6 @@ def _security_standards_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-def _factory_events_file() -> Path:
-    home = Path(os.environ.get("FACTORY_EVENTS_HOME", str(Path.home() / ".factory")))
-    return home / "events.jsonl"
-
-
 def _security_standards_env() -> dict[str, str]:
     sec_std_dir = _security_standards_dir()
     if sec_std_dir is None:
@@ -278,29 +273,6 @@ def _matching_event_evidence(
         and item.get("commit") == commit
         for item in evidence
     )
-
-
-def _iter_package_approval_events() -> list[dict[str, Any]] | None:
-    events_file = _factory_events_file()
-    if not events_file.is_file():
-        return None
-    try:
-        text = events_file.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    events: list[dict[str, Any]] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        event = obj.get("event", obj)
-        if isinstance(event, dict) and event.get("action") == "package.approved":
-            events.append(event)
-    return events
 
 
 def _database_package_approval_events() -> list[dict[str, Any]]:
@@ -355,14 +327,13 @@ def _database_refusal_cause(record: Mapping[str, Any]) -> str:
 
 
 def _verified_package_approval_events() -> list[dict[str, Any]]:
-    """The verified chain's `package.approved` events: the database's, else the file's.
+    """The verified database chain's `package.approved` events.
 
-    With the read password set, only the database is read, and any error refuses: there is no
-    file fallback (ADR-0055 amendment 24 items 8 and 10). With only the append password set,
-    FE-1's `factory_events verify` would verify the database while the events came from the file,
-    so the read refuses rather than match one chain against another's verify. A set retired
-    whole-DSN variable refuses by name rather than fall to the file without a word (amendment 26
-    item 5). With none of these set, the file chain answers as it always has.
+    The chain of record is the factory-events database (ADR-0059 amendment 7 act 5), read only
+    under the read password, and any error refuses (ADR-0055 amendment 24 items 8 and 10). The
+    append role can't read the chain, so the append password alone refuses. A set retired
+    whole-DSN variable refuses by name (amendment 26 item 5). With no read password, the read
+    refuses by name: there is no file chain to fall back to.
     """
     # FE-1's chain variables (security-standards `factory_events.chain`), spelled as literals so
     # `test_intent_edges` reads them. No value is ever logged or put in a message.
@@ -381,13 +352,11 @@ def _verified_package_approval_events() -> list[dict[str, Any]]:
     if os.environ.get("FACTORY_EVENTS_APPEND_PASSWORD"):
         raise _approval_refused(
             "FACTORY_EVENTS_APPEND_PASSWORD is set but FACTORY_EVENTS_READ_PASSWORD isn't: "
-            "refusing to read the file chain"
+            "the append role can't read the chain"
         )
-    _verify_factory_chain()
-    events = _iter_package_approval_events()
-    if events is None:
-        raise _approval_refused("factory event log is unreadable")
-    return events
+    raise _approval_refused(
+        "FACTORY_EVENTS_READ_PASSWORD is unset: the factory-events database is the chain"
+    )
 
 
 def _approval_event_to_verified(
