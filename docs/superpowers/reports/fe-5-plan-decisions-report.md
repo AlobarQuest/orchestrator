@@ -5,6 +5,9 @@ Outcome: done
 Handoff: `sds-hq/state/handoffs/fe-5-plan-decisions.md`. Worker W-162. Branch
 `hq/fe-5-plan-decisions`, base `origin/main` `7b486715`. PR #706 (open, not merged). Docs only.
 
+Superseded in part: D-53 C (ADR-0055 amendment 28, 2026-11-14) withdraws the `fe-5-chain-reset`
+act this report describes. A post-import rollback ends FE-5 until a new amendment plans the next try.
+
 ## What I built
 
 ### The plan (`docs/superpowers/plans/2026-11-14-fe-5-cutover.md`)

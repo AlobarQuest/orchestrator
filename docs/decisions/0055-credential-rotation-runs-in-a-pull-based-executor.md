@@ -3375,7 +3375,8 @@ its own.
    - **Read-only role.** `SELECT` on the chain table, nothing else.
    - **The owner.** The resource's own superuser, kept in Coolify. Nothing holds it at run time.
      It's used only in the announced acts that set up the schema and the two roles (ADR-0059
-     amendment 7, step FE-4). Amendment 27 names one more, for an FE-5 import retry only (D-51 A).
+     amendment 7, step FE-4). Amendment 27 names one more, for an FE-5 import retry only (D-51 A);
+     amendment 28 withdraws it (D-53 C).
 4. **Who appends, through what.** A new `factory_events` append function writes one event under
    the append-only role. Its holders are exactly these (D-43 B):
    - **Devon's `approve`**, on the Mac.
@@ -3540,7 +3541,7 @@ Each item names the step that settles it.
   neither covers the import. Devon names who runs it and under which role, before act 5's
   import step runs; until he has, act 5 stops before the import. His decision settles how it
   stands with items 3 and 4; this amendment doesn't. Amendment 27 names the owner act a retry of
-  the import needs (D-51 A).
+  the import needs (D-51 A); amendment 28 withdraws it, and there is no post-import retry (D-53 C).
 - **`emit`'s stdout (FE-1).** Item 13's JSON logs and `emit`'s event id share stdout.
   `_parse_event_id`'s contract: the first stdout line that parses as a JSON object with an
   `event_id` key, if any, must carry the emitted id (lines 52-58); if no line does, the emitted id
@@ -3926,7 +3927,8 @@ an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.
    4). D-51 A names the session only for the re-import; who runs the drop and the setup is open
    (the next section). HQ announces the act. security-standards PR #94 (`237e422`) proves the setup re-runs
    cleanly on a populated schema in a test database. The FE-5 plan's "Reset the chain before a
-   retry" section holds its steps.
+   retry" section held its steps. Amendment 28 (D-53 C) withdraws the act, and the plan's "No retry
+   after the import" section replaces that section.
 2. **The cycle's guard reads under the append role (D-50 A).** The cycle's `check_chain` reads the
    chain under the append role it already holds (amendment 25 item 3). Amendment 25 item 1 names
    the read-only role's one holder, and that's unchanged.
@@ -3945,10 +3947,10 @@ an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.
 
 ### What it grants, and nothing more
 
-The one owner act in item 1, for that case only, with its actor unnamed. No credential, role,
-account, grant or reader is added, and no actor gains the owner password: it stays in Coolify,
-and nothing holds it at run time. The cycle reads under a role it already holds, and no session
-gains a `verify` or any other chain read.
+The one owner act in item 1, for that case only, with its actor unnamed (amendment 28 withdraws
+it). No credential, role, account, grant or reader is added, and no actor gains the owner
+password: it stays in Coolify, and nothing holds it at run time. The cycle reads under a role it
+already holds, and no session gains a `verify` or any other chain read.
 
 ## Amendment 28 — No FE-5 import retry after a successful import (2026-11-14)
 
@@ -3972,8 +3974,8 @@ sds-hq commit `9d97574`):
    `fe-5-chain-reset`) is withdrawn for the post-import case, the only case it covered, so the act
    is never built or run. D-51 B's path, quoted in D-53 C, takes its place. Amendment 27's record
    of D-51 A stands as the record of that answer; this amendment supersedes its effect. Amendment
-   27's open item (open question 9) is answered here. Amendment 24 item 3's and amendment 25's
-   mentions of the act a retry needs read through this item: the owner keeps only FE-4's setup
+   27's open item (open question 9) is answered here. Amendment 24's two mentions of the act (item
+   3, and its import open item) say amendment 28 withdraws it: the owner keeps only FE-4's setup
    acts.
 3. **Unchanged.** A rollback before step 6 succeeds is unchanged: the import commits only past its
    head check, so the database holds nothing from it. Amendment 27 items 2 and 3 (D-50 A, D-52 A)
