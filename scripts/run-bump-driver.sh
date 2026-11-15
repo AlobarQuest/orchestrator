@@ -25,7 +25,7 @@
 #     (BWS `b415d03b-…`), through the narrow `sds-operator` identity; SYSTEM also reads the member
 #     record;
 #   - the change-manager READ bearer (BWS `314f276d-…`) and the two Brain contributor keys (BWS
-#     `750f737f-…`, `da8134b0-…`, project `brains`), through the broad identity;
+#     `750f737f-…`, `da8134b0-…`, project `Brains - Contributor`), through the broad identity;
 #   - GitHub: the operator's own `gh` login, which has no BWS record. It reaches the lane's own
 #     git commands through their environment, never an argument, `.git/config` or `factory`.
 #

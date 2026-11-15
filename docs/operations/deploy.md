@@ -9,7 +9,9 @@ below record (#305, "Binding the release", #61, #82, #194, #201) and refuses whe
 deploy must not proceed. Run it from a worktree at the commit you are deploying, with that
 worktree's own venv, and keep the state file in the session scratchpad, never a tracked path. Run
 it under `rtk proxy`, because rtk swallows the stdout of `python -m`, and the result JSON goes to
-stdout.
+stdout. Where `rtk` isn't on `PATH`, as in an unattended HQ cycle (a call to it exits 127 and runs
+nothing), nothing rewrites the command: wherever this page says `rtk proxy uv run python -m …`,
+run `uv run python -m …` directly.
 
 It runs in two phases, with a `recheck` between them, because **five steps stay infraops calls
 the deploying session makes itself**. The workspace rule (`~/Projects/CLAUDE.md`) routes every Coolify change through the
@@ -253,7 +255,9 @@ run of its lane is `unfinished`.
    printed, to a file outside the repository.
 5. Run `lanes-finish` with the change and the reads (`--observed-digest`, `--observed-schedule`,
    `--observed-volume`, `--token-present`, and for `--token` `--read-result <file>`, the path of
-   the saved `lane-run --read` lines). It exits 0 only when the container runs the release's lane
+   the saved `lane-run --read` lines). `--observed-digest` takes the bare `sha256:<64 hex>` value
+   after the `@`, not the whole `RepoDigests` line (`ghcr.io/…@sha256:…`); anything else is a
+   usage error. It exits 0 only when the container runs the release's lane
    digest, has the expected schedule, mounts the recorded volume (or, for an `--add`, the
    resource's one named volume, never a double-prefixed one), and, for an `--add` or a `--token`,
    holds a token. A `--token` run passes only if every recorded UUID reads `ok` too. A read-result
@@ -279,6 +283,14 @@ run of its lane is `unfinished`.
      answers `"result": "closed_failed"`, never a success. It refuses a run with no failed
      `lanes-finish` recorded. Report the failure: the reissue's revoke stays unresolved. The lane
      can then take a retry `--token`, a `--tag`, or a rollback to the Mac.
+
+`lanes-finish` checks the digest, the schedule, and the volume (and, for an `--add` or a
+`--token`, that a token is present), never which secrets the lane's launcher reads. So a change
+that alters the lane's BWS reads, such as a `--tag` to a release whose launcher reads a new UUID,
+isn't verified when `lanes-finish` passes. Before you call it verified, for a lane whose crontab
+line has no flag, run one pass (`lane-run <lane>`) or `lane-run --read <uuid>...` over the new
+UUIDs in the container. Verify a lane whose crontab line has a flag (`--submit`) from its next
+scheduled pass.
 
 ### Before a lane token's revoke
 
@@ -349,6 +361,10 @@ lane") still needs the following, in this order, each in its own change or act:
    from `test_deploy_lanes.py`'s `placeholders`.
 7. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container.
 8. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
+
+A deploy watcher pass takes about 6 to 7 minutes (118 changes at about 3 s each, measured
+2026-11-15). A hand pass through an SSH exec whose timeout is shorter loses its result, so verify
+the lane from the scheduled pass's `job succeeded` line in the container log.
 
 `revision-watcher`'s tracked files (`lanes/revision-watcher/compose.yaml` and `crontab`) don't
 register it either. Its state is the acting pass's `alerts.json`, so its compose mounts the named
