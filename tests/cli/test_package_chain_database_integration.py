@@ -177,9 +177,9 @@ def _emit(action: str, evidence: dict[str, Any], **env: str) -> str:
     return result.stdout.strip().splitlines()[-1]
 
 
-def _approve(chain_db: ChainDb | None, evidence: dict[str, Any] = EVIDENCE) -> str:
-    """Append through FE-1's real `emit`: to the database under the append role, else the file."""
-    env = chain_db.append_env() if chain_db else {}
+def _approve(chain_db: ChainDb, evidence: dict[str, Any] = EVIDENCE) -> str:
+    """Append through FE-1's real `emit`, to the database under the append role."""
+    env = chain_db.append_env()
     _emit("package.transitioned", {"to": "ready_for_review"}, **env)
     return _emit("package.approved", evidence, **env)
 
