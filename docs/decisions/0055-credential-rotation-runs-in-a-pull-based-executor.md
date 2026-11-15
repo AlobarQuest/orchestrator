@@ -3375,7 +3375,8 @@ its own.
    - **Read-only role.** `SELECT` on the chain table, nothing else.
    - **The owner.** The resource's own superuser, kept in Coolify. Nothing holds it at run time.
      It's used only in the announced acts that set up the schema and the two roles (ADR-0059
-     amendment 7, step FE-4). Amendment 27 names one more, for an FE-5 import retry only (D-51 A).
+     amendment 7, step FE-4). Amendment 27 names one more, for an FE-5 import retry only (D-51 A);
+     amendment 28 withdraws it (D-53 C).
 4. **Who appends, through what.** A new `factory_events` append function writes one event under
    the append-only role. Its holders are exactly these (D-43 B):
    - **Devon's `approve`**, on the Mac.
@@ -3540,7 +3541,7 @@ Each item names the step that settles it.
   neither covers the import. Devon names who runs it and under which role, before act 5's
   import step runs; until he has, act 5 stops before the import. His decision settles how it
   stands with items 3 and 4; this amendment doesn't. Amendment 27 names the owner act a retry of
-  the import needs (D-51 A).
+  the import needs (D-51 A); amendment 28 withdraws it, and there is no post-import retry (D-53 C).
 - **`emit`'s stdout (FE-1).** Item 13's JSON logs and `emit`'s event id share stdout.
   `_parse_event_id`'s contract: the first stdout line that parses as a JSON object with an
   `event_id` key, if any, must carry the emitted id (lines 52-58); if no line does, the emitted id
@@ -3926,7 +3927,8 @@ an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.
    4). D-51 A names the session only for the re-import; who runs the drop and the setup is open
    (the next section). HQ announces the act. security-standards PR #94 (`237e422`) proves the setup re-runs
    cleanly on a populated schema in a test database. The FE-5 plan's "Reset the chain before a
-   retry" section holds its steps.
+   retry" section held its steps. Amendment 28 (D-53 C) withdraws the act, and the plan's "No retry
+   after the import" section replaces that section.
 2. **The cycle's guard reads under the append role (D-50 A).** The cycle's `check_chain` reads the
    chain under the append role it already holds (amendment 25 item 3). Amendment 25 item 1 names
    the read-only role's one holder, and that's unchanged.
@@ -3937,15 +3939,59 @@ an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.
 ### Open before the act
 
 - **Who runs the owner steps, and how the act reads the head (FE-5 plan, open question 9).**
-  D-51 A names no actor for item 1's drop and setup, and no path for the owner password. FE-4's
-  owner step, Devon at a hidden prompt, is the only approved path. The act's precondition reads
-  the chain's head and event count, which is a chain read; amendment 25 item 1 and D-44 B refuse
-  that to sessions. Devon decides both (a D-number), recorded in an ADR-0055 amendment before
-  `fe-5-chain-reset` runs. This blocks only that act, not FE-5.
+  Answered by amendment 28 (D-53 C): there is no post-import retry, so `fe-5-chain-reset` is never
+  built or run, and item 1's act is withdrawn. The question as it stood: D-51 A names no actor for
+  item 1's drop and setup, and no path for the owner password. FE-4's owner step, Devon at a hidden
+  prompt, is the only approved path. The act's precondition reads the chain's head and event
+  count, which is a chain read; amendment 25 item 1 and D-44 B refuse that to sessions.
 
 ### What it grants, and nothing more
 
-The one owner act in item 1, for that case only, with its actor unnamed. No credential, role,
-account, grant or reader is added, and no actor gains the owner password: it stays in Coolify,
-and nothing holds it at run time. The cycle reads under a role it already holds, and no session
-gains a `verify` or any other chain read.
+The one owner act in item 1, for that case only, with its actor unnamed (amendment 28 withdraws
+it). No credential, role, account, grant or reader is added, and no actor gains the owner
+password: it stays in Coolify, and nothing holds it at run time. The cycle reads under a role it
+already holds, and no session gains a `verify` or any other chain read.
+
+## Amendment 28 — No FE-5 import retry after a successful import (2026-11-14)
+
+**Status: Proposed (2026-11-14).** Accepted on merge. It records Devon's answer to the FE-5 plan's
+open question 9 (`docs/superpowers/plans/2026-11-14-fe-5-cutover.md`), given as option C in an
+interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.md` (the D-53 line,
+sds-hq commit `9d97574`):
+
+- **D-53 C:** "No retry after the import: a post-import rollback ends FE-5 until a new amendment
+  plans the next try (D-51 B)." Devon: "I think C is the cleanest answer. I think it's a low
+  probability of being encountered."
+
+### Decision
+
+1. **No post-import retry.** A rollback of ADR-0059 amendment 7's act 5 after a successful import
+   (FE-5 plan step 6) and before any append, that is, from the plan's rollback point or from its
+   steps 7 to 9, ends FE-5. The database keeps the imported copy: the trigger refuses to delete
+   it, and a later import refuses a non-empty chain. The next try needs a new ADR-0055 amendment
+   that plans it.
+2. **What this replaces in amendment 27.** Amendment 27 item 1 (D-51 A's owner act,
+   `fe-5-chain-reset`) is withdrawn for the post-import case, the only case it covered, so the act
+   is never built or run. D-51 B's path, quoted in D-53 C, takes its place. Amendment 27's record
+   of D-51 A stands as the record of that answer; this amendment supersedes its effect. Amendment
+   27's open item (open question 9) is answered here. Amendment 24's two mentions of the act (item
+   3, and its import open item) say amendment 28 withdraws it: the owner keeps only FE-4's setup
+   acts.
+3. **Unchanged.** A rollback before step 6 succeeds is unchanged: the import commits only past its
+   head check, so the database holds nothing from it. Amendment 27 items 2 and 3 (D-50 A, D-52 A)
+   stand. Nothing else in FE-5 changes.
+
+### Consequences
+
+- **A post-import rollback costs a planning round.** FE-5 waits for a new amendment, in exchange
+  for no owner act, no owner-password path and no session chain read. Devon judged the case
+  unlikely.
+- **The evidence stays.** security-standards PR #94 (`237e422`) proves the setup re-runs cleanly on
+  a populated schema in a test database. A later amendment that plans a retry can rest on it. The
+  FE-5 act records step 4's file head and step 6's event count in its progress entry for the same
+  reason.
+
+### What it grants, and nothing more
+
+Nothing. It removes amendment 27's one owner act. No credential, role, account, grant or reader is
+added, the owner password stays in Coolify, and nothing holds it at run time.
