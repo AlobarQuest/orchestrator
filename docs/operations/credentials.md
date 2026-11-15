@@ -103,9 +103,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `x-brain-key: <key>` (or `?key=`), and the middleware accepts **either** the approver key or
   the contributor key, gating every non-allowlisted path identically — so the contributor key
   (`CODE_BRAIN_CONTRIBUTOR_KEY` `750f737f-4cb6-4876-9a98-b48200ea1c0b`,
-  `INFRA_BRAIN_CONTRIBUTOR_KEY` `da8134b0-565f-45c8-8965-b48200ea1c40`, BWS project `brains`,
-  bootstrap identity Keychain `Claude`/`BWS_ACCESS_TOKEN_VPS_BACKUP`, **not** the SDS-narrow
-  account) is the least privilege available and can also POST proposals. Narrowing that is open.
+  `INFRA_BRAIN_CONTRIBUTOR_KEY` `da8134b0-565f-45c8-8965-b48200ea1c40`, BWS project
+  `Brains - Contributor`, bootstrap identity Keychain `Claude`/`BWS_ACCESS_TOKEN_VPS_BACKUP`,
+  **not** the SDS-narrow account) is the least privilege available and can also POST proposals.
+  Narrowing that is open.
   Containment comes free from the repositories: `list_all` defaults `include_proposed=False`, so
   REST serves approved-only records. The REST route exposes `category/severity/road_slug/
   include_retired` but **not** `min_authority` (the repository supports it, the route does not
@@ -305,7 +306,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `BWS_ACCESS_TOKEN` for both fails as a bare `http_error: HTTP 400` that names nothing.** Measured
   2026-08-19. The orchestrator bearer lives in the `SDS Operator` project (narrow `sds-operator`
   account, Keychain `BWS_ACCESS_TOKEN_SDS`); the Code/Infra Brain keys the enrichment step needs
-  live in the `brains` project, readable only by the broad account (Keychain
+  live in the `Brains - Contributor` project, readable only by the broad account (Keychain
   `BWS_ACCESS_TOKEN_VPS_BACKUP`). Export the narrow one for the whole run — the obvious thing to do,
   since the API token needs it — and `bws secret get 750f737f…` answers **`404 Not Found`**, which
   surfaces through the factory client as an HTTP 400 with no error envelope.

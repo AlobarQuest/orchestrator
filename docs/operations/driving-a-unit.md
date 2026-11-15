@@ -488,8 +488,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
      with no human-judgment criterion at all.
   3. **Driving the `factory` flow needs TWO BWS identities.** The orchestrator bearers are in the
      `SDS Operator` project, readable by the narrow `sds-operator` account; the Code and Infra
-     Brain keys the enrichment step needs are in the `brains` project, which that account **cannot
-     read**. The failure is a `CredentialError` naming only a secret UUID. No document said so.
+     Brain keys the enrichment step needs are in the `Brains - Contributor` project, which that
+     account **cannot read**. The failure is a `CredentialError` naming only a secret UUID. No
+     document said so.
 
   Also: **the `/review` intake and decomposition pages return `[BLOCKED: …]` for several fields
   when read through browser automation** — page text, a commit sha, an authority block — because
