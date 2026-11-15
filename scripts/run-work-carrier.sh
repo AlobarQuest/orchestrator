@@ -289,10 +289,10 @@ fi
 
 # THE FACTORY-EVENTS CHAIN, behind the switch file (FE-5 cut-over plan, "The switch"; ADR-0055
 # amendments 24 and 26). The carry verifies each record's approval against the chain:
-# `emit-intake-payload`, `python -m factory_events verify` and intent-packages' `verify-approval`
-# all inherit `work-carrier`'s environment (`orchestrator/package_sources.py`), and a set
-# `FACTORY_EVENTS_READ_PASSWORD` with the three `FACTORY_EVENTS_DB_*` settings makes them read the
-# database chain.
+# `emit-intake-payload`, the `orchestrator.factory_chain_read` walk it starts and intent-packages'
+# `verify-approval` all inherit `work-carrier`'s environment (`orchestrator/package_sources.py`),
+# and a set `FACTORY_EVENTS_READ_PASSWORD` with the three `FACTORY_EVENTS_DB_*` settings makes them
+# read the database chain.
 #   - No `~/.factory/chain-db.env`: nothing here runs, and no chain variable is set or cleared.
 #   - The file present: it is read with the refusals in `sds-bws.sh`, on every pass. With an
 #     `sds-operator` identity, the read password is fetched through it, and an empty value fails
