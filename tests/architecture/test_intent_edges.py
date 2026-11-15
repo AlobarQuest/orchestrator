@@ -3,10 +3,10 @@
 `orchestrator.package_sources` verifies an approved intent package before it composes an intake
 payload. Its whole outbound surface is stated here, from its source:
 
-* four subprocess commands: `git rev-parse HEAD` (the package's git head), the sibling
-  `intent_packages verify-approval`, security-standards' `factory_events verify`
-  (`_verify_factory_chain`, which no read path calls: the database is the chain of record), and
-  `orchestrator.factory_chain_read` (the database chain, under the read password);
+* three subprocess commands: `git rev-parse HEAD` (the package's git head), the sibling
+  `intent_packages verify-approval`, and `orchestrator.factory_chain_read` (the database chain,
+  under the read password). The file chain's `factory_events verify` is not among them: the
+  database is the chain of record;
 * no HTTP client, socket or other network import;
 * seven environment variables: two of them FE-1's chain passwords (the read password selects the
   database chain, and without it the read refuses), and three its retired whole-DSN variables,
@@ -38,7 +38,6 @@ SUBPROCESS_COMMANDS = frozenset(
     {
         ("git", "-C", "<expr>", "rev-parse", "HEAD"),
         ("<expr>", "-m", "intent_packages", "verify-approval", "<expr>"),
-        ("<expr>", "-m", "factory_events", "verify"),
         ("<expr>", "-m", "orchestrator.factory_chain_read"),
     }
 )
@@ -187,9 +186,9 @@ def path_parts(source: str, function: str) -> frozenset[str]:
 # ---- The rows -------------------------------------------------------------------------------
 
 
-def test_the_module_runs_exactly_four_subprocess_commands() -> None:
+def test_the_module_runs_exactly_three_subprocess_commands() -> None:
     commands = subprocess_commands(SOURCE)
-    assert len(commands) == 4
+    assert len(commands) == 3
     assert set(commands) == SUBPROCESS_COMMANDS
 
 
@@ -228,7 +227,18 @@ def _widen(old: str, new: str) -> str:
 
 def test_control_a_fourth_subprocess_command_is_reported() -> None:
     widened = SOURCE + '\n\ndef _extra() -> None:\n    subprocess.run(["curl", "http://x"])\n'
-    assert len(subprocess_commands(widened)) == 5
+    assert len(subprocess_commands(widened)) == 4
+
+
+def test_control_the_file_chain_verify_is_reported() -> None:
+    widened = (
+        SOURCE
+        + "\n\ndef _extra() -> None:\n"
+        + '    subprocess.run([sys.executable, "-m", "factory_events", "verify"])\n'
+    )
+    commands = subprocess_commands(widened)
+    assert ("<expr>", "-m", "factory_events", "verify") in commands
+    assert set(commands) != SUBPROCESS_COMMANDS
 
 
 def test_control_a_changed_subcommand_is_reported() -> None:
@@ -299,7 +309,7 @@ def test_control_check_output_and_a_held_argv_are_reported() -> None:
         + '    argv = ["id"]\n    subprocess.run(argv)\n'
     )
     commands = subprocess_commands(widened)
-    assert len(commands) == 6
+    assert len(commands) == 5
     assert set(commands) != SUBPROCESS_COMMANDS
     assert ("subprocess.check_output",) in commands
     assert ("subprocess.run",) in commands

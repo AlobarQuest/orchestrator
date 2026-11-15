@@ -238,23 +238,6 @@ def _security_standards_env() -> dict[str, str]:
     return env
 
 
-def _verify_factory_chain() -> None:
-    env = _security_standards_env()
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "factory_events", "verify"],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=_CHAIN_VERIFY_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except OSError, subprocess.TimeoutExpired:
-        raise _approval_refused("factory event chain verification could not run") from None
-    if result.returncode != 0:
-        raise _approval_refused("factory event chain did not verify")
-
-
 def _matching_event_evidence(
     evidence: object,
     *,

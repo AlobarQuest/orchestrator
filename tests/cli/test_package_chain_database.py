@@ -85,19 +85,13 @@ def _verify() -> VerifiedApproval:
     return package_sources._verify_current_approval(Path("."), "pkg-1", "h1", 1, _APPROVAL)
 
 
-def _forbid_the_file_verify(monkeypatch: pytest.MonkeyPatch) -> None:
-    def forbidden(*args: object) -> None:
-        raise AssertionError("`factory_events verify` was run")
-
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", forbidden)
-
-
 def _child(
     monkeypatch: pytest.MonkeyPatch, *, returncode: int, stdout: str, stderr: str = ""
 ) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
 
     def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert "factory_events" not in argv, "the file chain's `factory_events verify` was run"
         calls.append({"argv": argv, **kwargs})
         return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
 
@@ -114,7 +108,6 @@ def _record(outcome: str, **fields: object) -> str:
 
 def test_a_verified_walk_holding_the_approval_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
     _read_chain(monkeypatch)
-    _forbid_the_file_verify(monkeypatch)
     calls = _child(monkeypatch, returncode=0, stdout=_record("verified", package_approved=[_EVENT]))
 
     assert _verify() == VerifiedApproval("devon", "2026-07-05T00:02:00Z", "evt-1", "c1")
@@ -192,7 +185,6 @@ def test_a_read_that_cannot_run_refuses_with_its_cause_chained(
     monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
     _read_chain(monkeypatch)
-    _forbid_the_file_verify(monkeypatch)
 
     def run(*args: object, **kwargs: object) -> None:
         raise error
@@ -252,7 +244,6 @@ def test_an_unreachable_database_refuses_through_the_real_child_without_the_pass
     (store / "store.py").write_text("def walk_records(records):\n    raise SystemExit(9)\n")
     (store / "chain.py").write_text(_CHAIN_STUB, encoding="utf-8")
     _read_chain(monkeypatch)
-    _forbid_the_file_verify(monkeypatch)
 
     with pytest.raises(
         PackageSourceError, match=r"could not be read \(OperationalError\)$"
@@ -273,7 +264,6 @@ def test_the_append_password_alone_refuses_without_reading_the_chain(
     monkeypatch.setenv("FACTORY_EVENTS_APPEND_PASSWORD", SECRET)
     for name, value in SETTINGS.items():
         monkeypatch.setenv(name, value)
-    _forbid_the_file_verify(monkeypatch)
     calls = _child(monkeypatch, returncode=0, stdout="")
 
     with pytest.raises(PackageSourceError, match="the append role can't read the chain$") as info:
@@ -297,7 +287,6 @@ def test_a_set_retired_variable_refuses_by_name_without_reading_either_chain(
     if password:
         _read_chain(monkeypatch)
     monkeypatch.setenv(retired, f"postgresql://factory_events_read:{SECRET}@127.0.0.1:1/x")
-    _forbid_the_file_verify(monkeypatch)
     calls = _child(monkeypatch, returncode=0, stdout="")
 
     with pytest.raises(PackageSourceError, match=f"{retired} is retired") as info:
@@ -318,7 +307,6 @@ _UNSET_REFUSAL = (
 def test_with_no_read_password_the_read_refuses_by_name_and_reads_neither_chain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _forbid_the_file_verify(monkeypatch)
     calls = _child(monkeypatch, returncode=0, stdout="")
 
     with pytest.raises(PackageSourceError, match=_UNSET_REFUSAL):
@@ -556,7 +544,6 @@ def test_emit_intake_payload_under_the_read_password_prints_only_the_payload(
 ) -> None:
     _read_chain(monkeypatch)
     monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
-    _forbid_the_file_verify(monkeypatch)
     record = _record("verified", seq=9, head="abc", package_approved=[_FIXTURE_EVENT])
     _child(monkeypatch, returncode=0, stdout=record)
 
@@ -573,7 +560,6 @@ def test_emit_intake_payload_under_the_read_password_refuses_without_the_passwor
 ) -> None:
     _read_chain(monkeypatch)
     monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
-    _forbid_the_file_verify(monkeypatch)
     _child(
         monkeypatch,
         returncode=2,
@@ -594,8 +580,8 @@ def test_emit_intake_payload_with_no_chain_variable_refuses_and_opens_no_events_
 ) -> None:
     """FE-3's deferred refusal: with no read password, intake refuses by name.
 
-    The scratch home holds a well-formed events file with the matching approval, and the file
-    chain's verify is stubbed to pass, so the base's file path would emit the payload.
+    The scratch home holds a well-formed events file with the matching approval, so the base's
+    file path would emit the payload.
     """
     home = tmp_path / "factory-home"
     home.mkdir()
@@ -603,7 +589,6 @@ def test_emit_intake_payload_with_no_chain_variable_refuses_and_opens_no_events_
     events_file.write_text(json.dumps({"event": _FIXTURE_EVENT}) + "\n", encoding="utf-8")
     monkeypatch.setenv("FACTORY_EVENTS_HOME", str(home))
     monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     calls = _child(monkeypatch, returncode=0, stdout="")
     opened: list[Path] = []
     real_open = Path.open
