@@ -148,11 +148,41 @@ checks, and I waited for the final head's run before exiting. I didn't run `make
 4. **Uncovered concern:** the `## Standards` section has no rule on reading a Coolify-held
    database password. That gap is part of question 9.
 
+## Fix round 1
+
+Worker W-164, from HQ's Opus whole-branch review at `f77baa29` (two blocking findings). Fix
+commit `38300fae` is fast-forward on `f77baa29`. It supersedes this report's earlier text on the
+owner steps: "The act `fe-5-chain-reset`, as written" step 2 and concern 2.
+
+1. **The owner steps' actor is open (D-51 A names the session only for the re-import).**
+   - Plan line 522, the reset's step 2: removed "The session reads it into one process's
+     environment only". It says who runs the drop and the setup, and how the owner password
+     reaches them, is open (open question 9). FE-4's precedent, Devon at a hidden prompt, is the
+     only approved path.
+   - Plan line 590, open question 9: "Devon decides both (a D-number), recorded in an ADR-0055
+     amendment before `fe-5-chain-reset` runs", replacing "HQ or Devon". It notes the head read
+     is a chain read, which question 8 refuses to sessions (D-44 B; amendment 25 item 1), and
+     that it blocks only the act, not FE-5.
+   - ADR-0055 line 3926, amendment 27 item 1: says the drop and setup actor is open.
+   - ADR-0055 line 3937: a new "Open before the act" section carries question 9 as blocking only
+     `fe-5-chain-reset`.
+   - ADR-0055 line 3948, "What it grants": the act with its actor unnamed, and no actor gains the
+     owner password.
+2. **Citation:** ADR-0055 line 3909 and this report's line 42 cite `state/decisions.md` lines
+   13-15 at `b87452e`. I read them there: D-50, D-51 and D-52.
+3. **Optional sentence fix:** plan line 511 reads "the event count must equal that step 6's
+   `<n>`", and the W-161 parenthetical is its own sentence.
+
+CI at `38300fae` (run 43657917020): `Quality` pass in 15m56s, with `14983 passed, 23 skipped, 5
+warnings` read from the job log; `Rollout transcription currency` pass; `Runner consumer
+compatibility` pass. This section's commit changes only this report.
+
 ## Standards followed
 
-- **Code Brain rule 5 (never log secrets):** the docs show no password, DSN value or token. The
-  reset act reads the owner DSN into one process's environment. It never goes in argv, a file or
-  output, and the plan forbids passing it to `psql` as an argument.
+- **Code Brain rule 5 (never log secrets):** the docs show no password, DSN value or token. After
+  fix round 1, the plan names no holder of the owner password (open question 9). Whoever runs the
+  owner steps never puts the password in argv, a file or output, and the plan forbids passing the
+  DSN to `psql` as an argument.
 - **Code Brain rules 3 and 4:** these don't apply. The change is docs only and adds no code,
   logging or exception handling.
 - **Infra Brain 591, 592 and 593 (no BWS token in tracked files, no inline `BWS_ACCESS_TOKEN`):**
