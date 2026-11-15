@@ -1355,13 +1355,13 @@ rotated_by_sds = false
   note = "launchd com.devon.work-carrier 07:05 (--register), with the switch file present; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator) until ADR-0059 step 3f-2; passed to work-carrier alone, never work-watcher"
 
 # ── The Mac Keychain tokens this repository's launchers read for the chain (FE-5 plan follow-up 1) ──
-# Minted by Devon at FE-5 act step 0, after these rows land; no `created` or fingerprint until then,
-# so neither ages before it exists. Console-minted, hand-rotated. The act ran step 0 on 2026-11-15
+# Minted by Devon at FE-5 act step 0. Console-minted, hand-rotated. The act ran step 0 on 2026-11-15
 # by D-54 A: each token reached its Keychain item from a BWS copy in Rotation / Keepers, which
 # stays as the token's keeper copy; a hand rotation updates both. sds-operator's temporary direct
-# grants on the copies were removed the same day. The nightly's token (bws-factory-events-nightly-token,
-# 4c1bcf0e-46f6-4ac3-9d3f-b50300d50015) has no row here, and security-standards keeps no
-# .cred-consumers.toml (FE-5 plan follow-up 1).
+# grants on the copies were removed the same day. No `created` or fingerprint: a fingerprint needs
+# a credentialed read, which stays with an interactive session. The nightly's token
+# (bws-factory-events-nightly-token, 4c1bcf0e-46f6-4ac3-9d3f-b50300d50015) has no row here: its row
+# lives in security-standards' .cred-consumers.toml (security-standards PR #96).
 [[credential]]
 id = "bws-bump-proposer-token"
 class = "bws-machine-token"
