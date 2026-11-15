@@ -3906,7 +3906,7 @@ rule 1032).
 **Status: Proposed (2026-11-14).** Accepted on merge. HQ merges it only after a clean Opus
 whole-branch review (HQ D-12, limit 3). It records Devon's answers to the FE-5 plan's open
 questions 1 to 3 (`docs/superpowers/plans/2026-11-14-fe-5-cutover.md`), each given as option A in
-an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.md` (lines 16-18 at
+an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.md` (lines 13-15 at
 `b87452e`):
 
 - **D-50 A:** "The guard reads the database under the append role."
@@ -3923,7 +3923,8 @@ an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.
    after a successful import and before any append. The chain's table lives in `public`, so
    "drops the chain schema" is the owner's `DROP TABLE public.factory_events`. The owner then runs
    `python -m factory_events.db_setup`, and the session runs the import again (amendment 25 item
-   4). HQ announces the act. security-standards PR #94 (`237e422`) proves the setup re-runs
+   4). D-51 A names the session only for the re-import; who runs the drop and the setup is open
+   (the next section). HQ announces the act. security-standards PR #94 (`237e422`) proves the setup re-runs
    cleanly on a populated schema in a test database. The FE-5 plan's "Reset the chain before a
    retry" section holds its steps.
 2. **The cycle's guard reads under the append role (D-50 A).** The cycle's `check_chain` reads the
@@ -3933,8 +3934,18 @@ an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.
    machine" is the Mac nightly's `verify` in FE-5. The VPS verify moves to step 3f-2's cut-over, as
    the work carrier's first VPS pass.
 
+### Open before the act
+
+- **Who runs the owner steps, and how the act reads the head (FE-5 plan, open question 9).**
+  D-51 A names no actor for item 1's drop and setup, and no path for the owner password. FE-4's
+  owner step, Devon at a hidden prompt, is the only approved path. The act's precondition reads
+  the chain's head and event count, which is a chain read; amendment 25 item 1 and D-44 B refuse
+  that to sessions. Devon decides both (a D-number), recorded in an ADR-0055 amendment before
+  `fe-5-chain-reset` runs. This blocks only that act, not FE-5.
+
 ### What it grants, and nothing more
 
-The one owner act in item 1, for that case only. No credential, role, account, grant or reader is
-added: the owner's password stays in Coolify, the cycle reads under a role it already holds, and
-no session gains a `verify`.
+The one owner act in item 1, for that case only, with its actor unnamed. No credential, role,
+account, grant or reader is added, and no actor gains the owner password: it stays in Coolify,
+and nothing holds it at run time. The cycle reads under a role it already holds, and no session
+gains a `verify` or any other chain read.

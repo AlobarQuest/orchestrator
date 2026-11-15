@@ -39,7 +39,7 @@ Handoff: `sds-hq/state/handoffs/fe-5-plan-decisions.md`. Worker W-162. Branch
 ### ADR-0055 (`docs/decisions/0055-*.md`)
 
 - **Amendment 27** comes after amendment 26 and quotes each answer's option text verbatim from
-  sds-hq `state/decisions.md` lines 16-18. It has three items:
+  sds-hq `state/decisions.md` lines 13-15. It has three items:
   - Item 1 adds the owner act for D-51 A. It also records that "drops the chain schema" means
     `DROP TABLE public.factory_events`, because the table is in `public`.
   - Item 2 adds one line for D-50 A. The append role is already held, and the read-only role
