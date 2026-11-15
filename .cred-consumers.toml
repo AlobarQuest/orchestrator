@@ -679,6 +679,33 @@ disposition = "reissue"
   healthchecks_check = "sds-estate-landing"
   note = "reads it on --submit passes with the narrow sds-operator identity, as ESTATE_LANDING_COOLIFY_TOKEN; pings sds-estate-landing"
 
+# ── The revision watcher's read-only Coolify token ───────────────────────────────
+# Created by Devon in Coolify on 2026-11-15 (HQ gate G-62) as `revision-watcher-read`, with `read`
+# only, never read:sensitive, and stored as `prod-coolify-read-token` in `Ops / Platform`. It
+# replaces `prod-coolify-api-token` (infraops-mcp-server's, which can write envs) for the lane's one
+# call, listing applications. No fingerprint: no session has read the value. No adapter rotates
+# this class, so it is not rotated_by_sds and falls to the manual checklist.
+[[credential]]
+id = "coolify-revision-watcher-read-token"
+class = "coolify-api-token"
+provider = "coolify"
+provider_identity = "Coolify API token revision-watcher-read (prod; read)"
+bws_uuid = "0bf066e9-28c1-4aa7-8c3d-b50300d492a6"
+created = "2026-11-15"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "0bf066e9-28c1-4aa7-8c3d-b50300d492a6"
+  note = "prod-coolify-read-token (Ops / Platform) — keeper; the launcher fetches by UUID"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-revision-watcher.sh"
+  healthchecks_check = "sds-revision-watcher"
+  note = "reads it every pass as REVISION_WATCHER_PLATFORM_TOKEN: in the lane's container with the lane's own token, on the Mac with the broad identity; pings sds-revision-watcher"
+
 # ── The orchestrator's alert-hub sender token ────────────────────────────────────
 # Platform layer Part 2. alert-hub source `sds-orchestrator` (id 74885df2-cd25-494f-a13d-050cb3a0e67c),
 # created 2026-11-05. The keeper was created by hand in the Bitwarden web app, in `Alert Hub Senders`,
@@ -875,9 +902,12 @@ bws_uuid = "e6c8d8cc-c64e-4e91-bb5b-b4ff00cba872"
 rotated_by_sds = true
 rotate_requested = "2026-11-11"
 # What the lane's account sees, exactly: .bws-secrets.toml's revision-watcher secrets
-# (orchestrator-observer, prod-coolify-api-token, APP_BRAIN_READ_KEY,
-# ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key) and the ping URL's keeper.
-reach_secrets = ["f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "bbd71f41-b7df-4ae9-8fdb-b41501447308", "726a18ba-7a38-4ecc-aa03-b49a015fd302", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "314a966c-5654-4e3c-8358-b4fd01268775", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"]
+# (orchestrator-observer, prod-coolify-read-token, APP_BRAIN_READ_KEY,
+# ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key), the ping URL's keeper, and
+# prod-coolify-api-token, which the launcher no longer reads but whose direct grant (G-30) stays
+# until a later gate removes it (G-62). Drop that UUID here once the grant is gone: a token's bind
+# requires it to see exactly this set.
+reach_secrets = ["f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "bbd71f41-b7df-4ae9-8fdb-b41501447308", "0bf066e9-28c1-4aa7-8c3d-b50300d492a6", "726a18ba-7a38-4ecc-aa03-b49a015fd302", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "314a966c-5654-4e3c-8358-b4fd01268775", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"]
 reach_projects = []
 
   [[credential.consumer]]
