@@ -135,15 +135,16 @@ neither the lane nor staging is available.
      the chain and reads its approvals in one read-only snapshot
      (`orchestrator.factory_chain_read`). A missing setting, or any other error, refuses. It
      never reads the file.
-   - With only `FACTORY_EVENTS_APPEND_PASSWORD` set, the emitter refuses rather than read the
-     file.
+   - With only `FACTORY_EVENTS_APPEND_PASSWORD` set, the emitter refuses: the append role can't
+     read the chain.
    - A set retired whole-DSN variable (`FACTORY_EVENTS_APPEND_DSN`, `FACTORY_EVENTS_READ_DSN` or
      `FACTORY_EVENTS_IMPORT_DSN`) refuses by name (ADR-0055 amendment 26).
-   - With none of these set, the chain is the file at `$FACTORY_EVENTS_HOME/events.jsonl`
-     (`~/.factory/events.jsonl` by default).
+   - With `FACTORY_EVENTS_READ_PASSWORD` unset, the emitter refuses, naming the variable. No
+     events file is read: the sealed `~/.factory/events.sealed.jsonl` is the database's
+     pre-cut-over copy, not a chain any reader consults (ADR-0055 amendment 24 item 10).
 
-   Only the work carrier holds the read password (ADR-0055 amendment 25 item 1), so once the
-   chain is the database, a hand run of this command refuses.
+   Only the work carrier holds the read password (ADR-0055 amendment 25 item 1), so a hand run of
+   this command refuses.
 
    ```bash
    orchestrator emit-intake-payload <package-dir> \

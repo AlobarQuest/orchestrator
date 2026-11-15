@@ -4,13 +4,15 @@
 payload. Its whole outbound surface is stated here, from its source:
 
 * four subprocess commands: `git rev-parse HEAD` (the package's git head), the sibling
-  `intent_packages verify-approval`, security-standards' `factory_events verify` (the file
-  chain), and `orchestrator.factory_chain_read` (the database chain, under the read password);
+  `intent_packages verify-approval`, security-standards' `factory_events verify`
+  (`_verify_factory_chain`, which no read path calls: the database is the chain of record), and
+  `orchestrator.factory_chain_read` (the database chain, under the read password);
 * no HTTP client, socket or other network import;
-* eight environment variables: two of them FE-1's chain passwords, which select the chain, and
-  three its retired whole-DSN variables, which refuse by name (ADR-0055 amendment 26);
-* files read: the package's `package.yaml` and `lineage.yaml`, the security-standards agent
-  registry, and the factory events file.
+* seven environment variables: two of them FE-1's chain passwords (the read password selects the
+  database chain, and without it the read refuses), and three its retired whole-DSN variables,
+  which refuse by name (ADR-0055 amendment 26);
+* files read: the package's `package.yaml` and `lineage.yaml`, and the security-standards agent
+  registry. No events file is read.
 
 `orchestrator.factory_chain_read`, the database read it runs, is stated beside it: no subprocess,
 no environment variable of its own (FE-1's `chain` reads the password and settings), three lazy
@@ -25,8 +27,6 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-
-import pytest
 
 import orchestrator.factory_chain_read as factory_chain_read
 import orchestrator.package_sources as package_sources
@@ -49,7 +49,6 @@ ENVIRONMENT = frozenset(
     {
         "PYTHONPATH",
         "SECURITY_STANDARDS_DIR",
-        "FACTORY_EVENTS_HOME",
         "FACTORY_EVENTS_READ_PASSWORD",
         "FACTORY_EVENTS_APPEND_PASSWORD",
         "FACTORY_EVENTS_APPEND_DSN",
@@ -60,8 +59,7 @@ ENVIRONMENT = frozenset(
 YAML_READS = frozenset({"package.yaml", "lineage.yaml", "<registry agent>"})
 NEVER_IMPORTED = frozenset({"pty", "multiprocessing"})
 OS_SPAWNERS = frozenset({"os.system", "os.popen", "os.execv", "os.execvp", "os.spawnv"})
-READERS = frozenset({"_read_yaml", "_iter_package_approval_events"})
-EVENTS_FILE_PARTS = frozenset({".factory", "events.jsonl"})
+READERS = frozenset({"_read_yaml"})
 CHAIN_READ_ENVIRONMENT: frozenset[str] = frozenset()
 CHAIN_READ_LAZY_IMPORTS = frozenset({"psycopg", "factory_events.store", "factory_events.chain"})
 CHAIN_READ_CONNECTIONS = ["chain.READ_ROLE"]
@@ -203,11 +201,11 @@ def test_the_module_imports_no_network_client() -> None:
     assert network_imports(SOURCE) == []
 
 
-def test_the_module_reads_eight_environment_variables() -> None:
+def test_the_module_reads_seven_environment_variables() -> None:
     assert environment_names(SOURCE) == ENVIRONMENT
 
 
-def test_the_module_reads_files_in_two_places_only() -> None:
+def test_the_module_reads_files_in_one_place_only() -> None:
     assert readers(SOURCE) == READERS
 
 
@@ -215,8 +213,7 @@ def test_the_yaml_it_reads_is_the_package_two_files_and_a_registry_agent() -> No
     assert yaml_reads(SOURCE) == YAML_READS
 
 
-def test_the_events_file_and_the_registry_sit_where_they_are_stated() -> None:
-    assert path_parts(SOURCE, "_factory_events_file") >= EVENTS_FILE_PARTS
+def test_the_registry_sits_where_it_is_stated() -> None:
     assert "registry" in path_parts(SOURCE, "_security_registry_dir")
     assert path_parts(SOURCE, "_is_human_operator") >= {"agents"}
 
@@ -264,14 +261,8 @@ def test_control_a_new_yaml_file_is_reported() -> None:
     assert yaml_reads(widened) != YAML_READS
 
 
-def test_control_a_moved_events_file_is_reported() -> None:
-    widened = _widen('"events.jsonl"', '"elsewhere.jsonl"')
-    assert not path_parts(widened, "_factory_events_file") >= EVENTS_FILE_PARTS
-
-
-@pytest.mark.parametrize("function", ["_factory_events_file", "_security_registry_dir"])
-def test_control_the_path_check_finds_its_function(function: str) -> None:
-    assert path_parts(SOURCE, function)
+def test_control_the_path_check_finds_its_function() -> None:
+    assert path_parts(SOURCE, "_security_registry_dir")
 
 
 def test_control_an_aliased_or_from_import_of_subprocess_or_os_is_reported() -> None:
