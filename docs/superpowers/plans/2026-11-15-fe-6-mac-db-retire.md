@@ -168,8 +168,14 @@ Files:
   remaining secret is provisioned into `~/.factory/env`. Line 7's `consumption` mode is whatever the
   scanner accepts for the remaining rows. Run the scanner from the repository root and expect no new
   finding.
+- `scripts/factory-events-nightly.sh` lines 239-240: the comment cites `_cmd_ship`, which this PR
+  deletes. Say instead that the nightly has no projection step. Because this edits the deployed
+  script, step 12's `make install` always runs.
 - `scripts/factory-events-nightly.sh` lines 60-61 and 71-72 and `tests/test_factory_nightly.py`
   lines 216 and 239: only if open question 4 drops the `shipped` and `head_seq` facts.
+- These stay: README lines 122-130 and vps-backup `BACKUP-STRATEGY.md` lines 128-131 and 554-560
+  ("re-materialize `~/.factory/env` from BWS"). The file keeps `CM_BASE_URL` and
+  `FACTORY_HC_PING_URL` after step 9.
 
 Tests:
 
@@ -187,7 +193,7 @@ run. Nothing calls `ship`, so no running job changes. Three effects:
 - `python -m factory_events ship` becomes an argparse error.
 - The compose file leaves the working copy, which removes the `docker compose up` path that would
   recreate the container.
-- If open question 4 drops the facts, the deployed nightly changes only after `make install`.
+- The deployed nightly (`~/.claude/bin`) changes only after `make install` (step 12).
 
 It merges inside the act, after step 11 deletes the gitignored `.env`. Merged before that, the
 `.gitignore` change would leave a file holding the database password untracked and visible in a
@@ -199,7 +205,7 @@ Files:
 
 - `docs/operations/credentials.md` lines 392-393: "Never read `~/.factory/env` for these
   settings: the nightly sources it under `set -a`." Drop "and it carries `FACTORY_DB_DSN`", which
-  is false after step 8.
+  is false after step 9.
 
 No ADR changes. Amendment 7's act 6 already names the act, and the superseding note at ADR-0059
 line 2890 already governs line 824's `FACTORY_DB_DSN`. ADR-0055 amendment 26 item 9 (line 3843)
@@ -237,22 +243,22 @@ Each step's failure stops the act at that step (Code Brain rule 4). Run every pi
 
 | Step | Who | Command or check | Source check after |
 | --- | --- | --- | --- |
-| 1 | Cycle or session | Preconditions, read only:<br>- the 2026-11-16 08:30 UTC nightly logged `anchor ok: seq 4080 present` and `done (database chain)` in `~/Library/Logs/factory-events.log`, and its `chain:factory-events` observation is `passed` with `anchor_verified: true`;<br>- the 2026-11-16 02:00 `mini-host` backup logged `Mac mini host backup completed successfully` in `~/Library/Logs/vps-backup.log`;<br>- `docker --context orbstack ps -a --filter name=factory-events-db --format '{{.Status}}'` is `Up … (healthy)`;<br>- P6-VB, P6-SS and P6-OR are open, reviewed and green. | Each line as stated. Any miss: no act today. |
+| 1 | Cycle or session | Preconditions, read only:<br>- the 2026-11-16 08:30 UTC (or a later scheduled) nightly logged an `anchor ok:` line and `done (database chain)` in `~/Library/Logs/factory-events.log`, and its `chain:factory-events` observation is `passed` with `anchor_verified: true`;<br>- the 2026-11-16 02:00 `mini-host` backup logged `Mac mini host backup completed successfully` in `~/Library/Logs/vps-backup.log`;<br>- `docker --context orbstack ps -a --filter name=factory-events-db --format '{{.Status}}'` is `Up … (healthy)`;<br>- P6-VB, P6-SS and P6-OR are open, reviewed and green. | Each line as stated. Any miss: no act today. |
 | 2 | Cycle | Announce the act (the preceding command). | The announcement is in sds-hq `state/`. |
 | 3 | Session | Record the live state:<br>- `docker --context orbstack exec factory-events-db psql -U factory_events -d factory_events -Atc "select count(*), count(distinct event_id), min(seq), max(seq) from factory_events"`;<br>- `… -Atc "select seq, head_hash from chain_heads order by id desc limit 1"`;<br>- `… -Atc "select count(*) from pg_stat_activity where backend_type = 'client backend'"` (positive control: counts this query's own connection), then the same with `and pid <> pg_backend_pid()`;<br>- `nc -z -w 2 127.0.0.1 5545` (positive control for step 15's probe);<br>- `wc -l < ~/.factory/events.sealed.jsonl` and the last line's `hash` (`tail -1 … \| python3 -c 'import sys,json; print(json.load(sys.stdin)["hash"])'`). | `4080\|4080\|1\|4080`; `4080\|eb1902ab…c8b233c`; the control prints 1 and the filtered query 0; `nc` exits 0; the file has 4,080 lines and ends at `eb1902ab…c8b233c`. The VPS chain holds more events than 4,080 by now, because approvals append to it after the cut-over and none of them reach this database. The comparison is to the sealed file and to the VPS chain's head at seq 4080 (Fixed facts), not to the VPS chain's current count. |
 | 4 | Session | Take the final dump: `mkdir -p ~/.factory/retired`, then `docker --context orbstack exec factory-events-db pg_dump -U factory_events factory_events \| gzip > ~/.factory/retired/factory-events-db-final.sql.gz`, `chmod 0444` it, `gunzip -t` it, and record its SHA-256. | `gunzip -t` exits 0; mode `0444` (`stat -f %Lp`); the SHA-256 is in the act's progress entry. |
-| 5 | Session | Restore-check the local copy: start a scratch container with no network and no published port, pinned by digest (Infra Brain 3): `docker --context orbstack run -d --rm --name fe6-restore-check --network none -e POSTGRES_USER=factory_events -e POSTGRES_DB=factory_events -e POSTGRES_HOST_AUTH_METHOD=trust "$(docker --context orbstack image inspect postgres:16 --format '{{index .RepoDigests 0}}')"`. Wait for `pg_isready` (bounded, 60 s). Load: `gunzip -c ~/.factory/retired/factory-events-db-final.sql.gz \| docker --context orbstack exec -i fe6-restore-check psql -v ON_ERROR_STOP=1 -q -U factory_events -d factory_events`. Run step 3's two row queries against it. Then `docker --context orbstack stop fe6-restore-check`. | The load exits 0, and both queries print exactly step 3's values. `docker ps -a` no longer lists `fe6-restore-check`. |
+| 5 | Session | Restore-check the local copy: start a scratch container with no network and no published port, pinned by digest (Infra Brain 3): `docker --context orbstack run -d --rm --name fe6-restore-check --network none -e POSTGRES_USER=factory_events -e POSTGRES_DB=factory_events -e POSTGRES_HOST_AUTH_METHOD=trust "$(docker --context orbstack image inspect postgres:16 --format '{{index .RepoDigests 0}}')"`. Wait for `docker --context orbstack exec fe6-restore-check pg_isready -h 127.0.0.1` (bounded, 60 s). The TCP probe skips the image's init server, which answers only on the socket. Load: `gunzip -c ~/.factory/retired/factory-events-db-final.sql.gz \| docker --context orbstack exec -i fe6-restore-check psql -v ON_ERROR_STOP=1 -q -U factory_events -d factory_events`. Run step 3's two row queries against it. Then `docker --context orbstack stop fe6-restore-check`. | The load exits 0, and both queries print exactly step 3's values. `docker ps -a` no longer lists `fe6-restore-check`. |
 | 6 | Session | Merge P6-VB. Then `. ~/.claude/bin/activate-checkout.sh && activate_checkout ~/Projects/vps-backup`, and run `bash ~/Projects/vps-backup/backup-mini.sh` by hand. The container is still running, and the merged script no longer dumps it. | `git -C ~/Projects/vps-backup rev-parse HEAD` is P6-VB's merge commit. The run logs `completed successfully` with no warning. `restic ls latest --tag mini-host --repo /Volumes/backups/restic-repo --password-file ~/.restic-password` lists `…/dirs/factory/retired/factory-events-db-final.sql.gz` and no `postgres/factory_events.sql.gz`. |
 | 7 | Session | Check the backup copy: `restic dump` that path from the latest `mini-host` snapshot into a `mktemp -d` scratch directory, and compare its SHA-256 with step 4's. Delete the scratch directory after. | The SHA-256 values are equal. That snapshot is the "final dump kept in the Mac's backup", and every later snapshot carries it too. |
 | **RP** | — | **Rollback point.** Nothing is stopped or deleted yet. To roll back from here: revert P6-VB (its revert restores line 173 and the verify lines) and leave the container running. `~/.factory/retired/` can stay. | — |
 | 8 | Session | Stop the container: `docker --context orbstack stop factory-events-db`. | Status `Exited`. `nc -z -w 2 127.0.0.1 5545` now fails (step 3 proved the probe passes on a live port). Rollback: `docker --context orbstack start factory-events-db`. |
 | 9 | Session | Remove the `~/.factory/env` line. `grep -c '^FACTORY_DB_DSN=' ~/.factory/env` prints 1; run `sed -i '' '/^FACTORY_DB_DSN=/d' ~/.factory/env`, writing no backup copy (a copy in `~/.factory/` would reach the NAS, since `--exclude env` matches only the exact name); then `chmod 600` it. Handle `~/.factory/env.bak-hc-20261024` per open question 3. | The names left are `CM_BASE_URL=` and `FACTORY_HC_PING_URL=`, and the mode is `600`. Rollback: re-add the line from BWS `ea09a782-…`, only while the secret exists (step 14). |
-| 10 | Session | Prove the nightly doesn't need the database: `launchctl kickstart gui/$(id -u)/com.devon.factory-events`. Don't run it within 30 minutes of 03:30. | Exit 0, `anchor ok:` and `done (database chain)` in the log; the observation is `passed`. |
+| 10 | Session | Prove the nightly doesn't need the database: `launchctl kickstart gui/$(id -u)/com.devon.factory-events`. Don't run it within 30 minutes of 03:30. `kickstart` returns before the run ends, so wait (bounded, 5 minutes) for the run's last log line. | Exit 0, `anchor ok:` and `done (database chain)` in the log; the observation is `passed`. |
 | 11 | Session | Remove the container, then the volume and the network: `docker --context orbstack rm factory-events-db`, `docker --context orbstack volume rm factory-events-db_factory_events_pgdata`, `docker --context orbstack network rm factory-events-db_default`. Then delete the compose `.env`: `rm ~/Projects/security-standards/deploy/factory-events-db/.env`. **The volume removal can't be undone** (open question 5). | `docker --context orbstack ps -a`, `volume ls` and `network ls` list none of the three. `.env` is absent. Rollback after this: restore step 4's dump into a new `postgres:16` container. |
-| 12 | Session | Merge P6-SS. Then `activate_checkout ~/Projects/security-standards`. If open question 4 changed the nightly, run `make install` there. | HEAD is P6-SS's merge commit. `git -C ~/Projects/security-standards status --porcelain --ignored deploy/` prints nothing. If installed, `cmp` shows the deployed nightly equals the checkout's. |
+| 12 | Session | Merge P6-SS. Then `activate_checkout ~/Projects/security-standards`, and run `make install` there. | HEAD is P6-SS's merge commit. `git -C ~/Projects/security-standards status --porcelain --ignored deploy/` prints nothing. `cmp` shows the deployed `~/.claude/bin/factory-events-nightly.sh` equals the checkout's. |
 | 13 | Session | Merge P6-OR. Never pull the orchestrator main tree by hand; the lanes' activation updates it. | P6-OR is `MERGED`. |
 | 14 | Devon | Delete or keep BWS secret `factory-events/POSTGRES_PASSWORD` (`ea09a782-…`, project `Ops / Platform`) per open question 2. A BWS change is Devon's. | Devon's answer in chat, recorded in sds-hq `state/decisions.md`. |
-| 15 | Session | Final check that nothing on the Mac reaches port 5545:<br>- `nc -z -w 2 127.0.0.1 5545` fails;<br>- `docker --context orbstack ps -a --filter publish=5545` prints nothing;<br>- `grep -rlE '5545\|FACTORY_DB_DSN\|factory-events-db' ~/Library/LaunchAgents ~/.claude/bin ~/.config/infra-drift ~/.factory/state` prints nothing, and the `~/.factory/env*` name listings show no `FACTORY_DB_DSN=`;<br>- each repository's `origin/main` grep for `FACTORY_DB_DSN`, `5545` and `ea09a782` hits only ADRs, plans, reports and `state/` history. | Each as stated. `lsof -iTCP:5545` isn't used: it printed nothing while the port was published, so it can't show absence. |
+| 15 | Session | Final check that nothing on the Mac reaches port 5545:<br>- `nc -z -w 2 127.0.0.1 5545` fails;<br>- `docker --context orbstack ps -a --filter publish=5545` prints nothing;<br>- `grep -rlE ':5545\b\|5545:5432\|FACTORY_DB_DSN\|ea09a782' ~/Library/LaunchAgents ~/.claude/bin ~/.config/infra-drift` prints nothing, and the `~/.factory/env*` name listings show no `FACTORY_DB_DSN=`. The patterns are anchored: a bare `5545` matches hash substrings (orchestrator `uv.lock` line 1005 holds one), and `factory-events-db` is also the VPS database's name;<br>- each repository's `origin/main` grep for the same patterns, excluding `*.lock`, hits only ADRs, `docs/superpowers/` plans, specs and reports, and sds-hq `state/` history. | Each as stated. `lsof -iTCP:5545` isn't used: it printed nothing while the port was published, so it can't show absence. |
 | 16 | Cycle | Watch the first scheduled runs after the act: the 02:00 `mini-host` backup (no warning), the 03:30 nightly (`anchor ok:`), and the next Sunday 03:00 `verify-backup.sh`, which reports `[OK] [mini-host] dirs/factory/retired/factory-events-db-final.sql.gz`. | Each run's log line. A miss reopens the act. |
 
 ### What an unattended cycle can do
@@ -283,7 +289,13 @@ Step 14 is Devon's.
 
 ## Open questions
 
-The ADRs don't settle these. Each has a recommendation; Devon decides.
+The ADRs don't settle these. Each has a recommendation; Devon decides. Three of them set a prep
+pull request's scope, so their answers come before that pull request is dispatched:
+
+- Open questions 1 and 3 come before P6-VB: question 1 sets the path in `verify-backup.sh` line
+  255 and in act step 4, and question 3 decides the `env*` exclude.
+- Open question 4 comes before P6-SS: it decides the nightly's facts.
+- Open questions 2 and 5 come before the act (steps 14 and 11).
 
 1. **Where the final dump lives.** Amendment 7 says "kept in the Mac's backup", and restic
    retention keeps the last snapshots holding it for about seven days (see "Why the final dump needs
