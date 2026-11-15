@@ -903,11 +903,10 @@ rotated_by_sds = true
 rotate_requested = "2026-11-11"
 # What the lane's account sees, exactly: .bws-secrets.toml's revision-watcher secrets
 # (orchestrator-observer, prod-coolify-read-token, APP_BRAIN_READ_KEY,
-# ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key), the ping URL's keeper, and
-# prod-coolify-api-token, which the launcher no longer reads but whose direct grant (G-30) stays
-# until a later gate removes it (G-62). Drop that UUID here once the grant is gone: a token's bind
-# requires it to see exactly this set.
-reach_secrets = ["f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "bbd71f41-b7df-4ae9-8fdb-b41501447308", "0bf066e9-28c1-4aa7-8c3d-b50300d492a6", "726a18ba-7a38-4ecc-aa03-b49a015fd302", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "314a966c-5654-4e3c-8358-b4fd01268775", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"]
+# ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key) and the ping URL's keeper. A
+# token's bind requires it to see exactly this set. Its direct grant on prod-coolify-api-token was
+# removed at HQ gate G-64 on 2026-11-15.
+reach_secrets = ["f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "0bf066e9-28c1-4aa7-8c3d-b50300d492a6", "726a18ba-7a38-4ecc-aa03-b49a015fd302", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "314a966c-5654-4e3c-8358-b4fd01268775", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"]
 reach_projects = []
 
   [[credential.consumer]]
