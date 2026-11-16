@@ -4,9 +4,12 @@ Outcome: done
 
 - **PR:** #724 (ready for review, not merged)
 - **Branch:** `hq/adr-0059-a11-portfolio-feed`, based on `6b356b9f88ae65916ef4c604f5ea1ef55404c10a`
-- **Content commit:** `ad3bc0e5a94184a644bdfdf1171d8f4bf1d505de`
-- **Head:** the commit that adds this report (the next commit after the content commit)
-- **Amendment's line range:** lines 3210-3413 of
+- **Content commits:** `ad3bc0e5a94184a644bdfdf1171d8f4bf1d505de` (the amendment) and
+  `c1353c83e898dc63658bd6412a300d13d24eaf95` (fix: the reader's properties, `result` left to the
+  code step)
+- **Head:** content head `c1353c83`; this report is committed on top of it (an earlier report
+  commit, `c14b0a45`, sits between them and is superseded by this one)
+- **Amendment's line range:** lines 3210-3425 of
   `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` (the heading at
   3210; one blank separator line at 3209)
 
@@ -24,9 +27,10 @@ before it was edited.
 - **`source.system` value:** `portfolio-scan`; `source.ref` is the scan time
 - **Scan time field:** the event's `timestamp` (as both existing adapters do); deterministic
   `event_id` from `source.system` and `source.ref`, so the same scan never appends twice; rows in
-  `evidence`
-- **Reader:** newest event by `timestamp` (not `seq`), read from the existing verified walk
-  (`orchestrator.factory_chain_read`); holds when the event is missing, more than 48 hours old, or
+  `evidence`; `result`, and the marker for a scan that measured nothing, left to the code step
+- **Reader:** newest event by `timestamp` (not `seq`), used only on a pass whose chain verify
+  succeeded, no Mac file and nothing new in `lane-run`'s list; which process walks the chain for
+  the event is a 3f-2-feed verify item; holds when the event is missing, more than 48 hours old, or
   has no row for the repository
 
 ### The table's rows (lines at `6b356b9f`)
@@ -46,8 +50,11 @@ before it was edited.
 
 ## Tests and checks
 
-- `make check` against `orchestrator_test_hq_w_185` (created and migrated for this run):
-  exit 0, "All checks passed!", **15,074 items collected; 15,073 passed, 1 skipped**, 11 warnings.
+- `make check` against `orchestrator_test_hq_w_185` (created and migrated for the run), on a clean
+  tree at `c1353c83` with the first report file present: exit 0, "All checks passed!",
+  **15,074 items collected; 15,073 passed, 1 skipped**, 11 warnings. (An earlier run at
+  `ad3bc0e5` gave the same counts.) The database was dropped afterwards.
+- Append-only confirmed: `git diff -U0 6b356b9f -- docs/decisions` has no removed line.
 - Security scan from the repo root (`security_scan.cli . --category security`): no BLOCK
   findings (2 WARN, 1 INFO, the repository's standing judgment items).
 - Both D-quotes compared, whitespace-normalized, against `git show 4427c4e1:state/decisions.md`:
@@ -58,7 +65,7 @@ before it was edited.
 ## Files changed
 
 - `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` (append only,
-  +205 lines)
+  +217 lines)
 - `docs/superpowers/reports/adr-0059-a11-portfolio-feed-report.md` (this report)
 
 ## Self-review
@@ -69,6 +76,10 @@ before it was edited.
   measures, which are the non-retired members whose `app_changes` grant is `granted` or
   `remediating` (`member_scope.py` lines 23-24, 69-88). A member with no Mac working copy has no
   row, as today.
+- Decision item 3 first said the carrier reads the event "from the same verified walk" the
+  launcher runs. The launcher runs `factory_chain_read` as its own process and passes only a
+  summary, so I replaced that with the properties I can source and made the mechanism a verify
+  item (fix commit `c1353c83`).
 - The failure signal rests on the existing outcome alarm (held → `UNDECIDED` → exit 2 → `/fail`
   on `sds-work-carrier`), and names the one silent case as a verify item instead of inventing a
   mechanism.
