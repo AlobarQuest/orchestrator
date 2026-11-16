@@ -923,8 +923,9 @@ def test_the_launcher_still_runs_without_a_github_credential() -> None:
     `gh` on PATH, which is what a machine that never authenticated looks like.
     """
     script = Path("scripts/run-work-carrier.sh").read_text(encoding="utf-8")
+    # The Mac branch's block, indented inside it; the container mints its token instead.
     start = script.index('if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]')
-    block = script[start : script.index("\n\n", start)]
+    block = script[start : script.index("\n  fi\n", start) + len("\n  fi")]
     result = subprocess.run(
         ["bash", "-c", f"set -uo pipefail\n{block}\necho rc=$?"],
         capture_output=True,

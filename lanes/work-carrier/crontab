@@ -1,0 +1,9 @@
+# sds-lane-work-carrier's schedule: one registering pass a day at 07:05, as the Mac job runs it
+# (`scripts/com.devon.work-carrier.plist`, `StartCalendarInterval` 07:05, `--register`), in the
+# image's America/New_York time. `--register` is passed here, where it is visible, as the plist
+# passes it: a bare run is the reporting pass, which registers nothing and pings nothing. Minute 5
+# is one no other lane uses: execution-watch runs on the quarter-hours, the unit verifier on
+# 2-52/10, the deploy watcher on 20, the pin watcher on 07:25, the landing ledger on 07:30, the
+# change proposer on 35, the revision watcher on 40, the membership check on 07:47 and the rotation
+# decomposer on 50. The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+5 7 * * * lane-run work-carrier --register

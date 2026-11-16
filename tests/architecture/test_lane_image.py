@@ -100,7 +100,7 @@ def test_the_image_copies_the_launchers_helpers_and_programs() -> None:
         "scripts/lane_run.py",
         "/app/scripts/",
     ]
-    assert len(list((ROOT / "scripts").glob("sds-*.sh"))) == 4
+    assert len(list((ROOT / "scripts").glob("sds-*.sh"))) == 5
     assert "COPY lanes/lane-run /usr/local/bin/lane-run" in _instructions()
     assert (LANES / "lane-run").read_text().splitlines()[-1] == (
         'exec /app/.venv/bin/python -I /app/scripts/lane_run.py "$@"'
