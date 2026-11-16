@@ -496,7 +496,12 @@ as an argument.
     only when App Brain answers `inert`, which it can read only with `FORK_SYNC_APP_BRAIN_URL` and
     `FORK_SYNC_APP_BRAIN_KEY` (App Brain's read key) set.
 12. **Add the installer row** in `src/tool_installer/tools.py` if the fork is a tool this machine
-    installs. That is a separate change per tool; `onboard` says whether a row exists.
+    installs. That is a separate change per tool; `onboard` says whether a row exists. A plugin
+    row only updates an installed plugin (`claude plugin update`), so before the first pass after
+    a new plugin row lands, install it once by hand from the hub, with its serving clone already
+    on the row's branch: `claude plugin marketplace update devon-plugins`, then `claude plugin
+    install <tool>@devon-plugins`. Without that install, the row reports `install_failed` every
+    night.
 13. **Confirm.** `onboard` ends by running `fork-sync check <fork>` and printing its summary; the
     run is done when nothing is `missing`.
 
