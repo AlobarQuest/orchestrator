@@ -4,5 +4,5 @@
 # digest != artifact_sha256. Bump BOTH together when a registry actor changes (recompute the digest
 # locally: scripts/shape_registry_context.py against a security-standards checkout, then
 # build_registry_bundle.py's artifact_digest).
-revision        = "60ec80f7ec5dd68d1e6fa9d13c90e9bd72b5d286"
-artifact_sha256 = "d5cb4a58dc912d7f8c3196dab0013f8516f05e1af439ce25811a53be572803a8"
+revision        = "05963b7626b594d85bcb0d232f54421619ae3fd8"
+artifact_sha256 = "4873d9ab0f29dfc467d4f3a538565944a9835d0abfaf1b57dbcd2991d633c2e6"
