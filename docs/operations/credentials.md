@@ -389,8 +389,7 @@ holds only its role's password, and the address is plain configuration (ADR-0055
   back to the file. security-standards' `factory-events-nightly.sh` reads the file with the same
   refusals.
 
-Never read `~/.factory/env` for these settings: the nightly sources it under `set -a`, and it
-carries `FACTORY_DB_DSN`.
+Never read `~/.factory/env` for these settings: the nightly sources it under `set -a`.
 
 The holders in this repository:
 
