@@ -227,6 +227,9 @@ table row says.
 
 - `make check`: **green**. It collected 15,074 tests: **15,073 passed and 1 skipped** (exit 0,
   7 minutes 21 seconds). Ruff, format and pyright are clean.
+- CI on PR #723 (run 43885468053): `Quality` pass, with 15,051 passed and 23 skipped (14 minutes
+  46 seconds; CI skips more tests than the local run); `Rollout transcription currency` pass;
+  `Runner consumer compatibility` pass.
 - Security scanner (`--category security`, from the repository root): 0 BLOCK, 2 WARN. The WARNs
   are the existing gitignore-coverage pattern checks; this change adds no secret file.
 - Targeted runs: `tests/scripts/test_run_work_carrier.py` (51), `tests/scripts/test_sds_git.py`
