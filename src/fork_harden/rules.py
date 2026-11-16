@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 
-from fork_harden import n8n, octo
+from fork_harden import mwg, n8n, octo
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,20 @@ REGISTRY_FETCH = Rule(
     fix=n8n.fix_registry,
 )
 
+GUIDANCE_CLI = Rule(
+    name="mwg-skill-runs-the-installed-cli",
+    finding=(
+        "the skill and its guides tell an agent to run `npx -y modern-web-guidance@latest`, "
+        "upstream's newest npm release with telemetry on, outside the fork's review "
+        "(onboarding review of v1.0.1, 2026-11-16)"
+    ),
+    paths=(f"{mwg.SKILLS}/*",),
+    detect=mwg.detect,
+    fix=mwg.fix,
+)
+
 FORKS: tuple[Fork, ...] = (
     Fork("AlobarQuest/claude-octopus", (INLINE_PYTHON,)),
     Fork("AlobarQuest/n8n-as-code", (MCP_SERVER, REGISTRY_FETCH)),
+    Fork("AlobarQuest/modern-web-guidance", (GUIDANCE_CLI,)),
 )

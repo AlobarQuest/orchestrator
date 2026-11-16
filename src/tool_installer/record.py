@@ -56,7 +56,7 @@ from tool_installer.install import (
     ACTION_ROLLED_BACK,
     ProbeResult,
 )
-from tool_installer.tools import NpmInstall, PluginInstall, Tool
+from tool_installer.tools import NpmInstall, PluginInstall, RegistryInstall, Tool
 
 # ADR-0042's lane, named once for the whole lane rather than once per tool -- the precedent is
 # `drift_digest`, `recovery_floor`, `machine_activation` and `pin_watcher`: `source_system` names
@@ -250,6 +250,44 @@ def _plugin_summary(installation: Installation) -> str:
     )[:MAX_SUMMARY]
 
 
+def _registry_sentence(installation: Installation) -> str | None:
+    """The registry row's sentences where the cargo wording says "built", which it never is: it is
+    upstream's published package holding the fork's files (`registry.py`). `None` where the
+    shared wording is true of it."""
+    name = installation.tool.name
+    short = installation.available_revision[:7]
+    installed = (installation.installed_revision or "nothing")[:7]
+    if installation.action == ACTION_ROLLED_BACK:
+        return (
+            f"{name} was installed at {short} but did not prove itself, so the previous artifact "
+            f"was restored; the machine is running {installed}."
+        )
+    if installation.action == ACTION_INSTALL_FAILED:
+        return (
+            f"{name} could not be installed at {short}; the working artifact is in place, because "
+            f"the old package is moved aside only by an atomic rename and is renamed back if the "
+            f"new one cannot follow it."
+        )
+    if installation.action in (ACTION_INSTALLED, ACTION_ROLLBACK_FAILED):
+        return None
+    if installation.state == STATE_CURRENT:
+        return (
+            f"{name} {installation.installed_version} on the operator machine holds "
+            f"{installed}, which is {installation.tool.branch}'s head."
+        )
+    if installation.state == STATE_BEHIND:
+        permitted = (
+            "; this pass was not permitted to act"
+            if installation.action == ACTION_NOT_PERMITTED
+            else ""
+        )
+        return (
+            f"{name} on the operator machine holds {installed}, which is not "
+            f"{installation.tool.branch}'s head {short}{permitted}."
+        )[:MAX_SUMMARY]
+    return None
+
+
 def summary_of(installation: Installation) -> str:
     """One sentence, computed from the same state and action the facts carry.
 
@@ -258,6 +296,13 @@ def summary_of(installation: Installation) -> str:
     """
     if isinstance(installation.tool.install, PluginInstall):
         return _plugin_summary(installation)
+    if isinstance(installation.tool.install, RegistryInstall):
+        return _registry_sentence(installation) or _binary_summary(installation)
+    return _binary_summary(installation)
+
+
+def _binary_summary(installation: Installation) -> str:
+    """The cargo and npm rows' sentences."""
     name = installation.tool.name
     short = installation.available_revision[:7]
     if installation.action == ACTION_INSTALLED:

@@ -299,22 +299,13 @@ def _assets_destination(assets: PublishedAssets, checkout: Path) -> Path:
     return destination
 
 
-def _place_published_assets(
-    assets: PublishedAssets, npm: str, env: dict[str, str], work: Path, checkout: Path
-) -> None:
-    """Fetch upstream's published package and copy ONLY its data files into the checkout."""
-    manifest = checkout / assets.workspace / "package.json"
-    document = _read_manifest(manifest)
-    version = document.get("version")
-    if not isinstance(version, str) or not _VERSION.fullmatch(version):
-        raise NpmError(f"{assets.workspace} names no plain version to fetch: {version!r}")
-    destination = _assets_destination(assets, checkout)
+def _pack_published(npm: str, env: dict[str, str], download: Path, spec: str) -> tuple[Path, str]:
+    """`npm pack <spec>` into the new directory `download`: the tarball and its integrity.
 
-    # An empty directory as the working directory, so no project or `.npmrc` of the checkout's
-    # is in effect for the download.
-    download = work / "published"
+    npm checks the registry's integrity on the download. The empty directory is also the working
+    directory, so no project or `.npmrc` of a checkout's is in effect for it.
+    """
     download.mkdir()
-    spec = f"{assets.package}@{version}"
     code, stdout, detail = _run(
         [npm, "pack", spec, "--json", "--pack-destination", str(download)],
         env=env,
@@ -330,10 +321,26 @@ def _place_published_assets(
         raise NpmError(f"`npm pack {spec}` reported no tarball") from error
     if not isinstance(filename, str) or "/" in filename or not isinstance(integrity, str):
         raise NpmError(f"`npm pack {spec}` reported no usable tarball")
+    return download / filename, integrity
+
+
+def _place_published_assets(
+    assets: PublishedAssets, npm: str, env: dict[str, str], work: Path, checkout: Path
+) -> None:
+    """Fetch upstream's published package and copy ONLY its data files into the checkout."""
+    manifest = checkout / assets.workspace / "package.json"
+    document = _read_manifest(manifest)
+    version = document.get("version")
+    if not isinstance(version, str) or not _VERSION.fullmatch(version):
+        raise NpmError(f"{assets.workspace} names no plain version to fetch: {version!r}")
+    destination = _assets_destination(assets, checkout)
+
+    spec = f"{assets.package}@{version}"
+    tarball, integrity = _pack_published(npm, env, work / "published", spec)
 
     prefix = f"package/{assets.directory}/"
     landed: list[str] = []
-    with tarfile.open(download / filename) as archive:
+    with tarfile.open(tarball) as archive:
         for member in archive.getmembers():
             if not member.name.startswith(prefix):
                 continue
@@ -425,20 +432,20 @@ def _linked_package(prefix: Path, package: str) -> Path:
 
 
 def _npm_prefix_link(
-    tool: Tool, row: NpmInstall, node: Node, env: dict[str, str], own: Path
+    command: str, package: str, node: Node, env: dict[str, str], own: Path
 ) -> _PrefixLink:
-    """Where `npx` will look for the tool, and what is there now -- refused unless it is absent,
-    already `own`, or what `npm link` leaves. See the module docstring."""
+    """Where `npx` will look for `command`, and what is there now -- refused unless it is absent,
+    already `own`, or what `npm link` leaves of `package`. See the module docstring."""
     code, stdout, detail = _run(
         [str(node.npm), "prefix", "-g"], env=env, timeout=PROBE_TIMEOUT_SECONDS
     )
     prefix = Path(stdout.strip())
     if code != 0 or not prefix.is_absolute() or not prefix.is_dir():
         raise NpmError(f"`npm prefix -g` exited {code} with no usable prefix: {detail}")
-    linked = _linked_package(prefix, row.package)
+    linked = _linked_package(prefix, package)
     if linked.exists() and not linked.is_symlink():
         raise NpmError(f"{linked} is a real install, not an `npm link`; it is not this lane's")
-    path = prefix / "bin" / tool.name
+    path = prefix / "bin" / command
     previous = _read_link(path)
     if previous is not None and previous != str(own):
         # Resolved as text, not through the filesystem: the question is whether the link goes
@@ -496,17 +503,18 @@ def _probe_through(path: Path, expected_version: str, env: dict[str, str]) -> Pr
 
 
 def _take_npm_prefix(
-    prefix: _PrefixLink, row: NpmInstall, expected_version: str, env: dict[str, str]
+    prefix: _PrefixLink, package: str, expected_version: str, env: dict[str, str]
 ) -> ProbeResult:
-    """Write the prefix's link, prove it, and only then drop the `npm link` package.
+    """Write the prefix's link, prove it, and only then drop the `npm link` package. `env` is
+    the probes' environment.
 
     The package goes LAST: the previous link may resolve through it, so removing it first could
     leave a rollback restoring a link pointing at nothing.
     """
     _write_prefix_link(prefix)
-    result = _probe_through(prefix.path, expected_version, _probe_environment(row, env))
+    result = _probe_through(prefix.path, expected_version, env)
     if result.passed:
-        linked = _linked_package(prefix.path.parent.parent, row.package)
+        linked = _linked_package(prefix.path.parent.parent, package)
         if linked.is_symlink():
             linked.unlink()
     return result
@@ -627,7 +635,9 @@ def _prove_in_place(
 
     if prefix is not None:
         try:
-            through = _take_npm_prefix(prefix, row, installed.version, env)
+            through = _take_npm_prefix(
+                prefix, row.package, installed.version, _probe_environment(row, env)
+            )
         except NpmError as error:
             _undo(target, link, outgoing)
             return _rolled_back(install_root, row, str(error), results)
@@ -649,6 +659,18 @@ def _prove_in_place(
                 results,
             )
     return InstallOutcome(action=ACTION_INSTALLED, installed=installed, probes=results)
+
+
+def _open_workspace(install_root: Path) -> tempfile.TemporaryDirectory[str]:
+    """A temporary directory inside the install root, so the staged tree renames into place."""
+    install_root.mkdir(parents=True, exist_ok=True)
+    # A pass killed mid-build (a launchd timeout, a reboot) never reaches the cleanup, and each
+    # such workspace holds two `node_modules` trees.
+    for stale in install_root.glob(f"{BUILD_PREFIX}*"):
+        shutil.rmtree(stale)
+    return tempfile.TemporaryDirectory(
+        dir=install_root, prefix=BUILD_PREFIX, ignore_cleanup_errors=True
+    )
 
 
 def install_and_prove_npm(
@@ -683,18 +705,11 @@ def install_and_prove_npm(
         # Read before anything is built or moved, so a prefix that is someone else's refuses the
         # pass with the machine exactly as it was found.
         prefix = (
-            _npm_prefix_link(tool, row, node, env, link.absolute())
+            _npm_prefix_link(tool.name, row.package, node, env, link.absolute())
             if row.link_into_npm_prefix
             else None
         )
-        install_root.mkdir(parents=True, exist_ok=True)
-        # A pass killed mid-build (a launchd timeout, a reboot) never reaches the cleanup below,
-        # and each such workspace holds two `node_modules` trees.
-        for stale in install_root.glob(f"{BUILD_PREFIX}*"):
-            shutil.rmtree(stale)
-        workspace = tempfile.TemporaryDirectory(
-            dir=install_root, prefix=BUILD_PREFIX, ignore_cleanup_errors=True
-        )
+        workspace = _open_workspace(install_root)
     except NpmError as error:
         return failed(str(error))
     except OSError as error:

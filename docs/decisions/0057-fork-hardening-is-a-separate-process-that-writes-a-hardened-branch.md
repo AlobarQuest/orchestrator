@@ -122,3 +122,32 @@ into a project's generated `AGENTS.md`, which resolves through the same gated pr
 - A hold leaves the installer on the last good hardened version, and the alarm says so.
 - The tool runs fork code built from `hardened`, so the installer's own probes are the proof that
   the hardened build works.
+
+## Amendment 1 — A third fork: modern-web-guidance (2026-11-16)
+
+**Status:** Accepted (Devon, 2026-11-16, Option A of
+`docs/superpowers/plans/2026-11-16-modern-web-guidance-onboard.md`).
+
+`AlobarQuest/modern-web-guidance` is a fork of Google's Claude Code plugin of web-platform
+guidance. Its skill tells an agent to run `npx -y modern-web-guidance@latest search`, `retrieve`
+and `legacy-scan`, its guides cross-reference each other the same way (211 sites at v1.0.1), and
+its "Using npx / pnpx" section asks for the runner to be allowlisted and for network access. Each
+runs upstream's newest npm release with telemetry on, outside the fork's review.
+
+- **One rule, `mwg-skill-runs-the-installed-cli`, over `skills/*`** (`src/fork_harden/mwg.py`).
+  The fix rewrites `npx -y modern-web-guidance@<tag> ` to `modern-web-guidance `, replaces the
+  "Using npx / pnpx" section with a fixed one (the CLI is installed here at the skill's own
+  version, `search` and `retrieve` need no network, never run it through a package runner or a
+  tag, never run `install`, `update` or `uninstall`), and rewords the one sentence that says
+  "directly with `npx`". The bare command resolves through `/opt/homebrew/bin/modern-web-guidance`,
+  the link the installer's `modern-web-guidance-cli` row owns (ADR-0042 amendment 5), as decision
+  9 has it for `n8nac`.
+- **The check over-counts:** any `npx`, `npx.cmd`, `pnpx`, `bunx`, `npm exec`, `npm x`, `pnpm dlx`
+  or `yarn dlx`, any `modern-web-guidance@`, and any run of the CLI's `install`, `update` or
+  `uninstall`, which spawn an unpinned `npx -y skills`. A skill that still names a runner with no
+  section to replace, or with two, raises and holds.
+- **Measured on the fork's `main` (`1c3cc6f`) without `--push`:** 181 lines flagged in 235 covered
+  files; the result differs from `main` in 68 files, all under `skills/`, the check flags nothing
+  on it and the guard passes (`would_advance`). The rule's fix and the installer row land in one
+  pull request, so `hardened` must be created by a `--push` pass before the installer's next pass:
+  the installer's measurement of a row whose branch doesn't exist fails the whole pass.
