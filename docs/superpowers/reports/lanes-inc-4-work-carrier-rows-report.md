@@ -207,7 +207,7 @@ The orchestrator was already in both sets through its other lane rows, and it is
 - New and touched tests: `test_work_carrier_rows.py` and `test_deploy_lanes.py`, 110 passed.
 - `make check` with `orchestrator_test_hq_w_190`, at `0aa62b3b`: exit 0; 15,247 passed, 1 skipped
   (lint, format and pyright clean). After the merge of `origin/main`, at `3f3ebb78`: exit 0; 15,264 passed, 1 skipped.
-- CI on the PR head: CIRESULT.
+- CI on `adc52d17` (the last commit with any non-report change in scope; later commits touch only this report): Quality, Rollout transcription currency and Runner consumer compatibility all pass; the PR is `MERGEABLE`.
 - Security scan from the repo root: BLOCK 0, WARN 2, INFO 1. Both WARNs come from before this
   change: glob `*-migration/` not covered, and the undeclared UUID `aaff45ca-…` that earlier
   reports name (`adr-0055-a22-increment-2-report.md:183`). Neither is in this diff.
