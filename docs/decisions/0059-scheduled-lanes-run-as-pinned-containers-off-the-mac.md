@@ -3206,3 +3206,220 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Amendment 9's closing paragraph, ADR-0007 and `follow-up-scheduling.md` "still say infra-drift runs the daily pass" (lines 3068-3069) | Stands, and carried as a "Verify in increment 9" item with `credentials.md` lines 88-92. |
 | Decision 3, "Every lane keeps its check. A moved lane pings the same check" (lines 675-676) | Stands for moved lanes. `follow-up-mint` has no Mac predecessor, so it gets a new check (decision item 1). |
 | Decision 5, "Classification of the 20 launch agents" (line 768) | Stands. `follow-up-mint` isn't a Mac launch agent, so the count of twenty doesn't change. |
+
+## Amendment 11 (2026-11-16): the work carrier reads the portfolio scan's results from the factory-events chain
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
+  D-12, limit 3). The ADR's own status is unchanged.
+- **Decided by:** Devon, on 2026-11-16 in interactive HQ sessions, answering HQ D-55 and D-56
+  (sds-hq `state/decisions.md` at `4427c4e1`). D-55 asked: "Work carrier's move to the VPS
+  (ADR-0059 increment 4, lines 805-811): its workability check reads the Mac portfolio scan's
+  ~/.portfolio/portfolio.json for four check results per repository (runner.caller,
+  factory.secrets, factory.landing_known, factory.pat_access). A container has no such file, so
+  every repository-targeted package (dependency updates) would hold; standing rotation packages
+  don't read it and still carry (workability.py assess_operational). Where should the moved
+  carrier get those results? (A) Interim Mac feed: after the 03:00 scan, a Mac step publishes only
+  those four results for the members, keyed by repository slug, to a place the lane reads; no new
+  GitHub scope, fails closed (holds) if the Mac scan stops for 48 hours, until Phase 3's
+  onboarding scan runs them server-side. (B) The lane runs the four checks itself: the read-only
+  App gains Secrets: read (D-18 said nothing else), and the carrier lane reads the factory PR token
+  (a write PAT) and an App Brain read key. (C) Move the carrier with repository work held: it
+  carries only standing packages until Phase 3; no new credential or Mac input, but no
+  dependency-update carry until then." The recorded answer is "A (interim Mac feed of the four
+  check results, keyed by repository slug, fails closed after 48 hours). Devon, interactive
+  session, chose the recommended option." (2026-11-16T13:16:01Z). D-56 asked: "Work carrier's move
+  (D-55 A, the interim Mac feed of the four portfolio check results): where does the feed go?
+  Every transport HQ mapped needs something new. (A) The Mac nightly (com.devon.factory-events,
+  03:30, after the 03:00 scan) appends one event per scan to the factory-events chain, holding the
+  four results per member keyed owner/repo with the scan's own time; the carrier reads it with the
+  read access it already has and holds when it is missing or the scan is over 48 hours old. New: a
+  credential-less registry actor for the event (like lane-credential-policy, D-38) and one new
+  event source value; no new account, grant, or network path. Any chain append holder (interactive
+  approvals, the HQ cycle, the bump proposer, the nightly) could write such an event, the same
+  reach they have for package.approved today. (B) The scan posts an orchestrator observation under
+  a new single-purpose OBSERVER key (new registry agent, a BWS secret you mint, a database
+  migration for the observation type): distinct attribution, but a new identity and a mint. (C)
+  Something else." The recorded answer is "A, actor name portfolio-scan. Devon accepts
+  scan-derived content in the factory-events chain (interactive session, chose the recommended
+  option)." (2026-11-16T14:13:51Z). Both answers are about the work carrier's portfolio input
+  only and state no general rule.
+- **Relates to:** decision 5 (the work carrier's Mac input, lines 805-811, and the `work-carrier`
+  row, line 791), "The week bar"'s done-when paragraph (lines 1299-1301 and 1309-1310), Amendment 7
+  (the chain moves to the VPS database; decision items 1, 2 and 6, and the step 3f-2 paragraph
+  that carries D-52 A, lines 2883-2886), Amendment 8 (decision item 1, the chain's one reader, and
+  item 6, "No new authority beyond the answers"), and Phase 3's onboarding scan, which D-55 names
+  as the interim's end.
+
+Line numbers in this amendment are this file's at orchestrator `6b356b9f`, before the amendment
+was appended. The amendment appends only: no passage before it is rewritten, so each line cited
+here still holds the text it names. Where this amendment and an earlier passage disagree, this
+amendment governs once it's accepted.
+
+### Context
+
+Decision 5 left the work carrier's increment to decide where the portfolio scan's output comes
+from before the lane moves (lines 805-811). The carrier's workability check reads
+`~/.portfolio/portfolio.json` (`src/work_carrier/workability.py`: `DEFAULT_PORTFOLIO` line 103,
+`PORTFOLIO_ENV = "WORK_CARRIER_PORTFOLIO"` line 104, `PORTFOLIO_MAX_AGE_HOURS = 48` line 107, and
+the four checks, `CAPABILITY_CHECKS` and `PERMISSION_CHECKS`, lines 115-116). In the lane's
+container that file is absent, so the `capable` and `permissions` terms answer UNKNOWN, an
+UNKNOWN makes the record `UNDECIDED` (lines 196-211), and every repository-targeted record holds
+(`tests/work_carrier/test_container_portfolio.py`). Standing operational packages ask no portfolio
+question (`assess_operational`, line 529) and carry anywhere.
+
+Two facts about today's file shape the decision. It records no scan time: project-standards
+`aggregate.py::to_json` (lines 111-120 at `90391362`) writes no `generated_at`, so
+`load_portfolio` ages the file by its mtime (`workability.py` lines 233-260). And it carries no
+repository slug: the carrier joins a record to a row by directory name, dropping the owner
+(`_names` and `project_for`, lines 273-300). The scan itself already knows each slug: its factory
+sweep measures a working copy only when its origin names a member slug that
+`member_scope.read_granted` returns (project-standards `factory_checks.py::sweep`, lines 900-919,
+and `scan.py` line 42, at `90391362`).
+
+### Decision
+
+1. **Producer (project-standards).** The 03:00 portfolio scan (`integrations/com.devon.portfolio-scan.plist`,
+   `src/portfolio/scan.py`, `src/portfolio/aggregate.py` at `90391362`) also writes a feed beside
+   `portfolio.json` in the portfolio home. The feed holds:
+   - the scan's own time, in UTC, taken when the scan runs (the scan records none today);
+   - for each repository the scan measured, the four results (`runner.caller`, `factory.secrets`,
+     `factory.landing_known`, `factory.pat_access`) with the statuses the sweep records, keyed by
+     the repository's full `owner/repo`, lowercased.
+
+   The repositories are exactly the set the sweep measures: the members `member_scope.read_granted`
+   returns (`scan.py` line 42), which are the non-retired members whose `app_changes` grant is
+   `granted` or `remediating` (`member_scope.py` lines 23-24 and 69-88), lowercased `owner/repo`.
+   A member with no working copy on the Mac has no row, as today. When the member record is
+   unreadable, the scan measures no repository, and the feed says so rather than reading as a
+   scan that found nothing. No owner name appears in code (HQ standing answer of 2026-11-09).
+2. **Carrier into the chain (security-standards).** The Mac nightly
+   (`scripts/factory-events-nightly.sh` at security-standards `05963b76`, 03:30 local by
+   `scripts/com.devon.factory-events.plist.template`) appends the feed as one event per scan,
+   through the append function, during its `adapt` stage, so the verify that follows covers it.
+   The event is:
+   - `action`: `portfolio.scanned` (it matches the schema's `action` pattern,
+     `^[a-z0-9_]+\.[a-z0-9_.\-]+$`);
+   - `actor`: `portfolio-scan`, a new registry agent with no credential, the same kind of entry as
+     `registry/agents/lane-credential-policy.yaml` (`authority_profile: none-v1`,
+     `capabilities: []`, `prohibited: []`);
+   - `source.system`: `portfolio-scan`, one new value in the closed `source.system` enum of
+     `schema/factory-event.v1.schema.json`; `source.ref` is the scan time;
+   - `timestamp`: the scan's own time from the feed, as both existing adapters put their source
+     record's own time in `timestamp` (`adapters/high_power.py` lines 94 and 106,
+     `adapters/change_manager.py` line 131). The chain stores no append time;
+   - `event_id`: deterministic from `source.system` and `source.ref`
+     (`envelope.deterministic_event_id`), as the change-manager adapter derives its ids, so a
+     nightly that finds the same feed again appends nothing;
+   - `evidence`: one object per measured repository, holding its `owner/repo` and its four
+     results;
+   - `target`: null. The code step chooses `result` (the schema allows `success`, `failure` or
+     `unknown`) and which field marks a scan that measured nothing because the member record was
+     unreadable; the schema refuses extra top-level fields, so it can't be a new one. A scan that
+     measured nothing gives the carrier no row, so every repository-targeted record holds.
+
+   The nightly only copies. It reads no member record and changes nothing in the feed's
+   repositories or results. It reads the feed with the access it already has to the Mac's files.
+3. **Reader (orchestrator).** The moved work carrier reads the newest `portfolio.scanned` event,
+   newest by `timestamp` (the scan time), not by `seq`, with the chain read access it already has
+   (Amendment 8 decision item 1), and only on a pass whose chain verify succeeded (lines
+   2883-2886): a pass whose chain doesn't verify carries nothing, so no event from it is used. It
+   reads no Mac file, and no new variable joins `lane-run`'s list for it. Which process walks the
+   chain for the event, and how the result reaches `work_carrier`, is the code step's (see the
+   following verify items). It joins a record to a row by the full `owner/repo`, case-folded, in place of the
+   directory-name join. It holds a repository-targeted record, its `capable` and `permissions`
+   terms answering UNKNOWN as `load_portfolio` does for a stale file, when:
+   - no `portfolio.scanned` event exists;
+   - the newest event's scan time is more than `PORTFOLIO_MAX_AGE_HOURS` (48) before the pass;
+   - the event has no row for the record's repository.
+
+   The age keys on the scan's time, never on the append time or the feed file's mtime. Standing
+   operational packages don't read the event (`assess_operational`, line 529) and carry as before.
+4. **Interim.** The feed lasts until Phase 3's onboarding scan runs the four checks server-side
+   (D-55's words). That retires the Mac step, the `portfolio.scanned` event, and the reader's use
+   of it, by a later amendment.
+5. **Authority, exactly.** The amendment grants nothing at merge. D-56 approves two new things,
+   for this feed and nothing wider:
+   - one credential-less registry actor, `portfolio-scan`;
+   - one `source.system` value, `portfolio-scan`.
+
+   No new account, BWS grant, GitHub scope or network path. The nightly appends with the append
+   password it already reads (`2ce0dbc7-…`, through its own `factory-events-nightly` account,
+   `factory-events-nightly.sh` lines 162-177), and the carrier reads with the read grant
+   Amendment 8 decision item 1 gives the work-carrier lane account (`2f708d08-…`). The schema
+   value and the registry entry are the "credential-less registry actor" and "one new event
+   source value" D-56 names, so Amendment 8 item 6's "No new authority beyond the answers" holds:
+   they come from D-56's answer.
+
+   D-56 accepted this: every append holder D-43 B names (interactive approvals through
+   `factory-events-session`, the HQ cycle, the bump proposer, and the nightly) can write a
+   `portfolio.scanned` event, and the chain can't tell holders apart, because the actor is
+   self-declared. A forged event could turn a hold into a pass, the same reach those holders have
+   for `package.approved`. Devon accepted that.
+6. **The failure signal.** A missing or stale feed must reach a person as a signal with a machine
+   home, not only as a log line (ADR-0021 amendment 1, "every signal has a machine home"). The
+   nightly's exit and ping don't change with the feed step: its alarm stays about its chain duties,
+   so an absent, unreadable or malformed feed appends nothing and leaves the nightly's exit as it
+   was. The signal is the carrier's own outcome. A record held for a missing or stale feed is
+   `UNDECIDED`, which exits 2 (`_HELD_EXIT`, `src/work_carrier/cli.py` lines 136-140), and the
+   launcher's outcome alarm pings `/fail` on `sds-work-carrier` with the report as the body, which
+   alert-hub delivers (`scripts/run-work-carrier.sh` lines 181-187). This proposes that existing
+   path as the signal; it adds no mechanism. One case stays silent: a stale feed with no
+   repository-targeted record in the queue holds nothing, so the pass raises nothing until such a
+   record arrives. The code step decides that case (see the following verify items).
+
+### Verify items
+
+Each item names the step that verifies it: the feed's code step (3f-2-feed, which spans
+project-standards, security-standards and orchestrator) or the carrier's cut-over.
+
+- **The scan finishes before the nightly reads (3f-2-feed).** The scan starts at 03:00 and wrote
+  `portfolio.json` at 03:00:35 on 2026-11-16; the nightly starts at 03:30. If a scan runs late,
+  the nightly finds the previous feed. The code step must prove that a feed already appended adds
+  no second event (the deterministic `event_id`), and that the carrier takes the event with the
+  newest scan time whatever its `seq`, so a late or out-of-order append never makes an older scan
+  win.
+- **The pieces land together (3f-2-feed).** The schema value and the `portfolio-scan` registry
+  entry, and the nightly's append, in security-standards; the scan's feed in project-standards;
+  the carrier's reader in orchestrator, with the guards its read changes
+  (`tests/architecture/test_intent_edges.py`, which pins `factory_chain_read`'s environment and
+  commands, and the `work_carrier` row of `tests/architecture/test_out_of_process_isolation.py`).
+  In the container the carrier no longer reads a file, so `WORK_CARRIER_PORTFOLIO` doesn't join
+  `lane-run`'s list (line 811's "if it's a file"). The code step states whether
+  `DEFAULT_PORTFOLIO` and `WORK_CARRIER_PORTFOLIO` stay for the Mac carrier until its cut-over or
+  leave with it.
+- **How the event reaches the carrier (3f-2-feed).** The launcher runs
+  `orchestrator.factory_chain_read` as its own process and passes only its summary to the report
+  (`scripts/run-work-carrier.sh` lines 560-597), and `work_carrier`'s imports are confined by its
+  row in `tests/architecture/test_out_of_process_isolation.py` (from line 719). The code step
+  names which process walks the chain for the event and how the result reaches `work_carrier`,
+  keeping decision item 3's properties: read only on a verified pass, no Mac file, nothing new in
+  `lane-run`'s list.
+- **Members only, full keys (3f-2-feed).** The feed and the event hold rows for the repositories
+  the sweep measures and no other, each keyed by full lowercased `owner/repo`. A repository
+  outside the member record gets no row, so a record targeting it is held. A test proves it with
+  a working copy whose origin names no member.
+- **The silent case (3f-2-feed).** The code step decides, and its plan states, whether the carrier
+  reads the event on every pass and reports a missing or stale feed even when it holds no record,
+  or only when a repository-targeted record needs it (the case decision item 6 names).
+- **The carrier's cut-over can't finish without a fresh feed (cut-over).** This amendment decides
+  the source that lines 805-811 left open for the work carrier. The carrier's cut-over can't
+  finish until its first VPS pass reads a `portfolio.scanned` event whose scan time is under 48
+  hours old, or holds its repository-targeted records for a reason it names (no event, a stale
+  event, or no row).
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `6b356b9f`:
+
+| Passage | Disposition |
+|---|---|
+| Decision 5, the `work-carrier` row, "its `portfolio.json` input is decided in increment 4 (following paragraphs)" (line 791) | Answered by decision items 1 to 3: the input is the `portfolio.scanned` event in the factory-events chain. The rest of the row stands. |
+| Decision 5, the work carrier's Mac input, "The work carrier's increment must decide where the scan's output comes from before the lane moves" (lines 805-811) | Answered by decision items 1 to 3 (D-55 A, D-56 A). The description of today's read stands. "If it's a file, `WORK_CARRIER_PORTFOLIO` joins `lane-run`'s list" doesn't apply: the moved carrier reads the chain, not a file. |
+| "The week bar", the done-when paragraph, "nor any other moved lane's input may still live on the Mac by then (decision 5)" (lines 1299-1301) | Stands. The carrier's input is an event in the VPS chain, as the Mac-written approvals are. Its producer, the portfolio scan and the nightly's append, stays on the Mac until Phase 3, in D-55's words, and a stopped scan holds repository-targeted records after 48 hours. Neither D-55 nor D-56 mentions the phase bar, so this amendment changes nothing in it. |
+| "The week bar", "the one that feeds a moved lane is `portfolio-scan`, whose output the work carrier reads (decision 5)" (lines 1309-1310) | Stands. The scan's output now reaches the carrier through the chain (decision items 1 and 2), and `portfolio-scan` stays a Mac infra job. |
+| Amendment 7, decision item 1, "What comes into Phase 1, and only this" and "Nothing else of factory-events moves" (lines 2786-2795) | Extended by D-56 to the extent of decision items 2 and 5: the `portfolio.scanned` event, its actor, and its `source.system` value. Nothing else of factory-events changes. |
+| Amendment 7, decision item 2, "The nightly job stays on the Mac ... Only its target changes" (lines 2796-2801) | Extended by decision item 2: the nightly also appends one `portfolio.scanned` event per scan. It still stays on the Mac and outside the phase bar, and its exit and ping are unchanged (decision item 6). |
+| Amendment 7, decision item 6, "No new authority beyond the four answers" (lines 2867-2872) | Stands. The append and read DSNs keep exactly their holders; the one new actor and source value are D-56's (decision item 5). |
+| Amendment 7, the step 3f-2 paragraph, "the work carrier's container runs `python -m orchestrator.factory_chain_read` once on every pass" (lines 2883-2886) | Stands. The carrier uses a `portfolio.scanned` event only on a pass whose chain verify succeeded (decision item 3). |
+| Amendment 8, decision item 1, "Only the work carrier reads the chain (D-44 B)" (lines 2924-2927) | Stands. The carrier is the event's one reader; the scan and the nightly don't read the chain for it. |
+| Amendment 8, decision item 6, "No new authority beyond the answers" (lines 2952-2953) | Stands. This amendment grants no project, account or read (decision item 5). |
