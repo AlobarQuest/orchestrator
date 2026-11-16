@@ -154,11 +154,11 @@ class Fork:
         return str(self.repo)
 
 
-def _member(archive: tarfile.TarFile, name: str, content: str | bytes) -> None:
+def _member(archive: tarfile.TarFile, name: str, content: str | bytes, mode: int = 0o644) -> None:
     data = content.encode("utf-8", "surrogateescape") if isinstance(content, str) else content
     info = tarfile.TarInfo(name)
     info.size = len(data)
-    info.mode = 0o644
+    info.mode = mode
     archive.addfile(info, io.BytesIO(data))
 
 
@@ -177,7 +177,7 @@ def _published(
     path = tmp_path / "published.tgz"
     with tarfile.open(path, "w:gz") as archive:
         for name, text in files.items():
-            _member(archive, f"package/{name}", text)
+            _member(archive, f"package/{name}", text, 0o755 if name.endswith(".mjs") else 0o644)
         if link:
             info = tarfile.TarInfo(f"package/{link}")
             info.type = tarfile.SYMTYPE
@@ -259,6 +259,9 @@ def test_a_first_install_holds_the_forks_files_and_only_the_cli_from_the_tarball
     assert (package / "skills/g/guides/dialog.md").read_text() == HARDENED_GUIDE
     assert (package / "skills/g/SKILL.md").read_text() == HARDENED_SKILL
     assert (package / "skills/g/cli.mjs").read_text() == CLI
+    # The tarball's own files keep its executable bit, and only that.
+    assert stat.S_IMODE((package / "skills/g/cli.mjs").stat().st_mode) == 0o755
+    assert stat.S_IMODE((package / "skills/g/skill-version.txt").stat().st_mode) == 0o644
     manifest = json.loads((package / "package.json").read_text())
     assert manifest["gitHead"] == fork.hardened
     assert manifest[REGISTRY_FIELD] == {
@@ -507,3 +510,15 @@ def test_the_registry_rows_record_never_says_it_was_built(
     sentence = summary_of(_row(action, installed))
     assert says in sentence
     assert "built" not in sentence
+
+
+def test_a_fork_file_only_the_tarball_also_holds_is_a_named_REFUSAL(
+    node: Node, tmp_path: Path, fork: Fork
+) -> None:
+    """The comparison is with `main`, so a file the hardened tree added that the tarball ships
+    is neither compared nor ours to overwrite."""
+    files = {**_hardened_files(), "skills/g/skill-version.txt": STAMP}
+    later = _commit(fork.repo, files, [fork.main], "fork-harden")
+    outcome = _act(node, tmp_path, fork.source, later)
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "both hold skills/g/skill-version.txt" in outcome.detail

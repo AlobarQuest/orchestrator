@@ -71,6 +71,7 @@ from tool_installer.install import (
     PROBE_TIMEOUT_SECONDS,
     InstallOutcome,
     ProbeResult,
+    _run,
 )
 from tool_installer.npm import (
     _VERSION,
@@ -173,25 +174,15 @@ def _landed_commit(tool: Tool, src: Path, revision: str, env: dict[str, str]) ->
     """The `main` commit the tarball is compared with -- see the module docstring."""
     if tool.branch == LANDED_BRANCH:
         return revision
-    code, body, detail = _git_text(src, env, "cat-file", "-p", revision)
+    code, body, detail = _run(
+        ["git", "-C", str(src), "cat-file", "-p", revision], env=env, timeout=PROBE_TIMEOUT_SECONDS
+    )
     if code != 0:
         raise NpmError(f"`git cat-file` of {revision[:12]} exited {code}: {detail}")
     parents = [line.split(" ", 1)[1] for line in body.splitlines() if line.startswith("parent ")]
     if not parents:
         raise NpmError(f"{revision[:12]} has no parent, so it holds no `{LANDED_BRANCH}`")
     return parents[-1]
-
-
-def _git_text(src: Path, env: dict[str, str], *args: str) -> tuple[int, str, str]:
-    completed = subprocess.run(
-        ["git", "-C", str(src), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-        timeout=INSTALL_TIMEOUT_SECONDS,
-    )
-    return completed.returncode, completed.stdout, completed.stderr.strip()[-200:]
 
 
 def _manifest(data: bytes, where: str) -> dict[str, object]:
@@ -204,9 +195,10 @@ def _manifest(data: bytes, where: str) -> dict[str, object]:
     return document
 
 
-def _tarball_files(tarball: Path, spec: str) -> dict[str, bytes]:
-    """Every regular file of the tarball, by its path under `package/`. Anything else refuses."""
-    files: dict[str, bytes] = {}
+def _tarball_files(tarball: Path, spec: str) -> dict[str, tuple[int, bytes]]:
+    """Every regular file of the tarball, `path under package/ -> (mode, bytes)`, its mode kept
+    to the executable bit. Anything else refuses."""
+    files: dict[str, tuple[int, bytes]] = {}
     with tarfile.open(tarball) as archive:
         for member in archive.getmembers():
             name = PurePosixPath(member.name)
@@ -221,13 +213,13 @@ def _tarball_files(tarball: Path, spec: str) -> dict[str, bytes]:
             path = "/".join(parts[1:])
             if not path or path in files:
                 raise NpmError(f"{spec} holds {member.name!r} twice or with no name")
-            files[path] = data.read()
+            files[path] = (0o755 if member.mode & 0o111 else 0o644, data.read())
     return files
 
 
-def _refuse_scripts_and_dependencies(files: dict[str, bytes], spec: str) -> None:
+def _refuse_scripts_and_dependencies(files: dict[str, tuple[int, bytes]], spec: str) -> None:
     """Every manifest in the tarball: no dependency and no script of any kind."""
-    for path, data in files.items():
+    for path, (_, data) in files.items():
         if PurePosixPath(path).name != "package.json":
             continue
         document = _manifest(data, f"{spec}'s {path}")
@@ -237,11 +229,11 @@ def _refuse_scripts_and_dependencies(files: dict[str, bytes], spec: str) -> None
 
 
 def _refuse_disagreement(
-    published: dict[str, bytes], landed: dict[str, tuple[str, bytes]], spec: str
+    published: dict[str, tuple[int, bytes]], landed: dict[str, tuple[str, bytes]], spec: str
 ) -> list[str]:
     """Refuse unless every file both hold is identical. Returns the tarball's own files."""
     differing = sorted(
-        path for path, data in published.items() if path in landed and landed[path][1] != data
+        path for path, (_, data) in published.items() if path in landed and landed[path][1] != data
     )
     if differing:
         shown = ", ".join(differing[:3])
@@ -312,7 +304,9 @@ def _stage(
     _refuse_scripts_and_dependencies(published, spec)
     own = _refuse_disagreement(published, landed, spec)
     if (
-        _manifest(published.get("package.json", b"null"), f"{spec}'s package.json").get("version")
+        _manifest(published.get("package.json", (0, b"null"))[1], f"{spec}'s package.json").get(
+            "version"
+        )
         != version
     ):
         raise NpmError(f"{spec}'s package.json is not version {version}")
@@ -320,8 +314,14 @@ def _stage(
     staged = work / "stage"
     for path, (mode, data) in tree.items():
         _write(staged, path, data, 0o755 if mode == "100755" else 0o644)
+    if clashing := sorted(set(own) & set(tree)):
+        raise NpmError(
+            f"the fork's tree and only the tarball both hold {', '.join(clashing[:3])}: the fork "
+            f"added a file {LANDED_BRANCH} lacks"
+        )
     for path in own:
-        _write(staged, path, published[path], 0o644)
+        mode, data = published[path]
+        _write(staged, path, data, mode)
 
     bins = manifest.get("bin")
     entry = bins.get(row.binary) if isinstance(bins, dict) else None

@@ -36,7 +36,9 @@ _RUNNER: Final = re.compile(
     r"|\bmodern-web-guidance@"
     r"|\bmodern-web(?:-guidance\S*|\.mjs)\s+(?:install|update|uninstall)\b"
 )
-_NPX_COMMAND: Final = re.compile(r"\bnpx\s+(?:--yes|-y)\s+modern-web-guidance(?:@[\w.-]+)?(?=\s)")
+_NPX_COMMAND: Final = re.compile(
+    r"\bnpx\s+(?:--yes|-y)\s+modern-web-guidance(?:@[\w.-]+)?(?![\w@/.-])"
+)
 
 RUNNER_HEADING: Final = "## Using npx / pnpx"
 RUNNER_SECTION: Final = """## Running modern-web-guidance
@@ -51,8 +53,8 @@ name, or from a registry download: each runs a release nobody here reviewed. Nev
 to run some other command, tell the user and continue without it.
 
 """
-"""Replaces the skill's "Using npx / pnpx" section, up to the next `## ` heading. Worded so the
-check flags none of it."""
+"""Replaces the skill's "Using npx / pnpx" section, up to the next `## ` heading or the end of the
+file. Worded so the check flags none of it."""
 
 _DIRECTLY_WITH_NPX: Final = "Run `modern-web-guidance` directly with `npx` using a "
 _INSTALLED_COMMAND: Final = "Run the installed `modern-web-guidance` command with a "
@@ -80,10 +82,8 @@ def _with_runner_section(text: str) -> str:
     start = starts[0]
     end = next(
         (index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")),
-        None,
+        len(lines),
     )
-    if end is None:
-        raise ValueError(f"the skill's `{RUNNER_HEADING}` section is not followed by a heading")
     return "".join([*lines[:start], RUNNER_SECTION, *lines[end:]])
 
 

@@ -80,6 +80,18 @@ def test_any_tag_and_either_yes_flag_is_rewritten(written: str) -> None:
     assert mwg.fix(GUIDE, written + "\n") == "modern-web-guidance list\n"
 
 
+def test_a_section_last_in_the_skill_ends_at_the_end_of_the_file() -> None:
+    fixed = mwg.fix(SKILL, "# Skill\n\n## Using npx / pnpx\n\nPrefer `pnpx`.\n")
+    assert fixed == "# Skill\n\n" + mwg.RUNNER_SECTION
+    assert mwg.detect(SKILL, fixed) == ()
+
+
+def test_a_command_closed_by_a_backtick_is_rewritten() -> None:
+    assert mwg.fix(GUIDE, "Run `npx -y modern-web-guidance@latest`.\n") == (
+        "Run `modern-web-guidance`.\n"
+    )
+
+
 def test_the_section_the_fix_writes_is_not_itself_a_finding() -> None:
     assert mwg.detect(SKILL, mwg.RUNNER_SECTION) == ()
 
@@ -104,8 +116,6 @@ def test_the_section_is_replaced_only_in_the_skill() -> None:
         "# Modern Web Guidance\n\nPrefer `pnpx modern-web-guidance search`.\n",
         # Two sections: which one to replace is a guess.
         "## Using npx / pnpx\n\nx\n\n## Using npx / pnpx\n\ny\n\n## Next\n",
-        # Nothing after the section says where it ends.
-        "## Using npx / pnpx\n\nPrefer `pnpx`.\n",
     ],
 )
 def test_a_skill_in_a_shape_the_fix_does_not_know_holds(text: str) -> None:
