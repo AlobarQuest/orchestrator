@@ -135,9 +135,14 @@ The VPS verify follows HQ answer 2. In the container, the launcher runs
 the carry, with the read password, the three settings and
 `PYTHONPATH=$SECURITY_STANDARDS_DIR/src`. That walks the whole chain under the read role.
 
-- Exit 0 with `"outcome": "verified"` on its last line passes. The record is appended to the report
-  as `[chain] {...}`.
-- Anything else writes `[chain] FATAL: ...` with the record to the report, records exit 1 on the
+- Exit 0 with `"outcome": "verified"` in the last line's JSON passes, and the summary is appended to
+  the report as `[chain] outcome=verified seq=… head=… events=…`.
+- Only the record's summary fields reach the report: `outcome`, `seq`, `head`, `events`, and a
+  break's `error` or a failure's `error_type`. They're parsed with the venv interpreter. A verified
+  record also carries every `package.approved` event, which would grow the lane log and every
+  `/fail` body with the chain, so those events stay out. This narrows HQ answer 2's "log only the
+  module's own JSON record" to its summary; the advisor's review caught it.
+- Anything else writes `[chain] FATAL: ...` with the summary to the report, records exit 1 on the
   launcher's worst-outcome ranking, and skips the carry. A worse retirement code, such as 2, still
   wins.
 - It runs after the retirement, not before it, because the retirement reads no chain. A database
@@ -179,7 +184,18 @@ It shows the following:
 - A standing rotation package is `OPERATIONAL` and carries (`assess_operational`).
 
 So until the feed lands, the container lane holds every repository-targeted record (exit 2) and
-carries only standing rotations.
+carries only standing rotations. That makes the feed a cut-over prerequisite: with a
+repository-targeted record queued, the paired comparison would differ (step 8 of the remaining
+steps).
+
+I checked the standing-rotation carry path for container gaps:
+
+- It runs `orchestrator emit-intake-payload` from the image's PATH (`prepare.py`, `EMITTER`), and no
+  checkout's `.venv`. So the clone needs no venv, unlike the two proposers.
+- Its registry reads (`rotated_by_sds`, `find_credential`) go through
+  `RepoMirror(default_mirror_root("work-carrier"))`. That's `~/.cache/work-carrier/mirrors` under
+  `lane-run`'s new `HOME`, fetched anonymously from the four public registry repositories, as the
+  rotation decomposer's mirrors are. Each pass refetches them.
 
 ## The pin bump
 
@@ -209,17 +225,17 @@ table row says.
 
 ## Tests and checks run
 
-- `make check`: **green**. It collected 15,073 tests: **15,072 passed and 1 skipped** (exit 0,
-  7 minutes 28 seconds). Ruff, format and pyright are clean.
+- `make check`: **green**. It collected 15,074 tests: **15,073 passed and 1 skipped** (exit 0,
+  7 minutes 21 seconds). Ruff, format and pyright are clean.
 - Security scanner (`--category security`, from the repository root): 0 BLOCK, 2 WARN. The WARNs
   are the existing gitignore-coverage pattern checks; this change adds no secret file.
-- Targeted runs: `tests/scripts/test_run_work_carrier.py` (50), `tests/scripts/test_sds_git.py`
+- Targeted runs: `tests/scripts/test_run_work_carrier.py` (51), `tests/scripts/test_sds_git.py`
   (12), `tests/work_watcher/test_repositories.py` (6) and `test_container_portfolio.py` (2).
-- **Mutation testing.** I mutated 16 guards, and each mutant failed at least one test:
+- **Mutation testing.** I mutated 18 guards, and each mutant failed at least one test:
   - In the launcher: the token unset, the outcome check, the verify exit-code check, the verify's
     carry gate, the verify's recorded code, the chain-settings check, the settings unset (so they
     would reach the watcher), SYSTEM exported to a bare carry, the pre-clone discard, the derive
-    exit-code check, and the blank-line guard.
+    exit-code check, the blank-line guard, and the summary parse's exit code and field filter.
   - In the subcommand: the live filter, the case-insensitive dedupe, and the packages repository.
   - In the helper: the trace unset and `GIT_CONFIG_GLOBAL`.
   - The pre-clone discard survived at first, because the git stub accepted a non-empty target. The
@@ -246,9 +262,8 @@ table row says.
 - **Not changed: the repository list comes from record text.** This is HQ answer 3's design. The
   parse accepts only `owner/name` characters (`staleness._PULL_REQUEST`), and the mint is bounded
   by the read App's installation (concern 2).
-- **Not changed: the substring check on `"outcome": "verified"`.** The module prints
-  `json.dumps(..., sort_keys=True)`, and the exit code is checked as well. A format change fails
-  closed: the pass reports a failed verify and carries nothing.
+- **Replaced: the substring check on `"outcome": "verified"`.** The record is now parsed as JSON
+  (see "The VPS verify"), so the check doesn't depend on its formatting.
 - **Not changed: the empty ping-URL placeholder.** It's what the handoff asks for, as #689 did.
 
 - The Mac path is unchanged apart from indentation inside the `else`. The existing Mac tests pass
@@ -293,8 +308,13 @@ table row says.
 5. The token's mint and write, then the ping URL.
 6. A served release naming the ping-URL id, with `work-carrier` removed from `placeholders`.
 7. `--add`, then `lane-run --read` over the eight secrets, then a bare `lane-run work-carrier`. That
-   run is the in-network reach check and the first VPS verify.
-8. The `alerts.json` copy, the paired bare runs (after fast-forwarding the Mac checkout), the
+   run is the in-network reach check and the first VPS verify, and it also fetches the public
+   credential registries a standing rotation's carry reads.
+8. **The D-55 portfolio feed**, in its own step and ADR amendment. ADR-0059 decision 5 (805-811)
+   decides the portfolio source before the lane moves. Without the feed, a repository-targeted
+   record holds (exit 2) in the container while the Mac carries it, so the paired comparison
+   fails whenever one is queued.
+9. The `alerts.json` copy, the paired bare runs (after fast-forwarding the Mac checkout), the
    schedule, and the Mac job's retirement. After the retirement, `sds-operator`'s read of the read
    password goes, and the lane account is its one holder.
 

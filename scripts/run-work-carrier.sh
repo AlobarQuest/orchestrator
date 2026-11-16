@@ -557,9 +557,11 @@ if [ "$IN_CONTAINER" -eq 1 ]; then
   # "the carrier's first VPS pass carries the VPS verify"; ADR-0059 amendment 7, item 4 act 5). The carry reads the chain only for a
   # queued record, so on an empty queue nothing else would prove the container reaches and verifies
   # it. `orchestrator.factory_chain_read` walks every row under the read role in one read-only
-  # snapshot and prints one JSON record (seq, a head prefix, an error's type, never the password).
-  # That record is the step's whole log. Its stderr is discarded deliberately, as `package_sources`
-  # discards it: a driver's text can repeat connection details (ADR-0055 amendment 24 item 13), and
+  # snapshot and prints one JSON record. A verified record also carries every `package.approved`
+  # event, which `package_sources` matches against and which grows with the chain, so only its
+  # summary fields (outcome, seq, head prefix, event count, a break's message, an error's type)
+  # reach the report; never the password, which the module never prints. Its stderr is discarded
+  # deliberately, as `package_sources` discards it: a driver's text can repeat connection details (ADR-0055 amendment 24 item 13), and
   # the outcome isn't lost, because anything but a verified walk is a tool failure (1) with the
   # record in the report, and the carry doesn't run. The retirement runs first because it reads no
   # chain: a database outage mustn't stop built work being retired or its alerts resolving.
@@ -570,18 +572,28 @@ if [ "$IN_CONTAINER" -eq 1 ]; then
     PYTHONPATH="$SECURITY_STANDARDS_DIR/src" \
     "$REPO_ROOT/.venv/bin/python" -m orchestrator.factory_chain_read 2>/dev/null)"
   _verify_rc=$?
-  _verify_record="$(printf '%s\n' "$_verify_out" | tail -n 1)"
-  case "$_verify_record" in
-    *'"outcome": "verified"'*) _verified=1 ;;
-    *) _verified=0 ;;
-  esac
-  if [ "$_verify_rc" -ne 0 ] || [ "$_verified" -ne 1 ]; then
+  # The record is the last line. The summary parse exits 0 only for `"outcome": "verified"`.
+  _verify_summary="$(printf '%s\n' "$_verify_out" | tail -n 1 | "$REPO_ROOT/.venv/bin/python" -c '
+import json, sys
+try:
+    record = json.loads(sys.stdin.read())
+except ValueError:
+    record = None
+if not isinstance(record, dict):
+    print("outcome=unreadable")
+    sys.exit(1)
+fields = ("outcome", "seq", "head", "events", "error", "error_type")
+print(" ".join(f"{name}={record[name]}" for name in fields if name in record))
+sys.exit(0 if record.get("outcome") == "verified" else 1)
+')"
+  _verified_rc=$?
+  if [ "$_verify_rc" -ne 0 ] || [ "$_verified_rc" -ne 0 ]; then
     echo "[chain] FATAL: the factory-events chain did not verify (exit $_verify_rc):" \
-      "${_verify_record:-no record}; nothing was carried" >> "$SDS_OUTCOME_REPORT"
+      "${_verify_summary:-no record}; nothing was carried" >> "$SDS_OUTCOME_REPORT"
     _record_outcome 1
     _carry=0
   else
-    echo "[chain] ${_verify_record}" >> "$SDS_OUTCOME_REPORT"
+    echo "[chain] ${_verify_summary}" >> "$SDS_OUTCOME_REPORT"
   fi
 fi
 

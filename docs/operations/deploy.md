@@ -638,8 +638,14 @@ its own change or act:
    `lane-run work-carrier` in the container. That bare run is the first in-network read of
    `b82fa1vg5whecgnjreuqb5tk:5432` and the first VPS chain verify, and it proves the read App's
    installation covers every repository a live record names. The proof is the only read of the
-   three `--register` secrets before the first acting pass.
-8. Cut-over steps 2 onward:
+   three `--register` secrets before the first acting pass. The run also fetches the four public
+   credential registries anonymously under `lane-run`'s `HOME`, which a standing rotation's carry
+   reads (`work_carrier/cli.py`, `RepoMirror`).
+8. The portfolio feed D-55 A chose, in its own step and ADR amendment (ADR-0059 decision 5: the
+   portfolio source is decided before the lane moves). Until the lane reads it, a
+   repository-targeted record holds (exit 2) in the container while the Mac carries it, so the
+   paired comparison fails whenever one is queued. A standing rotation still carries.
+9. Cut-over steps 2 onward:
    - The copy of the Mac's `sds/work-watcher/alerts.json` into the volume, before the first
      `--register` pass in the container, or the alerts the Mac left firing never resolve.
    - The paired bare reporting runs on both hosts in the same minute, which register and ping

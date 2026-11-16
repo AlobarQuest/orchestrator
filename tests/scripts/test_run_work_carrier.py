@@ -54,10 +54,14 @@ CHAIN = {
     "FACTORY_EVENTS_DB_PORT": "5432",
     "FACTORY_EVENTS_DB_NAME": "postgres",
 }
+# A verified record carries every `package.approved` event; only its summary reaches the report.
+APPROVAL_EVENT = '{"action": "package.approved", "event_id": "an-approval-event"}'
 VERIFIED = (
-    '{"head": "0123456789ab", "logger": "orchestrator.factory_chain_read", '
-    '"op": "read-package-approvals", "outcome": "verified", "package_approved": [], "seq": 7}'
+    '{"events": 7, "head": "0123456789ab", "logger": "orchestrator.factory_chain_read", '
+    '"op": "read-package-approvals", "outcome": "verified", '
+    f'"package_approved": [{APPROVAL_EVENT}], "seq": 7}}'
 )
+VERIFIED_SUMMARY = "outcome=verified seq=7 head=0123456789ab events=7"
 
 # The `bws` stub logs the UUID and the token it was given; a UUID in `$BWS_REFUSES` fails.
 _BWS = """#!/bin/sh
@@ -342,7 +346,8 @@ def test_the_chain_verify_runs_every_pass_under_the_images_security_standards(
         assert run.field("verify", "pythonpath") == f"{expected}/src"
         assert run.field("carrier", "sec") == expected
         # The verify's record is the step's whole log; its stderr is discarded.
-        assert f"[chain] {VERIFIED}" in run.result.stdout
+        assert f"[chain] {VERIFIED_SUMMARY}\n" in run.result.stdout
+        assert "an-approval-event" not in run.output
         assert "OperationalError" not in run.output
         order = [line.split()[0] for line in run.logs["lane"]]
         # The retirement reads no chain, so it runs first; the verify gates the carry alone.
@@ -350,23 +355,33 @@ def test_the_chain_verify_runs_every_pass_under_the_images_security_standards(
 
 
 @pytest.mark.parametrize(
-    ("record", "rc"),
+    ("record", "rc", "summary"),
     [
-        ('{"outcome": "broken", "seq": 4}', "2"),
-        ('{"error_type": "OperationalError", "outcome": "failure"}', "2"),
-        ('{"outcome": "verified", "seq": 7}', "2"),
-        ('{"outcome": "failure"}', "0"),
-        ("", "0"),
+        (
+            '{"error": "seq 4: hash mismatch", "head": "abc", "outcome": "broken", "seq": 4}',
+            "2",
+            "outcome=broken seq=4 head=abc error=seq 4: hash mismatch",
+        ),
+        (
+            '{"error_type": "OperationalError", "outcome": "failure"}',
+            "2",
+            "outcome=failure error_type=OperationalError",
+        ),
+        ('{"outcome": "verified", "seq": 7}', "2", "outcome=verified seq=7"),
+        ('{"outcome": "failure"}', "0", "outcome=failure"),
+        ('{"outcome": "verified"', "0", "outcome=unreadable"),
+        ("", "0", "outcome=unreadable"),
     ],
 )
 def test_anything_but_a_verified_chain_fails_the_pass_and_carries_nothing(
-    tmp_path: Path, record: str, rc: str
+    tmp_path: Path, record: str, rc: str, summary: str
 ) -> None:
     run = _run(tmp_path, "--register", FAKE_VERIFY_RECORD=record, FAKE_VERIFY_RC=rc)
     assert run.code == 1
-    assert "[chain] FATAL: the factory-events chain did not verify" in run.result.stdout
-    if record:
-        assert record in run.result.stdout
+    assert (
+        f"[chain] FATAL: the factory-events chain did not verify (exit {rc}): {summary}; "
+        "nothing was carried"
+    ) in run.result.stdout
     # The retirement still ran: a chain outage mustn't stop built work being retired.
     assert len(run.lines("watcher")) == 1
     assert run.lines("carrier") == []
