@@ -263,6 +263,13 @@ amendment 1). Two rows follow, the CLI's first.
   rule removes. Trees are read as git objects, never checked out, so `.gitattributes` can't
   change what is compared or installed. A tarball whose manifests declare a dependency or any
   script is refused; nothing runs `npm install` on it.
+- **The tarball's own files are a list on the row** (`RegistryInstall.published_files`, patterns
+  by structure covering those 16). Any other file only the tarball ships refuses the pass by name,
+  so upstream can't add a guide beside the reviewed ones for `retrieve` to serve. Paths are also
+  compared case-folded with the fork's tree (APFS folds case), and `.sds-bin/` is the lane's.
+- **The node is the one every npm row resolves** (`/opt/homebrew/bin/node` under the launchd
+  job), named by the wrapper, and it must satisfy the tarball's `engines.node`. A pass run by
+  hand under a versioned node (nvm, fnm, volta) bakes that path in: a stated limit.
 - **Telemetry off by a wrapper.** The CLI posts each query and retrieved guide ID to
   `play.googleapis.com` unless `DISABLE_TELEMETRY` is `1` or `true`. The lane's
   `bin/modern-web-guidance` links to a shell script inside the installed package that exports it

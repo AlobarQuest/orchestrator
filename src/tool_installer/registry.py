@@ -23,6 +23,13 @@ agent the 211 `npx -y modern-web-guidance@latest` cross-references the hardening
 Trees are read as git objects (`ls-tree` and `cat-file`), never checked out: a checkout would apply
 the fork's `.gitattributes`, so the bytes installed or compared could differ from the commit's.
 
+**THE TARBALL'S OWN FILES ARE A LIST ON THE ROW, NOT WHATEVER IT SHIPS.** Each must match one of
+`RegistryInstall.published_files` (patterns by structure: the CLI's `.mjs` and map, `watchdog/`,
+`gen/`, the stamps), or the pass refuses naming it; otherwise upstream could add a guide beside the
+reviewed ones and `retrieve` would serve it. Paths are also compared case-folded with the fork's
+tree, since APFS folds case: a tarball file at a fork path, or under a fork directory spelled
+another way (`Skills/` for `skills/`), refuses, and so does anything in the lane's `.sds-bin/`.
+
 **NOTHING IS INSTALLED, SO NOTHING RUNS.** No `npm install` or `npm ci` touches the tarball, and a
 tarball whose manifests declare a dependency or any script is refused, so what lands is complete
 as published and no lifecycle script could be waiting for a later install.
@@ -35,6 +42,14 @@ paths. Being inside the package, it is staged, moved aside and restored with it,
 is the npm act's. The npm prefix's link (`/opt/homebrew/bin/<binary>`) points at the lane's
 entry, so the bare command the hardened skill runs resolves on `PATH`; it is written last and
 restored first, as in `npm.py`.
+
+**THE NODE IS THE ONE EVERY NPM ROW USES.** `toolchain.resolve_node` -- `PATH`, then
+`/opt/homebrew/bin/node` -- under the launchd job's `PATH` resolves Homebrew's stable
+`/opt/homebrew/bin/node`, and the wrapper names that path so the CLI runs on the node that was
+probed. The tarball's `engines.node` (`>=X.Y.Z`; any other range refuses) must hold for it. A
+STATED LIMIT: a pass run by hand from a shell whose `PATH` leads to a versioned node (nvm, fnm,
+volta) bakes that path in, and removing that node breaks the command while the row reads current,
+until the fork next moves. The npm rows' `#!/usr/bin/env node` entries have the opposite trade.
 
 **THE PROBE PASSES THE SKILL'S STAMP, NOT THE TARBALL'S.** `search <query> --skill-version
 <the stamp in the hardened skill>` must exit 0, print a JSON array and write nothing to stderr;
@@ -124,6 +139,12 @@ class _Staged:
     stamp: str
 
 
+def _is_relative_path(path: str) -> bool:
+    """A path with no empty, `.` or `..` part, not absolute: one that stays where it is joined."""
+    parts = path.split("/")
+    return not path.startswith("/") and all(part not in ("", ".", "..") for part in parts)
+
+
 def _tree_files(src: Path, commit: str, env: dict[str, str]) -> dict[str, tuple[str, bytes]]:
     """Every file of `commit`'s tree, `path -> (mode, bytes)`, read as git objects.
 
@@ -144,6 +165,8 @@ def _tree_files(src: Path, commit: str, env: dict[str, str]) -> dict[str, tuple[
             continue
         meta, path = record.split("\t", 1)
         mode, kind, sha = meta.split(" ")
+        if not _is_relative_path(path):
+            raise NpmError(f"{path!r} at {commit[:12]} is not a plain relative path")
         if kind != "blob" or mode not in _REGULAR_MODES:
             raise NpmError(f"{path} at {commit[:12]} is a {kind} (mode {mode}), not a file")
         entries.append((mode, sha, path))
@@ -201,18 +224,19 @@ def _tarball_files(tarball: Path, spec: str) -> dict[str, tuple[int, bytes]]:
     files: dict[str, tuple[int, bytes]] = {}
     with tarfile.open(tarball) as archive:
         for member in archive.getmembers():
-            name = PurePosixPath(member.name)
-            parts = name.parts
-            if name.is_absolute() or not parts or parts[0] != "package" or ".." in parts:
+            name = member.name.removesuffix("/")
+            if not name.startswith("package/") or not _is_relative_path(name):
+                if name == "package" and member.isdir():
+                    continue
                 raise NpmError(f"{spec} holds {member.name!r}, outside `package/`")
             if member.isdir():
                 continue
             data = archive.extractfile(member) if member.isfile() else None
             if data is None:
                 raise NpmError(f"{spec} holds {member.name!r}, which is not a regular file")
-            path = "/".join(parts[1:])
-            if not path or path in files:
-                raise NpmError(f"{spec} holds {member.name!r} twice or with no name")
+            path = name.removeprefix("package/")
+            if path in files:
+                raise NpmError(f"{spec} holds {member.name!r} twice")
             files[path] = (0o755 if member.mode & 0o111 else 0o644, data.read())
     return files
 
@@ -243,6 +267,40 @@ def _refuse_disagreement(
     return sorted(path for path in published if path not in landed)
 
 
+def _prefixes(path: str) -> list[str]:
+    """`a/b/c` -> `a`, `a/b`, `a/b/c`."""
+    parts = path.split("/")
+    return ["/".join(parts[: index + 1]) for index in range(len(parts))]
+
+
+def _refuse_unlisted(
+    row: RegistryInstall, own: list[str], tree: dict[str, tuple[str, bytes]], spec: str
+) -> None:
+    """Every tarball-only file must match the row's allowlist and land beside the fork's tree
+    without meeting it: never at a path, or under a directory, that the fork has in another case
+    (APFS folds case, so `Skills/x` would land inside `skills/`), never at a fork path, and never
+    in the lane's wrapper directory."""
+    folded = {prefix.casefold(): prefix for path in tree for prefix in _prefixes(path)}
+    reserved = f"{WRAPPER_DIRECTORY}/".casefold()
+    if wrapped := [path for path in own if path.casefold().startswith(reserved)]:
+        raise NpmError(f"{spec} ships {wrapped[0]}, inside the lane's own {WRAPPER_DIRECTORY}/")
+    unlisted = [
+        path
+        for path in own
+        if not any(PurePosixPath(path).full_match(pattern) for pattern in row.published_files)
+    ]
+    if unlisted:
+        raise NpmError(
+            f"{spec} ships {len(unlisted)} file(s) neither the fork nor the row's list holds: "
+            f"{', '.join(unlisted[:3])}"
+        )
+    for path in own:
+        for prefix in _prefixes(path):
+            met = folded.get(prefix.casefold())
+            if met is not None and (met != prefix or prefix == path):
+                raise NpmError(f"{spec} ships {path}, which meets the fork's {met}")
+
+
 def _write(tree: Path, path: str, data: bytes, mode: int) -> None:
     target = tree / path
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +318,38 @@ def _wrapper(row: RegistryInstall, node: Node, entry: Path) -> str:
         f"{exports}"
         f'exec {shlex.quote(str(node.executable))} {shlex.quote(str(entry))} "$@"\n'
     )
+
+
+def _version_tuple(text: str) -> tuple[int, int, int] | None:
+    if not _VERSION.fullmatch(text):
+        return None
+    major, minor, patch = (int(part) for part in text.split("."))
+    return major, minor, patch
+
+
+def _require_engine(
+    manifest: dict[str, object], node: Node, env: dict[str, str], spec: str
+) -> None:
+    """The node this pass runs, and the wrapper execs, must satisfy the package's `engines.node`.
+
+    Only the `>=X.Y.Z` form is read, which is what the package declares; any other range is
+    refused rather than guessed at.
+    """
+    engines = manifest.get("engines")
+    wanted = engines.get("node") if isinstance(engines, dict) else None
+    if wanted is None:
+        return
+    floor = _version_tuple(wanted.removeprefix(">=")) if isinstance(wanted, str) else None
+    if not isinstance(wanted, str) or not wanted.startswith(">=") or floor is None:
+        raise NpmError(f"{spec} wants node {wanted!r}, a range this pass doesn't read")
+    code, reported, detail = _run(
+        [str(node.executable), "--version"], env=env, timeout=PROBE_TIMEOUT_SECONDS
+    )
+    running = _version_tuple(reported.strip().removeprefix("v")) if code == 0 else None
+    if running is None or running < floor:
+        raise NpmError(
+            f"{spec} wants node {wanted}; {node.executable} is {reported.strip() or detail!r}"
+        )
 
 
 def _stamp(tree: dict[str, tuple[str, bytes]], row: RegistryInstall) -> str:
@@ -297,28 +387,25 @@ def _stage(
     if not isinstance(version, str) or not _VERSION.fullmatch(version):
         raise NpmError(f"the fork's package.json names no plain version to fetch: {version!r}")
     stamp = _stamp(tree, row)
+    if any(path.casefold().startswith(f"{WRAPPER_DIRECTORY}/".casefold()) for path in tree):
+        raise NpmError(f"the fork holds a {WRAPPER_DIRECTORY}/, which is the lane's own")
 
     spec = f"{row.package}@{version}"
     tarball, integrity = _pack_published(npm, env, work / "published", spec)
     published = _tarball_files(tarball, spec)
     _refuse_scripts_and_dependencies(published, spec)
     own = _refuse_disagreement(published, landed, spec)
-    if (
-        _manifest(published.get("package.json", (0, b"null"))[1], f"{spec}'s package.json").get(
-            "version"
-        )
-        != version
-    ):
+    published_manifest = _manifest(
+        published.get("package.json", (0, b"null"))[1], f"{spec}'s package.json"
+    )
+    if published_manifest.get("version") != version:
         raise NpmError(f"{spec}'s package.json is not version {version}")
+    _require_engine(published_manifest, node, env, spec)
 
     staged = work / "stage"
     for path, (mode, data) in tree.items():
         _write(staged, path, data, 0o755 if mode == "100755" else 0o644)
-    if clashing := sorted(set(own) & set(tree)):
-        raise NpmError(
-            f"the fork's tree and only the tarball both hold {', '.join(clashing[:3])}: the fork "
-            f"added a file {LANDED_BRANCH} lacks"
-        )
+    _refuse_unlisted(row, own, tree, spec)
     for path in own:
         mode, data = published[path]
         _write(staged, path, data, mode)

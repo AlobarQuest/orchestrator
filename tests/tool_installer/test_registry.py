@@ -21,16 +21,25 @@ from pathlib import Path
 
 import pytest
 
+from tool_installer import npm as npm_module
+from tool_installer import registry as registry_module
 from tool_installer.install import (
     ACTION_INSTALL_FAILED,
     ACTION_INSTALLED,
     ACTION_NONE,
     ACTION_NOT_PERMITTED,
     ACTION_ROLLED_BACK,
+    ProbeResult,
 )
-from tool_installer.npm import package_dir, read_installed_package
+from tool_installer.npm import NpmError, package_dir, read_installed_package
 from tool_installer.record import Installation, summary_of
-from tool_installer.registry import REGISTRY_FIELD, WRAPPER_DIRECTORY, install_and_prove_registry
+from tool_installer.registry import (
+    REGISTRY_FIELD,
+    WRAPPER_DIRECTORY,
+    _is_relative_path,
+    _refuse_unlisted,
+    install_and_prove_registry,
+)
 from tool_installer.toolchain import Node
 from tool_installer.tools import (
     MODERN_WEB_GUIDANCE,
@@ -58,10 +67,18 @@ FAKE = Tool(
         environment=(("DISABLE_TELEMETRY", "1"),),
         skill=SKILL,
         search="light dismiss dialog",
+        published_files=("skills/g/*.mjs", "skills/*/skill-version.txt"),
     ),
 )
 
-MANIFEST = json.dumps({"name": PACKAGE, "version": "1.0.1", "bin": {"mwg": "skills/g/cli.mjs"}})
+MANIFEST = json.dumps(
+    {
+        "name": PACKAGE,
+        "version": "1.0.1",
+        "engines": {"node": ">=22.0.0"},
+        "bin": {"mwg": "skills/g/cli.mjs"},
+    }
+)
 UPSTREAM_SKILL = f'Run `npx -y mwg@latest search "<q>" --skill-version {STAMP}`.\n'
 HARDENED_SKILL = f'Run `mwg search "<q>" --skill-version {STAMP}`.\n'
 UPSTREAM_GUIDE = "# Dialog\n\nSee `npx -y mwg@latest retrieve html`.\n"
@@ -167,7 +184,7 @@ def _published(
     *,
     changed: dict[str, str] | None = None,
     extra: dict[str, str] | None = None,
-    link: str | None = None,
+    raw: tuple[tarfile.TarInfo, ...] = (),
     stamp: str = STAMP,
 ) -> Path:
     """Upstream's tarball: `main`'s files plus the CLI and its stamp, which `main` lacks."""
@@ -178,12 +195,17 @@ def _published(
     with tarfile.open(path, "w:gz") as archive:
         for name, text in files.items():
             _member(archive, f"package/{name}", text, 0o755 if name.endswith(".mjs") else 0o644)
-        if link:
-            info = tarfile.TarInfo(f"package/{link}")
-            info.type = tarfile.SYMTYPE
-            info.linkname = "/etc/passwd"
-            archive.addfile(info)
+        for info in raw:
+            archive.addfile(info, io.BytesIO(b"x" * info.size) if info.isfile() else None)
     return path
+
+
+def _info(name: str, kind: bytes = tarfile.REGTYPE, linkname: str = "") -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.type = kind
+    info.linkname = linkname
+    info.size = 1 if kind == tarfile.REGTYPE else 0
+    return info
 
 
 @pytest.fixture
@@ -197,13 +219,17 @@ def prefix(tmp_path: Path) -> Path:
 @pytest.fixture
 def node(tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch) -> Node:
     bin_dir = tmp_path / "nodebin"
-    _executable(bin_dir / "node", '#!/bin/sh\nexec /bin/sh "$@"\n')
+    _executable(
+        bin_dir / "node",
+        '#!/bin/sh\n[ "$1" = --version ] && { echo "${NODE_REPORTS:-v22.1.0}"; exit 0; }\n'
+        'exec /bin/sh "$@"\n',
+    )
     _executable(bin_dir / "npm", NPM)
     monkeypatch.setenv("NPM_LOG", str(tmp_path / "npm.log"))
     monkeypatch.setenv("CLI_LOG", str(tmp_path / "cli.log"))
     monkeypatch.setenv("NPM_PREFIX", str(prefix))
     monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path)))
-    for name in ("DISABLE_TELEMETRY", "CLI_REPORTS", "CLI_STDERR"):
+    for name in ("DISABLE_TELEMETRY", "CLI_REPORTS", "CLI_STDERR", "NODE_REPORTS"):
         monkeypatch.delenv(name, raising=False)
     return Node(executable=bin_dir / "node")
 
@@ -365,14 +391,205 @@ def test_a_tarball_declaring_a_dependency_or_a_script_is_REFUSED(
     _assert_previous_in_place(tmp_path, prefix)
 
 
-def test_a_tarball_holding_a_link_is_REFUSED(
-    node: Node, tmp_path: Path, fork: Fork, prefix: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("member", "says"),
+    [
+        (_info("package/skills/g/gen", tarfile.SYMTYPE, "/etc/passwd"), "not a regular file"),
+        (_info("package/skills/g/x", tarfile.LNKTYPE, "package/README.md"), "not a regular file"),
+        (_info("package/skills/g/fifo", tarfile.FIFOTYPE), "not a regular file"),
+        (_info("package/skills/g/dev", tarfile.CHRTYPE), "not a regular file"),
+        (_info("package/../escape.mjs"), "outside `package/`"),
+        (_info("/package/skills/g/abs.mjs"), "outside `package/`"),
+        (_info("package/skills/g/./dot.mjs"), "outside `package/`"),
+        (_info("elsewhere/x.mjs"), "outside `package/`"),
+        (_info("package/README.md"), "twice"),
+        (_info(f"package/{WRAPPER_DIRECTORY}/mwg"), "inside the lane's own .sds-bin/"),
+        (_info("package/skills/g/guides/sneaky.md"), "skills/g/guides/sneaky.md"),
+        (_info("package/Skills/g/guides/x.mjs"), "Skills/g/guides/x.mjs"),
+    ],
+)
+def test_a_tarball_member_that_is_not_a_listed_file_beside_the_fork_is_REFUSED(
+    node: Node,
+    tmp_path: Path,
+    fork: Fork,
+    prefix: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    member: tarfile.TarInfo,
+    says: str,
 ) -> None:
-    monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path, link="skills/g/gen")))
+    _seed_installed(_root(tmp_path))
+    monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path, raw=(member,))))
     outcome = _act(node, tmp_path, fork.source, fork.hardened)
     assert outcome.action == ACTION_INSTALL_FAILED
-    assert "not a regular file" in outcome.detail
+    assert says in outcome.detail
+    _assert_previous_in_place(tmp_path, prefix)
+
+
+def test_a_guide_the_tarball_alone_ships_is_REFUSED_even_with_a_runner_in_it(
+    node: Node, tmp_path: Path, fork: Fork, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guide `retrieve` would serve beside the reviewed ones, upstream's npx and all."""
+    sneaky = {"skills/g/guides/sneaky.md": "npx -y modern-web-guidance@latest retrieve other\n"}
+    monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path, extra=sneaky)))
+    outcome = _act(node, tmp_path, fork.source, fork.hardened)
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "neither the fork nor the row's list holds: skills/g/guides/sneaky.md" in outcome.detail
     assert not package_dir(_root(tmp_path), PACKAGE).exists()
+
+
+def test_a_listed_file_in_a_directory_the_fork_spells_in_another_case_is_REFUSED(
+    node: Node, tmp_path: Path, fork: Fork, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """APFS folds case, so `skills/G/` is the fork's `skills/g/`."""
+    extra = {"skills/G/skill-version.txt": STAMP}
+    monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path, extra=extra)))
+    outcome = _act(node, tmp_path, fork.source, fork.hardened)
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "skills/G/skill-version.txt, which meets the fork's skills/g" in outcome.detail
+
+
+def test_the_real_tarballs_own_files_are_all_listed() -> None:
+    """The 16 files only the 1.0.1 tarball holds (measured 2026-11-16) all match the real row."""
+    real = MODERN_WEB_GUIDANCE_CLI.install
+    assert isinstance(real, RegistryInstall)
+    own = [
+        "THIRD_PARTY_NOTICES",
+        "skills/chrome-extensions/skill-version.txt",
+        *(
+            f"skills/modern-web-guidance/gen/{name}"
+            for name in (
+                "guide-chunks.i8",
+                "guide-chunks.json.gz",
+                "guide-chunks.scale.f32",
+                "guides.json",
+                "query-words.i8",
+                "query-words.json",
+                "query-words.scale.f32",
+            )
+        ),
+        "skills/modern-web-guidance/legacy-scan.mjs",
+        "skills/modern-web-guidance/modern-web.mjs",
+        "skills/modern-web-guidance/package.json",
+        "skills/modern-web-guidance/search.mjs",
+        "skills/modern-web-guidance/search.mjs.map",
+        "skills/modern-web-guidance/skill-version.txt",
+        "skills/modern-web-guidance/watchdog/main.js",
+    ]
+    assert len(own) == 16
+    tree = {"skills/modern-web-guidance/SKILL.md": ("100644", b"")}
+    _refuse_unlisted(real, own, tree, "modern-web-guidance@1.0.1")
+    for added in (
+        "skills/modern-web-guidance/guides/new.md",
+        "skills/modern-web-guidance/gen/nested/x",
+        "skills/modern-web-guidance/watchdog/notes.md",
+    ):
+        with pytest.raises(NpmError):
+            _refuse_unlisted(real, [*own, added], tree, "modern-web-guidance@1.0.1")
+
+
+def test_a_fork_path_that_is_not_plain_is_REFUSED() -> None:
+    assert not _is_relative_path("../x")
+    assert not _is_relative_path("/x")
+    assert not _is_relative_path("a//b")
+    assert not _is_relative_path("a/./b")
+    assert _is_relative_path("skills/g/SKILL.md")
+
+
+@pytest.mark.parametrize(
+    ("reports", "says"), [("v20.11.0", "wants node >=22.0.0"), ("not-a-version", "wants node")]
+)
+def test_a_node_below_the_packages_engines_is_REFUSED_before_anything_moves(
+    node: Node,
+    tmp_path: Path,
+    fork: Fork,
+    prefix: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reports: str,
+    says: str,
+) -> None:
+    _seed_installed(_root(tmp_path))
+    monkeypatch.setenv("NODE_REPORTS", reports)
+    outcome = _act(node, tmp_path, fork.source, fork.hardened)
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert says in outcome.detail
+    _assert_previous_in_place(tmp_path, prefix)
+
+
+def test_a_range_the_pass_cannot_read_is_REFUSED(
+    node: Node, tmp_path: Path, fork: Fork, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = json.loads(MANIFEST)
+    manifest["engines"] = {"node": "^22 || ^24"}
+    files = {**_hardened_files(), "package.json": json.dumps(manifest)}
+    main = _commit(fork.repo, {**_main_files(), "package.json": json.dumps(manifest)}, [], "r")
+    hardened = _commit(fork.repo, files, [main], "fork-harden")
+    changed = {"package.json": json.dumps(manifest)}
+    monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path, changed=changed)))
+    outcome = _act(node, tmp_path, fork.source, hardened)
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "a range this pass doesn't read" in outcome.detail
+
+
+def test_a_place_that_fails_restores_the_previous_package(
+    node: Node, tmp_path: Path, fork: Fork, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_installed(_root(tmp_path))
+
+    def refuse(*_: object) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(registry_module, "_place", refuse)
+    outcome = _act(node, tmp_path, fork.source, fork.hardened)
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "could not be put in place: PermissionError" in outcome.detail
+    _assert_previous_in_place(tmp_path, prefix)
+
+
+@pytest.mark.parametrize(
+    ("error", "says"),
+    [
+        (NpmError("the link changed during the pass"), "the link changed during the pass"),
+        (PermissionError(), "could not be written: PermissionError"),
+    ],
+)
+def test_a_prefix_link_that_cannot_be_taken_rolls_everything_back(
+    node: Node,
+    tmp_path: Path,
+    fork: Fork,
+    prefix: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    says: str,
+) -> None:
+    _seed_installed(_root(tmp_path))
+
+    def refuse(*_: object) -> None:
+        raise error
+
+    monkeypatch.setattr(registry_module, "_take_npm_prefix", refuse)
+    outcome = _act(node, tmp_path, fork.source, fork.hardened)
+    assert outcome.action == ACTION_ROLLED_BACK
+    assert says in outcome.detail
+    _assert_previous_in_place(tmp_path, prefix)
+
+
+def test_a_version_that_fails_THROUGH_the_prefix_link_rolls_everything_back(
+    node: Node, tmp_path: Path, fork: Fork, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real `_take_npm_prefix` writes the link; only the probe through it fails."""
+    _seed_installed(_root(tmp_path))
+    real = npm_module._probe_through
+
+    def through(path: Path, expected: str, env: dict[str, str]) -> ProbeResult:
+        if path.is_relative_to(prefix):
+            return ProbeResult(command=(str(path),), passed=False, detail="reported 9.9.9")
+        return real(path, expected, env)
+
+    monkeypatch.setattr(npm_module, "_probe_through", through)
+    outcome = _act(node, tmp_path, fork.source, fork.hardened)
+    assert outcome.action == ACTION_ROLLED_BACK
+    assert "through the npm prefix's link" in outcome.detail
+    _assert_previous_in_place(tmp_path, prefix)
 
 
 @pytest.mark.parametrize("version", ["^1.0.1", "latest", "1.0.1-beta.1"])
@@ -521,4 +738,6 @@ def test_a_fork_file_only_the_tarball_also_holds_is_a_named_REFUSAL(
     later = _commit(fork.repo, files, [fork.main], "fork-harden")
     outcome = _act(node, tmp_path, fork.source, later)
     assert outcome.action == ACTION_INSTALL_FAILED
-    assert "both hold skills/g/skill-version.txt" in outcome.detail
+    assert "skills/g/skill-version.txt, which meets the fork's skills/g/skill-version.txt" in (
+        outcome.detail
+    )

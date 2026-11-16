@@ -14,9 +14,12 @@ through `<npm prefix>/bin/modern-web-guidance`, the link the tool installer's
 the fork's version (ADR-0042 amendment 5). The "Using npx / pnpx" section is replaced by
 `RUNNER_SECTION`, and the one sentence that says "directly with `npx`" is reworded.
 
-THE CHECK OVER-COUNTS: any `npx`, `npx.cmd`, `pnpx`, `bunx`, `npm exec`, `npm x`, `pnpm dlx` or
-`yarn dlx` in any file of the skills, any `modern-web-guidance@` (a registry tag), and any run of
-the CLI's `install`, `update` or `uninstall` is the finding. Anything else the fix doesn't know
+THE CHECK OVER-COUNTS: any `npx`, `npx.cmd`, `pnpx`, `bunx`, `bun x`, `npm exec`, `npm x`,
+`pnpm dlx` or `yarn dlx` in any file of the skills, any `modern-web-guidance@` (a registry tag), any
+line that installs a package (`npm i`/`install`/`add`, `pnpm add`/`i`/`install`, `bun
+add`/`i`/`install`, `yarn add`, `yarn global add`, global or not) and names the CLI, and any run of
+the CLI's `install`, `update` or `uninstall` is the finding. The fix rewrites none of the
+install forms: each holds. Anything else the fix doesn't know
 stays as written, and the check then holds the branch.
 """
 
@@ -32,10 +35,14 @@ SKILL: Final = f"{SKILLS}/modern-web-guidance/SKILL.md"
 COMMAND: Final = "modern-web-guidance"
 
 _RUNNER: Final = re.compile(
-    r"\b(?:npx(?:\.cmd)?|pnpx|bunx)\b|\bnpm\s+(?:exec|x)\b|\b(?:pnpm|yarn)\s+dlx\b"
+    r"\b(?:npx(?:\.cmd)?|pnpx|bunx)\b|\bbun\s+x\b|\bnpm\s+(?:exec|x)\b|\b(?:pnpm|yarn)\s+dlx\b"
     r"|\bmodern-web-guidance@"
     r"|\bmodern-web(?:-guidance\S*|\.mjs)\s+(?:install|update|uninstall)\b"
 )
+_PACKAGE_INSTALL: Final = re.compile(
+    r"\b(?:(?:npm|pnpm|bun)\s+(?:i|install|add)|yarn\s+(?:global\s+)?add)\b"
+)
+"""Any package install, global or not; a line holding one that also names the CLI is a finding."""
 _NPX_COMMAND: Final = re.compile(
     r"\bnpx\s+(?:--yes|-y)\s+modern-web-guidance(?:@[\w.-]+)?(?![\w@/.-])"
 )
@@ -67,7 +74,8 @@ def detect(path: str, text: str) -> tuple[int, ...]:
     return tuple(
         number
         for number, line in enumerate(text.splitlines(), start=1)
-        if _RUNNER.search(line) and not is_read(READ_LINES, path, line)
+        if (_RUNNER.search(line) or (_PACKAGE_INSTALL.search(line) and COMMAND in line))
+        and not is_read(READ_LINES, path, line)
     )
 
 

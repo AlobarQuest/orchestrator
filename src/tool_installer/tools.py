@@ -194,6 +194,12 @@ class RegistryInstall:
     search: str
     """The query the probe searches for; every guide it returns is then retrieved."""
 
+    published_files: tuple[str, ...]
+    """`PurePosixPath.full_match` patterns (`*` stays within one directory) for the files the
+    tarball may hold that the fork doesn't: the CLI's code and data. Anything else the tarball
+    alone ships refuses the pass, so upstream can't add a guide beside the reviewed ones. Patterns
+    name structure, never content."""
+
 
 @dataclass(frozen=True)
 class Tool:
@@ -340,6 +346,18 @@ MODERN_WEB_GUIDANCE_CLI = Tool(
         skill="skills/modern-web-guidance/SKILL.md",
         # The skill's own example query.
         search="light dismiss dialog",
+        # The 16 files of the 1.0.1 tarball that the fork doesn't hold: the CLI and its source
+        # map, the watchdog, the search index, the two skills' stamps, the CLI directory's own
+        # `package.json` (`"type": "module"`, no dependencies) and the notices.
+        published_files=(
+            "THIRD_PARTY_NOTICES",
+            "skills/*/skill-version.txt",
+            "skills/modern-web-guidance/*.mjs",
+            "skills/modern-web-guidance/*.mjs.map",
+            "skills/modern-web-guidance/package.json",
+            "skills/modern-web-guidance/watchdog/*.js",
+            "skills/modern-web-guidance/gen/*",
+        ),
     ),
 )
 

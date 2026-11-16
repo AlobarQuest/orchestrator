@@ -140,6 +140,14 @@ def test_a_skill_in_a_shape_the_fix_does_not_know_holds(text: str) -> None:
         "modern-web-guidance update",
         "modern-web-guidance uninstall",
         "node modern-web.mjs update",
+        "bun x modern-web-guidance search x",
+        "npm i -g modern-web-guidance",
+        "npm install --global modern-web-guidance",
+        "npm install modern-web-guidance",
+        "pnpm add -g modern-web-guidance",
+        "yarn global add modern-web-guidance",
+        "bun add -g modern-web-guidance",
+        "install it with `npm i -g modern-web-guidance@1.0.1`",
     ],
 )
 def test_any_other_registry_run_or_self_update_is_left_as_written_and_holds(line: str) -> None:
@@ -150,6 +158,10 @@ def test_any_other_registry_run_or_self_update_is_left_as_written_and_holds(line
 def test_the_cli_named_with_any_other_command_is_not_a_finding() -> None:
     text = "Run `modern-web-guidance search` and `modern-web-guidance retrieve`.\n"
     assert mwg.detect(GUIDE, text) == ()
+
+
+def test_an_install_of_some_other_package_is_not_a_finding() -> None:
+    assert mwg.detect(GUIDE, "npm install --save-dev vite\n") == ()
 
 
 def test_a_read_line_is_excused_only_while_it_is_unchanged(

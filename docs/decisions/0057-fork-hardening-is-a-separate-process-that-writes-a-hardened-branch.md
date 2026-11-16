@@ -142,9 +142,11 @@ runs upstream's newest npm release with telemetry on, outside the fork's review.
   "directly with `npx`". The bare command resolves through `/opt/homebrew/bin/modern-web-guidance`,
   the link the installer's `modern-web-guidance-cli` row owns (ADR-0042 amendment 5), as decision
   9 has it for `n8nac`.
-- **The check over-counts:** any `npx`, `npx.cmd`, `pnpx`, `bunx`, `npm exec`, `npm x`, `pnpm dlx`
-  or `yarn dlx`, any `modern-web-guidance@`, and any run of the CLI's `install`, `update` or
-  `uninstall`, which spawn an unpinned `npx -y skills`. A skill that still names a runner with no
+- **The check over-counts:** any `npx`, `npx.cmd`, `pnpx`, `bunx`, `bun x`, `npm exec`, `npm x`,
+  `pnpm dlx` or `yarn dlx`, any `modern-web-guidance@`, any package install (`npm i`, `pnpm add`,
+  `bun add`, `yarn global add`, global or not) on a line naming the CLI, which the fix leaves to
+  hold, and any run of the CLI's `install`, `update` or `uninstall`, which spawn an unpinned
+  `npx -y skills`. A skill that still names a runner with no
   section to replace, or with two, raises and holds.
 - **Measured on the fork's `main` (`1c3cc6f`) without `--push`:** 181 lines flagged in 235 covered
   files; the result differs from `main` in 68 files, all under `skills/`, the check flags nothing
