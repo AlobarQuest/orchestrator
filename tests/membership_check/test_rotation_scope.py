@@ -273,8 +273,32 @@ def test_a_file_inside_the_tuple_is_read_for_presence_only(monkeypatch) -> None:
     _wire(monkeypatch, members=[member], flagged=(inside,), policy=(inside,), deploying=(inside,))
     monkeypatch.setattr(cli, "REGISTRY_REPOSITORIES", (inside,))  # `_wire` empties it
     _github(monkeypatch, httpx.Response(200, content=b"not toml ["))
+    real, judged = cli.GitHubDeclarationSource, []
+
+    class Spied:
+        def __init__(self, token):
+            self._source = real(token=token)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def declaration(self, slug):
+            return self._source.declaration(slug)
+
+        def holds_registry(self, slug):
+            return self._source.holds_registry(slug)
+
+        def registry_hands_over(self, slug):
+            judged.append(slug)
+            return self._source.registry_hands_over(slug)
+
+    monkeypatch.setattr(cli, "GitHubDeclarationSource", Spied)
     result = _run()
     assert ".cred-consumers.toml" not in result.output
+    assert judged == []
 
 
 def test_a_typeless_flagged_row_does_not_count(monkeypatch) -> None:
