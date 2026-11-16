@@ -2,8 +2,16 @@ Outcome: done
 
 # Report: the work carrier's registry rows (ADR-0059 increment 4, step 3f-2, cut-over item 3)
 
-Worker W-190. Branch `hq/lanes-inc-4-work-carrier-rows`, base `origin/main` at `80070b0f` (the
-handoff's facts confirmed at that base). PR: #729, ready for review, not merged. Code commit `0aa62b3b`; this report is the commit after it.
+Worker W-190. Branch `hq/lanes-inc-4-work-carrier-rows`, base `origin/main` at `80070b0f`, with
+`origin/main` (`849d6a71`, #728) merged in afterwards. PR: #729, ready for review, not merged. Code
+commit `0aa62b3b`; merge `3f3ebb78`; the PR head is the report commit after it.
+
+The repository facts in the handoff (line numbers, the launcher's reads, the manifest's lanes, the
+lane-row pattern) were confirmed at the base. The two keeper ids, the service uuid
+`am99g0klcsa7u8dpb4t19xjr` and gate G-67 come from the handoff alone: no BWS or Coolify read was
+allowed. I compared each id mechanically against the handoff file with `grep -c`. That is the only
+verification, and the new test pins the same strings, so it can't catch a transcription error in
+the handoff itself.
 
 ## What I built
 
@@ -125,7 +133,8 @@ I ran it. I cloned the checkout into `/tmp/w190-scratch/infraops`, fetched GitHu
 built it there, and pointed `INFRADRIFT_CONFIG_DIR` at a scratch list naming a copy of this
 branch's registry, with an empty `0600` state file. I didn't edit or build
 `~/Projects/infraops-mcp-server`, and I didn't read `~/.config/infra-drift/cred-consumers.list`.
-`cred-findings --now 2026-11-16T22:00:00Z` exited 0, and its work-carrier output was exactly:
+`cred-findings --now 2026-11-16T22:00:00Z` exited 0. Its work-carrier entries, filtered and
+printed by a Python one-liner from the JSON it wrote, were the following:
 
 ```
 {'check': 'cred.rotation-requested', 'id': 'work-carrier-bws-token', 'class': 'bws-lane-token', 'rotate_requested': '2026-11-16', 'rotated_by_sds': True}
@@ -166,27 +175,39 @@ served tag.
 
 ### 6. How the rows go live
 
-ADR-0031 decision 1 (`docs/decisions/0031-…md:35-39`): each scheduled launcher fast-forwards the
-working copy it is about to run, as its first step, with `~/.claude/bin/activate-checkout.sh`
-(`merge --ff-only '@{u}'`, line 93). The rotation proposer's launcher does this
-(`scripts/run-rotation-proposer.sh:99-107`). The 03:00 scan reads the registry from the working
-copies its list names. So the rows reach the scan and the proposer when a lane's activation helper
-fast-forwards the main tree to `origin/main` after this merges. The executor reads the registry at
-`main` through `RepoMirror` (the new test reads it the same way).
+ADR-0031 decision 1 (`docs/decisions/0031-…md:35-47`): each scheduled launcher fast-forwards the
+working copy whose code it runs, as its first step, with `~/.claude/bin/activate-checkout.sh`
+(`merge --ff-only '@{u}'`, line 93). Line 45 limits this to what a launcher executes, not what it
+reads as data, and the registry is data. So the main tree's copy of `.cred-consumers.toml` moves
+when an orchestrator launcher activates the main tree to run its own code: every Mac launcher in
+`scripts/` that runs from `$REPO_ROOT` (for example `run-work-carrier.sh:164-178`, which activates
+before it runs). `run-rotation-proposer.sh:99-107` is a different activation: it fast-forwards the
+intent-packages checkout, on `--submit` only.
+
+That the 03:00 scan and the rotation proposer read the main tree's working copy is HQ's statement.
+I didn't read `~/.config/infra-drift/cred-consumers.list`, as the handoff told me. The executor
+reads the registry at `main` through `RepoMirror`, independent of any working copy (the new test
+reads it the same way).
 
 ### 7. The membership check
 
-`src/membership_check/` reads the `rotated_by_sds` registry rows (`cli.py:115-123`, through
-`RepoMirror`) for which repositories hold them, and which repositories hold a
-`.cred-consumers.toml` (`consistency.py:180-193`). Both are per repository. The orchestrator
-already holds `rotated_by_sds` rows and a registry, so its pass is unchanged.
-`hq/membership-check-d59-narrow` (`bf9eade6`) isn't an ancestor of `origin/main`, so there was
-nothing to build on.
+`hq/membership-check-d59-narrow` merged as #728 (`849d6a71`, 2026-11-16 22:19 UTC) after my base,
+so I merged `origin/main` into the branch and judged the change on it.
+
+`src/membership_check/cli.py:115-126` (`_flagged_repositories`) reads every registry through the
+lane's `RepoMirror`, keeps the `rotated_by_sds` rows `of_a_type` passes (types the executor
+rotates), and returns only the set of repositories they come from. After #728,
+`consistency.py:170-197` reports a repository whose `.cred-consumers.toml` has a
+`rotated_by_sds = true` row while sitting outside `REGISTRY_REPOSITORIES`. Both are per repository.
+The orchestrator was already in both sets through its other lane rows, and it is in
+`REGISTRY_REPOSITORIES`, so the pass is unchanged. The new rows can't add a finding.
 
 ## Tests and checks run
 
 - New and touched tests: `test_work_carrier_rows.py` and `test_deploy_lanes.py`, 110 passed.
-- `make check` with `orchestrator_test_hq_w_190`: exit 0; 15,247 passed, 1 skipped (lint, format and pyright clean).
+- `make check` with `orchestrator_test_hq_w_190`, at `0aa62b3b`: exit 0; 15,247 passed, 1 skipped
+  (lint, format and pyright clean). After the merge of `origin/main`, at `3f3ebb78`: exit 0; 15,264 passed, 1 skipped.
+- CI on the PR head: CIRESULT.
 - Security scan from the repo root: BLOCK 0, WARN 2, INFO 1. Both WARNs come from before this
   change: glob `*-migration/` not covered, and the undeclared UUID `aaff45ca-…` that earlier
   reports name (`adr-0055-a22-increment-2-report.md:183`). Neither is in this diff.
@@ -207,6 +228,15 @@ nothing to build on.
 - The read-App block comment gained a clause because the new reader comes before its grant.
 - The reach test's list is "all nine overlap", computed from the file, not the decomposer's
   overlapping and disjoint split.
+- The read password's note is a rewrite, not a swap of the holder clause. Before:
+  `launchd com.devon.work-carrier 07:05 (--register), with the switch file present; Keychain
+  Claude/BWS_ACCESS_TOKEN_SDS (sds-operator) until ADR-0059 step 3f-2; passed to work-carrier alone,
+  never work-watcher`. After: `read in the sds-lane-work-carrier container with the lane's own
+  token, each pass (bare or --register); held by the work-carrier lane account (ADR-0059 step
+  3f-2); passed to work-carrier and its chain verify alone, never work-watcher`. Swapping only the
+  holder would have left a launchd sentence naming a container account. The rewrite drops the
+  launchd schedule and the switch-file clause. It describes a read that starts only after items
+  4-7: the grant, the token's mint and the `--add`.
 
 ## Concerns
 
@@ -219,6 +249,17 @@ nothing to build on.
   fetch fresh each run. A hand rotation reaches both without the registry naming the Mac.
 - The lane account holds no grant on any of its nine secrets yet (item 4). The read-App reader and
   the read password's holder are recorded ahead of those grants, as item 3 orders.
+
+## Follow-ups
+
+- change-manager: the two bearer rows' work-carrier readers take the "two readers of this
+  launcher" form once item 4 makes both direct grants (check 2).
+- The second rows PR (item 5): date `work-carrier-ping-url` with `rotate_requested` once the
+  token's `store` unit completes.
+- The step-6 change: the compose names the ping-URL secret's id, `.bws-secrets.toml` lists
+  `55fbae20-…` for `work-carrier`, and `work-carrier` leaves `placeholders`.
+- After the Mac job retires (item 9): the read password's note can say the lane account is its one
+  holder, and the Mac `runtime-fetch` entries for `run-work-carrier.sh` go.
 
 ## Standards followed
 
