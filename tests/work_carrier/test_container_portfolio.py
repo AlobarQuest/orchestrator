@@ -1,10 +1,11 @@
 """The work carrier's portfolio read in the lane's container (ADR-0059 decision 5, D-55 A).
 
 The container has no portfolio scan: `lane-run` passes no `WORK_CARRIER_PORTFOLIO`, and each pass's
-`HOME` is new and empty, so `~/.portfolio/portfolio.json` is absent. Until the interim feed D-55 A
-chose lands (its own step and ADR amendment), the carrier's read stays as it is, and these tests
-pin what that means there: a repository-targeted record is held (UNKNOWN, never carried), while a
-standing rotation package, which asks no portfolio question, still carries.
+`HOME` is new and empty, so `~/.portfolio/portfolio.json` is absent. The container's launcher hands
+the carry the chain's newest scan instead (`--portfolio-scan`, ADR-0059 amendment 11; its tests are
+`test_scan_feed.py`). These tests pin the file read with no such feed: a repository-targeted record
+is held (UNKNOWN, never carried), while a standing rotation package, which asks no portfolio
+question, still carries.
 """
 
 from __future__ import annotations

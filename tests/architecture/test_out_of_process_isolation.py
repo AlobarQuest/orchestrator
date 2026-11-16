@@ -722,6 +722,9 @@ TABLE: dict[str, Row] = {
         "dataclasses",
         "estate_clients",
         "httpx",
+        # `json` and `pathlib` also read the chain's scan feed, a file its launcher hands it
+        # (ADR-0059 amendment 11): the chain itself is walked by `orchestrator.factory_chain_read`,
+        # a separate process, so this row gains no driver and no `factory_events`.
         "json",
         "os",
         "pathlib",

@@ -365,7 +365,7 @@ def _carry(
     monkeypatch.setattr(
         cli_module,
         "judge_workability",
-        lambda subjects, out, grants, rotated: judge(
+        lambda subjects, out, grants, rotated, **_carried: judge(
             subjects, out, grants=grants, rotated=rotated, portfolio=portfolio(project())
         ),
     )

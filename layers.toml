@@ -156,6 +156,7 @@ paths = [
   "tests/scripts/test_factory_events_session.py",
   "docs/operations/factory-events-chain.md",
   "tests/architecture/test_intent_edges.py",
+  "tests/cli/test_factory_chain_read_scan.py",
   "tests/cli/test_package_chain_database.py",
   "tests/cli/test_package_chain_database_integration.py",
   "tests/contract/test_package_evidence_vocabulary_contract.py",

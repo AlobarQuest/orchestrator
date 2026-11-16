@@ -17,7 +17,8 @@ payload. Its whole outbound surface is stated here, from its source:
 `orchestrator.factory_chain_read`, the database read it runs, is stated beside it: no subprocess,
 no environment variable of its own (FE-1's `chain` reads the password and settings), three lazy
 imports (psycopg, FE-1's `store` and `chain`), a connection as the read role only, one `SELECT`,
-and a read-only repeatable-read transaction.
+and a read-only repeatable-read transaction. The same walk yields the `package.approved` events and
+the newest usable `portfolio.scanned` event (ADR-0059 amendment 11); the second adds no read.
 
 Each row is held to the module's text, and each control shows the comparison reporting a
 deliberate widening.
@@ -377,6 +378,10 @@ def test_the_chain_read_reaches_the_database_only_through_its_three_lazy_imports
         "collections",
         "importlib",
         "typing",
+        # The `portfolio.scanned` selection (ADR-0059 amendment 11): the scan time's shape and
+        # its parse, and the clock the future-dated tolerance is judged against.
+        "re",
+        "datetime",
     }
 
 

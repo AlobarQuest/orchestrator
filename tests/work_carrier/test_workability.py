@@ -475,7 +475,7 @@ def _carry(
     """
     monkeypatch.setattr(
         "work_carrier.cli.judge_workability",
-        lambda subjects, out, grants, rotated: judge(
+        lambda subjects, out, grants, rotated, **_carried: judge(
             subjects,
             out,
             grants=grants if judged_by is None else judged_by,

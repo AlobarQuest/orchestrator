@@ -612,7 +612,19 @@ which the image links as `/intent-packages`. That's where `package_sources` look
 The pass discards the clone when it's done. After the retirement, which reads no chain, it runs
 `python -m orchestrator.factory_chain_read` once, before the carry. Any outcome but `verified`
 carries nothing and fails the pass with exit 1. This is the VPS verify D-52 A gives to the carrier's first VPS pass, and
-it runs whatever the queue holds. The check is an outcome alarm that pings only on `--register`. Its
+it runs whatever the queue holds.
+
+The same walk gives the carry its portfolio input (ADR-0059 amendment 11). A verified record
+carries `portfolio_scan`: the newest usable `portfolio.scanned` event by its scan time, or the
+reason there is none. The launcher writes that part to a file the pass owns and removes, and hands
+it to `work-carrier` as `--portfolio-scan`, so the container reads no Mac file and `lane-run`
+passes nothing new. The report gets only the chain summary and the carrier's `[feed]` line, which
+every verified container pass prints first: the scan time and age, the row count and `result`, or
+why there is no usable event. A repository-targeted record whose repository has no fresh row
+(no event, a scan time over 48 hours old, a scan that couldn't read the member record, or no row)
+holds as `UNDECIDED` and the pass exits 2. An empty queue with a stale feed exits as it would
+without it. The Mac pass gets no `--portfolio-scan` and still reads `~/.portfolio/portfolio.json`
+(`WORK_CARRIER_PORTFOLIO`); that read leaves with the Mac job. The check is an outcome alarm that pings only on `--register`. Its
 compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so an
 acting pass pings nothing until then, and the lane is in `test_deploy_lanes.py`'s `placeholders`.
 
@@ -641,10 +653,16 @@ its own change or act:
    three `--register` secrets before the first acting pass. The run also fetches the four public
    credential registries anonymously under `lane-run`'s `HOME`, which a standing rotation's carry
    reads (`work_carrier/cli.py`, `RepoMirror`).
-8. The portfolio feed D-55 A chose, in its own step and ADR amendment (ADR-0059 decision 5: the
-   portfolio source is decided before the lane moves). Until the lane reads it, a
-   repository-targeted record holds (exit 2) in the container while the Mac carries it, so the
-   paired comparison fails whenever one is queued. A standing rotation still carries.
+8. The portfolio feed D-55 A and D-56 A chose (ADR-0059 amendment 11). The scan's feed
+   (project-standards), the schema value and the `portfolio-scan` registry agent
+   (security-standards `08754a0f`), and the carrier's reader with this repository's pin at
+   `08754a0f` are merged. Before security-standards' nightly adapter merges, the carrier must run
+   an image built at that pin: every walk re-validates each stored event against its image's
+   schema copy, and the chain is append-only. Until a fresh `portfolio.scanned` event is in the
+   chain, a repository-targeted record holds (exit 2) in the container while the Mac carries it,
+   so the paired comparison fails whenever one is queued. A standing rotation still carries. The
+   cut-over can't finish until the first VPS pass reads an event under 48 hours old, or holds its
+   repository-targeted records for a reason its `[feed]` line names.
 9. Cut-over steps 2 onward:
    - The copy of the Mac's `sds/work-watcher/alerts.json` into the volume, before the first
      `--register` pass in the container, or the alerts the Mac left firing never resolve.

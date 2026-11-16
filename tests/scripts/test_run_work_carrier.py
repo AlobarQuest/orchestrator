@@ -11,6 +11,7 @@ Keychain, GitHub, change-manager, the orchestrator, the chain database or Health
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -56,10 +57,23 @@ CHAIN = {
 }
 # A verified record carries every `package.approved` event; only its summary reaches the report.
 APPROVAL_EVENT = '{"action": "package.approved", "event_id": "an-approval-event"}'
+# And the scan feed's answer, which reaches the carry as a file and never the report.
+PORTFOLIO_SCAN = {
+    "scan": {
+        "scanned_at": "2026-11-17T08:00:35Z",
+        "scanned_epoch": 1794902435,
+        "seq": 6,
+        "result": "success",
+        "rows": [{"repository": "example-owner/feed-row", "checks": {"runner.caller": "pass"}}],
+    },
+    "skipped": 0,
+    "skipped_reason": None,
+}
 VERIFIED = (
     '{"events": 7, "head": "0123456789ab", "logger": "orchestrator.factory_chain_read", '
     '"op": "read-package-approvals", "outcome": "verified", '
-    f'"package_approved": [{APPROVAL_EVENT}], "seq": 7}}'
+    f'"package_approved": [{APPROVAL_EVENT}], "portfolio_scan": {json.dumps(PORTFOLIO_SCAN)}, '
+    '"seq": 7}'
 )
 VERIFIED_SUMMARY = "outcome=verified seq=7 head=0123456789ab events=7"
 
@@ -113,6 +127,11 @@ observation=${{WORK_CARRIER_OBSERVATION_TOKEN:-}} key=${{WORK_CARRIER_OBSERVATIO
 members=${{SDS_MEMBERS_OBSERVER_TOKEN:-}} root=${{WORK_CARRIER_CHECKOUT_ROOT:-}} \\
 clone=$([ -d "${{WORK_CARRIER_CHECKOUT_ROOT:-/none}}/intent-packages/src" ] && echo present) \\
 {_COMMON}" >> "$LANE_LOG"
+# The scan feed it was handed, as one line, so a test can read the file the launcher wrote.
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --portfolio-scan ]; then echo "feed $(cat "$2")" >> "$LANE_LOG"; fi
+  shift
+done
 exit "${{FAKE_CARRIER_RC:-0}}"
 """
 _MINT = """#!/bin/bash
@@ -194,6 +213,8 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
     home.mkdir()
     clones = tmp_path / "clones"
     clones.mkdir(exist_ok=True)
+    scratch = tmp_path / "tmp"
+    scratch.mkdir(exist_ok=True)
     logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "gh", "ping", "git")}
     for log in logs.values():
         log.write_text("")
@@ -204,6 +225,7 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
         "SDS_DEADMAN_PING_URL_UUID": "",
         "WORK_WATCHER_STATE_DIR": str(tmp_path / "state"),
         "WORK_CARRIER_CLONE_ROOT": str(clones),
+        "TMPDIR": str(scratch),
         # The dead-man helper's name lookup, on a `--register` pass with no ping-URL id, asks for
         # the broad identity; the stand-in keeps the real Keychain out of the test.
         "BWS_ACCESS_TOKEN_BROAD": BROAD_STANDIN,
@@ -263,7 +285,8 @@ def test_a_bare_pass_reads_only_the_every_pass_secrets_and_pings_nothing(tmp_pat
     assert run.field("watcher", "wcm") == value(READ_UUID)
     assert run.field("watcher", "orch") == value(SYSTEM_UUID)
     assert run.field("watcher", "alert") == "unset"
-    assert run.field("carrier", "args") == ""
+    # No `--register`; the scan feed is the one argument the container pass adds.
+    assert run.field("carrier", "args") == "--portfolio-scan"
     assert run.field("carrier", "orch") == ""
     assert run.field("carrier", "observation") == ""
 
@@ -385,6 +408,36 @@ def test_anything_but_a_verified_chain_fails_the_pass_and_carries_nothing(
     # The retirement still ran: a chain outage mustn't stop built work being retired.
     assert len(run.lines("watcher")) == 1
     assert run.lines("carrier") == []
+
+
+@pytest.mark.parametrize("args", [(), ("--register",)], ids=["bare", "register"])
+def test_a_verified_pass_hands_the_carry_the_scan_feed_as_a_file_it_then_removes(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    run = _run(tmp_path, *args)
+    assert run.code == 0, run.output
+    (carrier,) = run.lines("carrier")
+    assert carrier.startswith(
+        f"carrier args={' '.join(args)}{' ' if args else ''}--portfolio-scan "
+    )
+    (feed,) = run.lines("feed")
+    assert json.loads(feed.removeprefix("feed ")) == PORTFOLIO_SCAN
+    # The report keeps only the summary, and the pass leaves no feed file behind.
+    assert "example-owner/feed-row" not in run.output
+    assert list((tmp_path / "tmp").glob("sds-work-carrier-feed.*")) == []
+
+
+def test_a_verified_record_with_no_scan_hands_over_null(tmp_path: Path) -> None:
+    record = '{"outcome": "verified", "seq": 0, "events": 0, "package_approved": []}'
+    run = _run(tmp_path, FAKE_VERIFY_RECORD=record)
+    assert run.code == 0, run.output
+    assert run.lines("feed") == ["feed null"]
+
+
+def test_a_chain_that_did_not_verify_hands_over_no_feed(tmp_path: Path) -> None:
+    run = _run(tmp_path, FAKE_VERIFY_RC="2")
+    assert run.lines("carrier") == [] and run.lines("feed") == []
+    assert list((tmp_path / "tmp").glob("sds-work-carrier-feed.*")) == []
 
 
 def test_a_worse_retirement_outcome_still_wins_over_a_failed_verify(tmp_path: Path) -> None:
@@ -545,6 +598,8 @@ def test_on_the_mac_nothing_is_minted_cloned_or_verified(
     assert "[activation]" in run.output
     assert run.field("carrier", "github") == "gh-token"
     assert run.field("carrier", "sec") == ""
+    # The Mac's carry reads `portfolio.json`: it is handed no scan feed.
+    assert "--portfolio-scan" not in run.lines("carrier")[0] and run.lines("feed") == []
     reads = {line.split()[0]: line.split("=", 1)[1] for line in run.logs["bws"]}
     assert reads[READ_UUID] == BROAD_STANDIN
     assert reads[SYSTEM_UUID] == "narrow"
