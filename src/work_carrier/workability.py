@@ -174,6 +174,12 @@ _STALE_SOURCE = (
 )
 
 
+FEED_SOURCE = (
+    "the scan's results reach this pass through the factory-events chain, written by the Mac "
+    "nightly from the portfolio scan's feed"
+)
+
+
 @dataclass(frozen=True)
 class Constraint:
     """One of Devon's three, answered."""
@@ -316,6 +322,107 @@ def project_for(portfolio: Portfolio, repository: str) -> tuple[dict[str, Any] |
     return matches[0], ""
 
 
+@dataclass(frozen=True)
+class ScanFeed:
+    """The newest `portfolio.scanned` event from a verified chain walk (ADR-0059 amendment 11).
+
+    The lane's container pass reads this in place of `portfolio.json`: `orchestrator.
+    factory_chain_read` selects the event, and the launcher hands this pass its answer as a file.
+    `rows` is keyed by the case-folded full `owner/repo`; `usable` is False when there is no event,
+    it is older than `PORTFOLIO_MAX_AGE_HOURS`, the scan read no member record, or the hand-over
+    is unreadable, and then every repository-targeted record is held for `detail`.
+    """
+
+    rows: Mapping[str, Mapping[str, str]]
+    detail: str
+    usable: bool
+
+
+def _feed_rows(scan: dict[str, Any]) -> dict[str, dict[str, str]] | None:
+    rows = scan.get("rows")
+    if not isinstance(rows, list):
+        return None
+    found: dict[str, dict[str, str]] = {}
+    for row in rows:
+        repository = row.get("repository") if isinstance(row, dict) else None
+        checks = row.get("checks") if isinstance(row, dict) else None
+        if not isinstance(repository, str) or not isinstance(checks, dict):
+            return None
+        if repository.casefold() in found:
+            return None
+        found[repository.casefold()] = {
+            check: status
+            for check, status in checks.items()
+            if isinstance(check, str) and isinstance(status, str)
+        }
+    return found
+
+
+def load_scan_feed(path: Path, *, now: float | None = None) -> ScanFeed:
+    """Read the chain read's `portfolio_scan` answer, or say why it can't be used. Total.
+
+    THE AGE IS THE SCAN'S OWN TIME, the event's `timestamp` as an epoch the chain read parsed, and
+    never a file's mtime or the order of the chain. A time up to the chain read's skew tolerance
+    ahead of this pass reads as no age at all.
+    """
+    unusable = f"so every repository-targeted record is held ({FEED_SOURCE})"
+    try:
+        answer = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return ScanFeed(
+            {},
+            f"the chain read's feed could not be read ({type(error).__name__}), {unusable}",
+            False,
+        )
+    scan = answer.get("scan") if isinstance(answer, dict) else None
+    if not isinstance(answer, dict) or not isinstance(scan, dict):
+        reason = answer.get("reason") if isinstance(answer, dict) else None
+        why = reason if isinstance(reason, str) else "the chain read gave no reason"
+        return ScanFeed({}, f"no usable portfolio.scanned event: {why}, {unusable}", False)
+    epoch, scanned_at, result = (
+        scan.get("scanned_epoch"),
+        scan.get("scanned_at"),
+        scan.get("result"),
+    )
+    rows = _feed_rows(scan)
+    if (
+        not isinstance(epoch, int)
+        or not isinstance(scanned_at, str)
+        or result not in ("success", "unknown")
+        or rows is None
+    ):
+        return ScanFeed({}, f"the chain read's feed is not the shape it writes, {unusable}", False)
+    age = max(0.0, (now if now is not None else time.time()) - epoch)
+    seq = scan.get("seq")
+    head = (
+        f"portfolio.scanned at {scanned_at} (seq {seq}), {_describe_age(age)}, "
+        f"{len(rows)} row{'s' if len(rows) != 1 else ''}, result {result}"
+    )
+    if age > PORTFOLIO_MAX_AGE_HOURS * 3600:
+        return ScanFeed(
+            {},
+            f"{head}: past the {PORTFOLIO_MAX_AGE_HOURS}h limit, so it is not read, {unusable}",
+            False,
+        )
+    if result == "unknown":
+        return ScanFeed({}, f"{head}: the scan could not read the member record, {unusable}", False)
+    return ScanFeed(rows, f"{head} ({FEED_SOURCE})", True)
+
+
+def feed_statuses_for(feed: ScanFeed, repository: str) -> tuple[Mapping[str, str] | None, str]:
+    """The row for `owner/repo`, joined on the whole name case-folded, or why there is none."""
+    if not feed.usable:
+        return None, feed.detail
+    statuses = feed.rows.get(repository.strip().casefold())
+    if statuses is None:
+        return None, (
+            f"the newest portfolio scan has no row for {repository}: it measures only the members "
+            "granted or remediating app changes that have a working copy on the Mac; this is a "
+            "lookup that found nothing, not a repository that failed a check"
+        )
+    return statuses, ""
+
+
 def _checks(project: dict[str, Any]) -> dict[str, str]:
     """The sweep's answers for this project, keyed by check id.
 
@@ -336,7 +443,7 @@ def _checks(project: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _from_checks(name: str, project: dict[str, Any], wanted: tuple[str, ...]) -> Constraint:
+def _from_checks(name: str, statuses: Mapping[str, str], wanted: tuple[str, ...]) -> Constraint:
     """One constraint over a named set of conformance checks.
 
     **`not-applicable` FALLS IN WITH UNKNOWN, and that is a fold rather than a
@@ -355,7 +462,6 @@ def _from_checks(name: str, project: dict[str, Any], wanted: tuple[str, ...]) ->
     are UNKNOWN: an unmeasured capability is not a demonstrated one, which is the
     fail-open the kit's own module says it must never produce.
     """
-    statuses = _checks(project)
     if not statuses:
         return Constraint(
             name, UNKNOWN, "the conformance sweep recorded no factory checks for this repository"
@@ -398,7 +504,7 @@ def grants_by_service(members: list[Member]) -> dict[str, frozenset[str]]:
 def assess(
     repository: str | None,
     granted: bool,
-    portfolio: Portfolio,
+    portfolio: Portfolio | ScanFeed,
     *,
     service: str = "app_changes",
 ) -> Workability:
@@ -424,8 +530,12 @@ def assess(
                 Constraint(name, UNKNOWN, unknown) for name in ("granted", "capable", "permissions")
             ),
         )
-    project, why = project_for(portfolio, repository)
-    if project is None:
+    if isinstance(portfolio, ScanFeed):
+        statuses, why = feed_statuses_for(portfolio, repository)
+    else:
+        project, why = project_for(portfolio, repository)
+        statuses = None if project is None else _checks(project)
+    if statuses is None:
         return Workability(
             repository,
             (
@@ -438,8 +548,8 @@ def assess(
         repository,
         (
             _granted(repository, granted, service),
-            _from_checks("capable", project, CAPABILITY_CHECKS),
-            _from_checks("permissions", project, PERMISSION_CHECKS),
+            _from_checks("capable", statuses, CAPABILITY_CHECKS),
+            _from_checks("permissions", statuses, PERMISSION_CHECKS),
         ),
     )
 
@@ -603,7 +713,7 @@ def judge(
     *,
     grants: dict[str, frozenset[str]],
     rotated: Mapping[str, str] | None = None,
-    portfolio: Portfolio | None = None,
+    portfolio: Portfolio | ScanFeed | None = None,
 ) -> tuple[str, ...]:
     """Decide, per subject, whether the carry may proceed -- and say why either way.
 
@@ -647,7 +757,7 @@ def _judge(
     out,
     grants: dict[str, frozenset[str]],
     rotated: Mapping[str, str] | None,
-    portfolio: Portfolio | None,
+    portfolio: Portfolio | ScanFeed | None,
     decisions: list[str],
 ) -> None:
     loaded = portfolio if portfolio is not None else load_portfolio()

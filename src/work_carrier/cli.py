@@ -10,9 +10,11 @@ the old design, it is the mode in which the lane is inspected: a person can read
 registered without anything being. **A HELD RECORD PRINTS ITS REASON AND NOT ITS PAYLOAD**, in
 this mode as in the other -- "not carried" means not carried whichever flag was given, and a
 payload printed under a heading saying it would be registered would be false. On a machine with
-no capability file that is EVERY record with a target repository, which is the honest reading of
+no capability source that is EVERY record with a target repository, which is the honest reading of
 "this pass cannot tell whether any of this work belongs where it is going"; a standing
-operational package asks neither, so it is judged the same anywhere.
+operational package asks neither, so it is judged the same anywhere. The source is
+`portfolio.json` on the Mac and, given `--portfolio-scan`, the chain's newest scan in the lane's
+container (ADR-0059 amendment 11), announced on a `[feed]` line before anything else.
 
 **THE MEMBER RECORD IS READ FIRST, ON EVERY PASS, AND UNREADABLE STOPS IT.** The grant is the scope
 authority: a record is carried only into a repository the SDS member record grants the service for
@@ -105,8 +107,10 @@ from work_carrier.workability import (
     UNDECIDED,
     UNJUDGED,
     WORKABLE,
+    ScanFeed,
     grants_by_service,
     is_operational,
+    load_scan_feed,
 )
 from work_carrier.workability import judge as judge_workability
 
@@ -201,7 +205,30 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--orchestrator-url",
         default=os.environ.get("WORK_CARRIER_ORCHESTRATOR_URL", ORCHESTRATOR_DEFAULT_BASE_URL),
     )
+    parser.add_argument(
+        "--portfolio-scan",
+        type=Path,
+        help=(
+            "The verified chain read's `portfolio_scan` answer, which the lane's container "
+            "launcher writes each pass (ADR-0059 amendment 11). Given, the capability source is "
+            "that event and `portfolio.json` is not read; absent, it is the Mac's file."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _announce_feed(args: argparse.Namespace, out) -> ScanFeed | None:
+    """The scan feed this pass was handed, after printing its `[feed]` line; `None` on the Mac.
+
+    PRINTED FIRST, before anything that can end the pass, so every container pass whose chain
+    verified says how fresh its feed is, even with an empty queue (HQ's decision on amendment 11's
+    silent case). The line changes no exit: only a record held for it does.
+    """
+    if args.portfolio_scan is None:
+        return None
+    feed = load_scan_feed(args.portfolio_scan)
+    print(f"[feed] {feed.detail}", file=out)
+    return feed
 
 
 def _source(args: argparse.Namespace) -> WorkRecordSource | None:
@@ -496,9 +523,12 @@ def run(
     rotated: Mapping[str, str] | None = None,
     recorder: OrchestratorClient | None = None,
     find_entry: Callable[[str], RegistryEntry] | None = None,
+    feed: ScanFeed | None = None,
     out=sys.stdout,
 ) -> int:
     args = _parse_args(argv)
+    # `main` announces the feed before its own early returns and hands it on.
+    feed = feed if feed is not None else _announce_feed(args, out)
     root = Path(args.checkout_root).expanduser()
     if not root.is_dir():
         print(f"[UNUSABLE] no checkout root at {root}", file=out)
@@ -558,6 +588,7 @@ def run(
         out,
         grants=grants,
         rotated=rotated,
+        portfolio=feed,
     )
     workable = [
         item for item, decision in zip(prepared, decisions, strict=True) if decision in _CARRIED
@@ -587,8 +618,9 @@ def run(
 def main() -> int:
     argv = sys.argv[1:]
     args = _parse_args(argv)
+    feed = _announce_feed(args, sys.stdout)
     if not args.register:
-        return run(argv)
+        return run(argv, feed=feed)
     try:
         writer = _registrar(args)
     except OrchestratorError as error:
@@ -598,7 +630,7 @@ def main() -> int:
         print("[UNUSABLE] WORK_CARRIER_ORCHESTRATOR_TOKEN is not set")
         return EXIT_UNUSABLE
     with writer:
-        return run(argv, registrar=writer)
+        return run(argv, registrar=writer, feed=feed)
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point

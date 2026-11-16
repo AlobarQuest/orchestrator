@@ -21,6 +21,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -318,3 +319,73 @@ def test_a_set_retired_variable_refuses_by_name_beside_a_working_read(
     with pytest.raises(PackageSourceError, match="FACTORY_EVENTS_READ_DSN is retired") as info:
         _verify(event_id)
     assert ROLE_PASSWORD not in _refusal_text(info, capfd)
+
+
+# ---- The portfolio scan (ADR-0059 amendment 11) --------------------------------------------------
+
+
+def _stamp(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _scan_event(scanned_at: str, repository: str) -> dict[str, Any]:
+    """A `portfolio.scanned` event as security-standards #99's adapter builds it."""
+    return {
+        "schema": "factory-event/v1",
+        "event_id": "evt-" + secrets.token_hex(32),
+        "timestamp": scanned_at,
+        "actor": "portfolio-scan",
+        "action": "portfolio.scanned",
+        "target": None,
+        "result": "success",
+        "evidence": [
+            {"type": "repository", "repository": repository, "checks": {"runner.caller": "pass"}}
+        ],
+        "source": {"system": "portfolio-scan", "ref": scanned_at},
+    }
+
+
+def _append(chain_db: ChainDb, event: dict[str, Any]) -> None:
+    """Through FE-1's real `chain.append_event`, which validates against the checkout's schema."""
+    script = (
+        "import json, sys\n"
+        "from factory_events import chain\n"
+        "chain.append_event(json.load(sys.stdin))"
+    )
+    full_env = {**os.environ, "PYTHONPATH": str(_sec_src()), **chain_db.append_env()}
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        input=json.dumps(event),
+        capture_output=True,
+        text=True,
+        env=full_env,
+        timeout=60,
+    )
+    assert result.returncode == 0, "chain.append_event refused the portfolio.scanned event"
+
+
+def test_the_real_walk_hands_over_the_newest_scan_by_its_time_not_its_seq(
+    monkeypatch: pytest.MonkeyPatch, chain_db: ChainDb
+) -> None:
+    """Needs a checkout whose schema knows `portfolio-scan` (security-standards `08754a0f`)."""
+    now = datetime.now(UTC)
+    newer, older = (_stamp(now - timedelta(hours=hours)) for hours in (1, 25))
+    _approve(chain_db)
+    _append(chain_db, _scan_event(newer, "example-owner/newer"))
+    _append(chain_db, _scan_event(older, "example-owner/older"))
+    _read_chain(monkeypatch, chain_db)
+
+    child = subprocess.run(
+        [sys.executable, "-m", "orchestrator.factory_chain_read"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(_sec_src())},
+        timeout=60,
+    )
+
+    record = json.loads(child.stdout.strip().splitlines()[-1])
+    assert child.returncode == 0 and record["outcome"] == "verified"
+    scan = record["portfolio_scan"]["scan"]
+    assert (scan["seq"], scan["scanned_at"]) == (3, newer)
+    assert [row["repository"] for row in scan["rows"]] == ["example-owner/newer"]
+    assert len(record["package_approved"]) == 1

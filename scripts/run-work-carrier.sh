@@ -573,6 +573,13 @@ if [ "$IN_CONTAINER" -eq 1 ]; then
     "$REPO_ROOT/.venv/bin/python" -m orchestrator.factory_chain_read 2>/dev/null)"
   _verify_rc=$?
   # The record is the last line. The summary parse exits 0 only for `"outcome": "verified"`.
+  # THE SCAN FEED (ADR-0059 amendment 11, decision item 3). A verified record's `portfolio_scan`,
+  # the newest usable `portfolio.scanned` event or the reason there is none, is written to a file
+  # this pass owns and removes, and handed to the carry as `--portfolio-scan`: the container reads
+  # no Mac file and `lane-run` passes nothing new. Only a verified walk writes it, so the carry
+  # never sees an event from a chain that didn't verify; the report still gets only the summary.
+  _FEED_FILE="$(mktemp "${TMPDIR:-/tmp}/sds-work-carrier-feed.XXXXXX")" \
+    || sds_outcome_fail "FATAL: could not create the pass's scan feed file"
   _verify_summary="$(printf '%s\n' "$_verify_out" | tail -n 1 | "$REPO_ROOT/.venv/bin/python" -c '
 import json, sys
 try:
@@ -584,8 +591,11 @@ if not isinstance(record, dict):
     sys.exit(1)
 fields = ("outcome", "seq", "head", "events", "error", "error_type")
 print(" ".join(f"{name}={record[name]}" for name in fields if name in record))
-sys.exit(0 if record.get("outcome") == "verified" else 1)
-')"
+if record.get("outcome") != "verified":
+    sys.exit(1)
+with open(sys.argv[1], "w", encoding="utf-8") as feed:
+    json.dump(record.get("portfolio_scan"), feed)
+' "$_FEED_FILE")"
   _verified_rc=$?
   if [ "$_verify_rc" -ne 0 ] || [ "$_verified_rc" -ne 0 ]; then
     echo "[chain] FATAL: the factory-events chain did not verify (exit $_verify_rc):" \
@@ -603,13 +613,19 @@ if [ "$_carry" -eq 1 ] && [ "$CHAIN_MODE" = "database" ]; then
     FACTORY_EVENTS_DB_HOST="$CHAIN_DB_HOST" \
     FACTORY_EVENTS_DB_PORT="$CHAIN_DB_PORT" \
     FACTORY_EVENTS_DB_NAME="$CHAIN_DB_NAME" \
-    "$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
+    "$REPO_ROOT/.venv/bin/work-carrier" "$@" ${_FEED_FILE:+--portfolio-scan "$_FEED_FILE"} \
+    >> "$SDS_OUTCOME_REPORT" 2>&1
   _record_outcome "$?"
 elif [ "$_carry" -eq 1 ]; then
   "$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
   _record_outcome "$?"
 fi
 unset CHAIN_PASSWORD
+if [ -n "${_FEED_FILE:-}" ]; then
+  rm -f -- "$_FEED_FILE" \
+    || echo "[feed] could not remove $_FEED_FILE; it holds repository names and statuses only" \
+      >> "$SDS_OUTCOME_REPORT"
+fi
 # The container's clone is removed here, at the end of a pass that reaches it, and before every
 # clone. A pass that stops earlier (a failed `sds_outcome_fail`) leaves it for the next pass to
 # remove; a clone left behind holds no credential (the header lives only in the environment), so a
