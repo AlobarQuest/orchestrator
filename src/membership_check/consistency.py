@@ -5,9 +5,9 @@ other sources still say the same thing in their own words, the inputs of `check`
 repository's `factory-target.toml`, change-manager's inert and deploying landing populations, the
 rollout workflows, the tool list, the hardened forks, fork-sync's fork list, the rotation registry
 repositories, the rollback table, the standing dependency-update packages, the `rotated_by_sds`
-registry rows, the repositories holding a `.cred-consumers.toml`, and each member's auto-merge
-state (ADR-0038). This module compares them, so a repository added to one and not the other is a
-line in a report rather than a lane that quietly does the wrong thing.
+registry rows, the repositories whose `.cred-consumers.toml` hands the SDS a credential, and each
+member's auto-merge state (ADR-0038). This module compares them, so a repository added to one and
+not the other is a line in a report rather than a lane that quietly does the wrong thing.
 
 `check` is pure: every input is a plain collection. Reading the sources is `cli.py`'s job.
 Repository names compare ignoring case (GitHub spells them one way, the lists another), and a
@@ -177,8 +177,10 @@ def _rotation_scope(
     """The grant, the registry rows that hand a credential over, and the registry files agree.
 
     A grant with no flagged row is skipped when the mirror was not read: an unread registry is
-    not an empty population. A copy of the file in a repository the executor does not read is a
-    disagreement whether or not the repository holds a grant; one in a repository that
+    not an empty population. `registry_files` names the repositories whose file has a
+    `rotated_by_sds = true` row. Such a file in a repository the executor doesn't read is a
+    disagreement, granted or not, because it hands the SDS a credential from outside the
+    executor's list; a file whose rows hand nothing over is not (D-59 A). One in a repository that
     `REGISTRY_REPOSITORIES` names is the tuple row's business.
     """
     rotation = _granted(members, "credential_rotation")
@@ -188,7 +190,8 @@ def _rotation_scope(
     ]
     named = {n.lower() for n in registry_repositories}
     return found + [
-        f"{repository}: holds .cred-consumers.toml, outside rotation_worker REGISTRY_REPOSITORIES"
+        f"{repository}: its .cred-consumers.toml hands the SDS a credential "
+        "(rotated_by_sds = true), outside rotation_worker REGISTRY_REPOSITORIES"
         for repository in sorted(set(registry_files), key=str.lower)
         if repository.lower() not in named
     ]

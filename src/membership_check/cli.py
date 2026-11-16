@@ -127,23 +127,27 @@ def _flagged_repositories() -> tuple[list[str], list[str]]:
 
 
 def _registry_files(token: str, members: Iterable[Member]) -> tuple[list[str], list[str]]:
-    """Non-retired members holding `.cred-consumers.toml`, and a gap for each that wasn't read.
+    """Non-retired members outside `REGISTRY_REPOSITORIES` whose `.cred-consumers.toml` hands the
+    SDS a credential, and a gap for each file that couldn't be judged.
 
-    An absent file (a confirmed 404) is no finding; any other failure is a gap, never a
-    disagreement.
+    A member the tuple names is read for presence only: its rows come through the mirror. An
+    absent file (a confirmed 404) is no finding; any other failure is a gap, never a disagreement.
     """
-    holding: list[str] = []
+    named = {repository.lower() for repository in REGISTRY_REPOSITORIES}
+    handing: list[str] = []
     gaps: list[str] = []
     with GitHubDeclarationSource(token=token) as source:
         for member in members:
             if member.state == "retired":
                 continue
-            answer = source.holds_registry(member.repository)
-            if answer.target is True:
-                holding.append(member.repository)
-            elif answer.target is None:
+            inside = member.repository.lower() in named
+            read = source.holds_registry if inside else source.registry_hands_over
+            answer = read(member.repository)
+            if answer.target is None:
                 gaps.append(f"{REGISTRY_PATH} unread: {member.repository} ({answer.detail})")
-    return holding, gaps
+            elif answer.target and not inside:
+                handing.append(member.repository)
+    return handing, gaps
 
 
 @app.command()

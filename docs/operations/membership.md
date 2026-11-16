@@ -158,9 +158,12 @@ deploying population.
 `membership_check` compares `credential_rotation` three ways. Each repository in the executor's
 `REGISTRY_REPOSITORIES` needs the grant. Each repository with a `rotated_by_sds` registry row of a type the SDS rotates needs
 it, and each non-retired member granted it needs such a row; the reverse is skipped when a registry
-mirror was not read, because an unread registry is not an empty population. A repository holding a
-`.cred-consumers.toml` outside `REGISTRY_REPOSITORIES` is reported whether or not it holds the
-grant, since the executor never reads it. The lanes read the grant themselves: the executor before
+mirror was not read, because an unread registry is not an empty population. A repository outside
+`REGISTRY_REPOSITORIES` whose `.cred-consumers.toml` has a `rotated_by_sds = true` row is reported
+whether or not it holds the grant, since it hands the SDS a credential the executor never reads; a
+file there whose rows hand nothing over is not reported (D-59 A, which follows Infra Brain rule 1032:
+a credential's row lives in its owning repository's file). A file there that can't be read or
+parsed, or whose `rotated_by_sds` isn't a bool, is a gap. The lanes read the grant themselves: the executor before
 the claim and each step, the proposer before it starts anything for a credential (never to record a finished rotation), and the decomposer before it
 proposes (see `docs/operations/rotation-executor.md`, "The member grant").
 

@@ -339,14 +339,15 @@ def test_the_declaration_read_surface_is_one_route_and_no_more() -> None:
 
 
 def test_the_declaration_reader_asks_and_can_do_nothing_else() -> None:
-    """Two public read methods, each decided: the declaration, and (Rotation Part 2) whether a
-    repository holds the credential registry file. A third is a surface nobody decided on."""
+    """Three public read methods, each decided: the declaration, whether a repository holds the
+    credential registry file (Rotation Part 2), and whether that file hands the SDS a credential
+    (D-59 A). A fourth is a surface nobody decided on."""
     public = {
         name
         for name in vars(GitHubDeclarationSource)
         if not name.startswith("_") and name not in {"close"}
     }
-    assert public == {"declaration", "holds_registry"}
+    assert public == {"declaration", "holds_registry", "registry_hands_over"}
 
 
 def test_a_repository_name_this_program_may_not_ask_about_never_reaches_the_transport() -> None:
@@ -429,6 +430,19 @@ def test_a_registry_file_read_refuses_a_name_that_composes_another_route() -> No
         return httpx.Response(200)
 
     reader = _reader(httpx.MockTransport(handler))
-    assert reader.holds_registry("../..").target is None
-    assert reader.holds_registry("o/r?x=1").target is None
+    for read in (reader.holds_registry, reader.registry_hands_over):
+        assert read("../..").target is None
+        assert read("o/r?x=1").target is None
     assert sent == []
+
+
+def test_a_registry_hand_over_is_yes_no_or_could_not_tell() -> None:
+    def answer(contents: httpx.Response, repository: httpx.Response | None = None) -> bool | None:
+        transport, _ = _routed(contents, repository or httpx.Response(200, json={}))
+        return _reader(transport).registry_hands_over("AlobarQuest/brain").target
+
+    assert answer(httpx.Response(200, content=b"[[credential]]\nrotated_by_sds = true\n")) is True
+    assert answer(httpx.Response(200, content=b"[[credential]]\nrotated_by_sds = false\n")) is False
+    assert answer(httpx.Response(404)) is False
+    assert answer(httpx.Response(404), httpx.Response(404)) is None
+    assert answer(httpx.Response(200, content=b"[[credential]")) is None
