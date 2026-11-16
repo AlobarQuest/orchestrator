@@ -305,6 +305,23 @@ def test_the_feed_line_comes_before_the_pass_can_end_early(
     assert lines[1] == "[UNUSABLE] WORK_CARRIER_ORCHESTRATOR_TOKEN is not set"
 
 
+def test_run_prints_the_feed_line_before_a_missing_checkout_root_ends_the_pass(
+    tmp_path: Path,
+) -> None:
+    feed = _feed_file(tmp_path, _answer())
+    out = io.StringIO()
+
+    code = run(
+        ["--checkout-root", str(tmp_path / "absent"), "--portfolio-scan", str(feed)],
+        source=_Source(()),
+        out=out,
+    )
+
+    lines = out.getvalue().splitlines()
+    assert code == EXIT_UNUSABLE
+    assert lines[0].startswith("[feed] ") and lines[1].startswith("[UNUSABLE] no checkout root")
+
+
 def test_the_feed_line_is_printed_once_through_main(
     tmp_path: Path,
     checkout_root: Path,

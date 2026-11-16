@@ -387,7 +387,6 @@ def load_scan_feed(path: Path, *, now: float | None = None) -> ScanFeed:
     rows = _feed_rows(scan)
     if (
         not isinstance(epoch, int)
-        or isinstance(epoch, bool)
         or not isinstance(scanned_at, str)
         or result not in ("success", "unknown")
         or rows is None
