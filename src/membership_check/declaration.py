@@ -114,8 +114,9 @@ def is_allowed(path: str) -> bool:
     return bool(_ALLOWED.fullmatch(path))
 
 
-# The credential registry's file, whose PRESENCE `holds_registry` reads (Rotation Part 2). The same
-# route shape as the declaration's with another filename, judged on the path that will be sent.
+# The credential registry's file: `holds_registry` reads its presence (Rotation Part 2), and
+# `registry_hands_over` its rows (D-59 A). The same route shape as the declaration's with another
+# filename, judged on the path that will be sent.
 _REGISTRY_ALLOWED = re.compile(
     rf"^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/contents/{re.escape(REGISTRY_PATH)}$"
 )
@@ -171,6 +172,33 @@ def parse(text: str) -> Declaration:
             f"got {reason!r} -- a bare `factory_target = {str(target).lower()}` becomes folklore",
         )
     return Declaration(target, f"{FILENAME} declares factory_target = {str(target).lower()}")
+
+
+def hands_over(text: str) -> Declaration:
+    """Whether a `.cred-consumers.toml`'s rows hand the SDS a credential, or why that is unknown.
+
+    `True` when any `[[credential]]` row has `rotated_by_sds = true`, the test
+    `RegistryEntry.rotated_by_sds` applies (`is True`). `False` when every row has `false` or no
+    flag, or there are no rows. `None` for a file that doesn't parse, a `credential` that isn't an
+    array of tables, or a flag that isn't a bool (a string `"true"` included): the file's author
+    meant something by it, and a reader that guessed `False` would turn that into a pass.
+
+    A `true` row decides whatever the other rows hold, since it alone is the finding. No detail
+    quotes the file: a parser's message can carry the text it failed on.
+    """
+    try:
+        document = tomllib.loads(text)
+    except (tomllib.TOMLDecodeError, ValueError, RecursionError) as error:
+        return Declaration(None, f"{REGISTRY_PATH} doesn't parse as TOML ({type(error).__name__})")
+    rows = document.get("credential", [])
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        return Declaration(None, f"{REGISTRY_PATH} credentials aren't an array of tables")
+    flags = [row.get("rotated_by_sds", False) for row in rows]
+    if any(flag is True for flag in flags):
+        return Declaration(True, f"{REGISTRY_PATH} has a rotated_by_sds = true row")
+    if not all(isinstance(flag, bool) for flag in flags):
+        return Declaration(None, f"{REGISTRY_PATH} has a rotated_by_sds that isn't a bool")
+    return Declaration(False, f"{REGISTRY_PATH} has no rotated_by_sds = true row")
 
 
 def _unanswered(slug: str, status: int) -> str:
@@ -277,14 +305,34 @@ class GitHubDeclarationSource:
         """Whether the repository's default branch holds `.cred-consumers.toml`.
 
         `target` is `True` for a file that is there, `False` for one confirmed absent, `None` when
-        this program could not tell. The file's content is never read: presence is the whole
-        question.
+        this program could not tell. The file's content is not read: presence is the question.
         """
-        response = self._contents(slug, REGISTRY_PATH)
+        response = self._registry(slug)
         if isinstance(response, Declaration):
             return response
-        if 200 <= response.status_code < 300:
-            return Declaration(True, f"{slug} holds {REGISTRY_PATH}")
+        return Declaration(True, f"{slug} holds {REGISTRY_PATH}")
+
+    def registry_hands_over(self, slug: str) -> Declaration:
+        """Whether the repository's `.cred-consumers.toml` hands the SDS a credential.
+
+        `hands_over` judges the rows, and a file confirmed absent is `False`. The bytes are decoded
+        strictly, as the rotation mirror decodes them: a replacement character could make a broken
+        file parse.
+        """
+        response = self._registry(slug)
+        if isinstance(response, Declaration):
+            return response
+        try:
+            text = response.content.decode("utf-8")
+        except UnicodeDecodeError:
+            return Declaration(None, f"{REGISTRY_PATH} isn't UTF-8")
+        return hands_over(text)
+
+    def _registry(self, slug: str) -> httpx.Response | Declaration:
+        """The registry file's 2xx answer, or the `Declaration` that ends the question."""
+        response = self._contents(slug, REGISTRY_PATH)
+        if isinstance(response, Declaration) or 200 <= response.status_code < 300:
+            return response
         return Declaration(
             None, f"github answered {response.status_code} for {slug}'s {REGISTRY_PATH}"
         )
