@@ -174,13 +174,17 @@ The lane therefore passes this row, rather than reporting it as a gap with exit 
 
 ## CI state
 
-All three checks on PR #728 (run `43961008961`, commit `55867b44`) pass: `Quality`,
-`Runner consumer compatibility`, and `Rollout transcription currency`. The `Quality` job log shows
-`15222 passed, 23 skipped`. CI skips 22 more tests than my local run, which reported
-`15244 passed, 1 skipped`.
+All three checks on PR #728 pass: `Quality`, `Runner consumer compatibility`, and
+`Rollout transcription currency`. CI ran on these commits:
 
-This report is in the worktree and is not committed, so the green run above is for the commit
-under review.
+- `55867b44`, run `43961008961`: `15222 passed, 23 skipped`.
+- `3d0fa3a8`, run `43964013900`: `15222 passed, 23 skipped`. This commit adds the review's
+  test fix and this report.
+
+CI skips 22 more tests than my local run (`15244 passed, 1 skipped`). I didn't check which tests
+CI skips.
+
+The edit that adds this section comes after `3d0fa3a8` and changes only this report.
 
 ## Standards followed
 
