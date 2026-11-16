@@ -57,7 +57,7 @@ COPY --from=tools /out/bin/ /usr/local/bin/
 COPY --from=tools /out/node /usr/local/lib/node
 RUN for tool in node npm npx; do ln -s "../lib/node/bin/$tool" "/usr/local/bin/$tool"; done
 
-# The launchers, the four helpers they source, and the two programs they and the scheduler run.
+# The launchers, the five helpers they source, and the two programs they and the scheduler run.
 # Root-owned, so a lane process can't rewrite its own launcher. Each launcher sets REPO_ROOT to its
 # directory's parent, so here REPO_ROOT is /app and `$REPO_ROOT/.venv/bin/<lane>` is the
 # orchestrator image's own entry point.
@@ -74,6 +74,14 @@ RUN for lane in bump-driver bump-proposer estate-landing execution-watch inert-l
       install -d -m 0700 -o orchestrator -g orchestrator "/var/lib/sds/$lane"; \
     done \
     && for crontab in /app/lanes/*/crontab; do supercronic -test "$crontab" || exit 1; done
+
+# The work carrier's packages clone (ADR-0059 decision 1). `package_sources` looks for intent-packages
+# beside the orchestrator's own checkout (`_intent_packages_src`: `/intent-packages/src` for `/app`),
+# and only root can create `/intent-packages`. So a root-owned link points into a directory the lane
+# user owns, where `run-work-carrier.sh` clones each pass and which it discards. Not a volume: the
+# clone is rebuilt every pass.
+RUN install -d -m 0700 -o orchestrator -g orchestrator /var/tmp/sds-work-carrier \
+    && ln -s /var/tmp/sds-work-carrier/intent-packages /intent-packages
 
 ENV TZ=America/New_York
 USER orchestrator

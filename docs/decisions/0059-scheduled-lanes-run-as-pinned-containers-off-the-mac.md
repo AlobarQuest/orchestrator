@@ -2880,6 +2880,11 @@ Devon's: each DSN's BWS project and reading accounts, before act 3 (FE-4), and t
 import's actor and role, before act 5's import (FE-5). FE-6 waits for the anchor. Both named
 decisions are answered (amendment 8).
 
+2026-11-16, step 3f-2 (D-52 A, ADR-0055 amendment 27 item 3): the work carrier's container runs
+`python -m orchestrator.factory_chain_read` once on every pass, before the carry, and any outcome
+but `verified` fails the pass (`scripts/run-work-carrier.sh`). So act 5's VPS verify is the
+container's first pass whatever the queue holds, and every pass after it verifies too.
+
 ### Passages this amendment changes
 
 None is rewritten. Once it's accepted, it governs these passages, cited by line at `2cf43757`:

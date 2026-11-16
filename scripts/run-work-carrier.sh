@@ -93,6 +93,25 @@
 # exists to prevent this program's own write, and requiring the orchestrator credential for a
 # reporting pass would break the read-only invocation this header promises works anywhere.
 #
+# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 4, step 3f-2). A set `BWS_ACCESS_TOKEN` means the
+# lane's container: `lane-run` passes the lane's own token as its one secret. There the launcher
+# skips activation (the container runs the image's own code), reads no Keychain item, and reads
+# every secret with that one token, in the environment, never as a process argument:
+#   - every pass: the change-manager READ bearer (`314f276d-…`), the orchestrator SYSTEM bearer
+#     (`221a48d5-…`, the watcher's read; the carry holds it only on `--register`, as on the Mac),
+#     the orchestrator OBSERVER bearer (`f793576f-…`), the factory-events read password
+#     (`2f708d08-…`, for the carry and the chain verify alone) and the read-only App's key
+#     (`314a966c-…`, piped straight into the mint);
+#   - `--register` only: the carrier's own OBSERVER bearer (`a9843d17-…`), the `sds-bridge` alert
+#     sender (`b415d03b-…`) and the change-manager PROPOSE bearer (`acccb346-…`).
+# It mints the pass's GitHub read token from the read-only App for exactly the repositories
+# `work-watcher repositories` prints (ADR-0059 decision 2), clones intent-packages through
+# `scripts/sds-git.sh` into the image's scratch directory, which `/intent-packages` links to, takes
+# the chain's three settings from the compose (a missing one fails the pass; there is no file
+# mode), verifies the whole VPS chain before the carry (D-52 A), and unsets `BWS_ACCESS_TOKEN`
+# before any program runs. Without a set `BWS_ACCESS_TOKEN` this is the Mac's launchd job,
+# unchanged until increment 6.
+#
 # Usage:
 #   scripts/run-work-carrier.sh                # reports both phases; writes nothing
 #   scripts/run-work-carrier.sh --register     # retires what is built, registers what is not
@@ -124,6 +143,14 @@ CHANGE_MANAGER_PROPOSE_UUID="acccb346-4baa-43ec-a1d4-b4a400c048ee"
 # in `SDS Operator`, listed in `.bws-secrets.toml`. Only the watcher uses it, to hold one alert open
 # for a record whose work has a failed unit; the carry never does.
 SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"
+# The read-only lane App's private key and id (ADR-0059 increment 3), `alobar-sds-lanes-read`, in
+# `SDS / Lane Apps`. Read in the container only, piped straight into `sds-github-mint`.
+READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
+READ_APP_ID="5684758"
+# The factory-events read password (`factory-events-read-password`), for the carry alone.
+FACTORY_EVENTS_READ_UUID="2f708d08-ea5d-4d11-bde0-b50200c9a60b"
+# The packages repository the container clones each pass, as a bare `https://github.com/` URL.
+PACKAGES_REMOTE="https://github.com/AlobarQuest/intent-packages.git"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -133,17 +160,23 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # and returns 0 whatever it finds, so this job is never gated on being able to update itself. It
 # re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
 # and the file it just rewrote is this one.
-_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-if [ -r "$_SDS_ACTIVATE" ]; then
-    # shellcheck source=/dev/null
-    . "$_SDS_ACTIVATE"
+# Skipped in the container, which has no `activate-checkout.sh`, rather than logged as missing.
+IN_CONTAINER=0
+if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+  IN_CONTAINER=1
 else
-    activate_checkout() {
-        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-             "this run is not activated"
-    }
+  _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+  if [ -r "$_SDS_ACTIVATE" ]; then
+      # shellcheck source=/dev/null
+      . "$_SDS_ACTIVATE"
+  else
+      activate_checkout() {
+          echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+               "this run is not activated"
+      }
+  fi
+  activate_checkout "$REPO_ROOT" "$0" "$@"
 fi
-activate_checkout "$REPO_ROOT" "$0" "$@"
 
 # THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-fork-sync-watch`'s is. `launchd`
 # discards this script's exit code, so the codes above reach a person only through Healthchecks:
@@ -168,12 +201,15 @@ sds_outcome_begin "$CHECK_NAME" work-carrier "$_wants_register"
 # record's repository name), so the two can't name different directories. One argument: this
 # script doesn't live there, so the helper never re-execs and this may follow the `/start` ping.
 # The bare form is a person looking and changes nothing, so it leaves that checkout alone.
-_PACKAGES_CHECKOUT="${WORK_CARRIER_CHECKOUT_ROOT:-$HOME/Projects}"
-_PACKAGES_CHECKOUT="${_PACKAGES_CHECKOUT/#\~/$HOME}/intent-packages"
-if [ "$_wants_register" -eq 1 ]; then
-  activate_checkout "$_PACKAGES_CHECKOUT"
-else
-  echo "[activation] not --register: leaving ${_PACKAGES_CHECKOUT/#$HOME/~} as it is"
+# The container clones its checkout fresh each pass instead (below), so it activates nothing.
+if [ "$IN_CONTAINER" -eq 0 ]; then
+  _PACKAGES_CHECKOUT="${WORK_CARRIER_CHECKOUT_ROOT:-$HOME/Projects}"
+  _PACKAGES_CHECKOUT="${_PACKAGES_CHECKOUT/#\~/$HOME}/intent-packages"
+  if [ "$_wants_register" -eq 1 ]; then
+    activate_checkout "$_PACKAGES_CHECKOUT"
+  else
+    echo "[activation] not --register: leaving ${_PACKAGES_CHECKOUT/#$HOME/~} as it is"
+  fi
 fi
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
@@ -182,157 +218,289 @@ fi
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 
-BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-  -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-[ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
-  "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)"
-
-if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
-  CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
-  export CHANGE_MANAGER_TOKEN
-fi
-
-# `set -e` is deliberately not used, so a failed fetch would otherwise leave this EMPTY and fall
-# through -- into an exit 2 that reports "unusable input" for what is actually a credential
-# failure. Name it here, so the exit code means what this header says it means.
-[ -n "${CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
-  "FATAL: could not read the change-manager credential from BWS"
-
-# THE SYSTEM BEARER IS FETCHED ONLY FOR A PASS THAT WILL WRITE, and the gate is not tidiness. It
-# is a canonical-mutation credential, and a pass that cannot use it should not hold it. Fetching
-# it unconditionally also broke the read-only invocation this file's own header advertises: on
-# any machine that cannot read the `SDS Operator` project -- which is every machine but this one
-# -- `run-work-carrier.sh` with no arguments would exit 1 on a credential it was never going to
-# send. Inspecting what would be registered must not require the right to register it.
-# `_wants_register` is set above, beside the alarm, which keys on the same flag.
-
-if [ "$_wants_register" -eq 1 ]; then
-  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
-    "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)"
-  if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
-    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
-    export WORK_CARRIER_ORCHESTRATOR_TOKEN
-  fi
-  [ -n "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ] || sds_outcome_fail \
-    "FATAL: could not read the orchestrator system credential from BWS"
-  # The observation identity is a credential this pass needs, so an unreadable one is a credential
-  # failure (exit 1), as the SYSTEM bearer's is. Carrying on without it would refuse a queued
-  # policy rotation as "no identity configured", a finding naming the wrong cause, and would say
-  # nothing at all on a pass with no such record queued.
-  export WORK_CARRIER_OBSERVATION_KEY_ID="work-carrier-observer"
-  if [ -z "${WORK_CARRIER_OBSERVATION_TOKEN:-}" ]; then
-    WORK_CARRIER_OBSERVATION_TOKEN="$(sds_bws_value "$WORK_CARRIER_OBSERVATION_UUID" \
-      "$SDS_IDENTITY")"
-    export WORK_CARRIER_OBSERVATION_TOKEN
-  fi
-  [ -n "${WORK_CARRIER_OBSERVATION_TOKEN:-}" ] || sds_outcome_fail \
-    "FATAL: could not read the work carrier's own observation bearer from BWS"
-fi
-
-# THE SENDER TOKEN, for a pass that will act, with the same narrow identity. Only an acting watcher
-# (`--retire`) sends, so a bare pass neither fetches it nor creates the state directory: it must
-# keep working on a machine that cannot read the `SDS Operator` project. Always fetched, never
-# taken from the environment, as `run-bump-proposer.sh` does: a stale value left in a shell would
-# otherwise send under a token BWS no longer holds.
-if [ "$_wants_register" -eq 1 ]; then
-  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
-  [ -n "${SDS_BRIDGE_ALERT_TOKEN:-}" ] || sds_outcome_fail \
-    "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)"
-  export SDS_BRIDGE_ALERT_TOKEN
-  export WORK_WATCHER_STATE_DIR="${WORK_WATCHER_STATE_DIR:-$HOME/Library/Application Support/sds/work-watcher}"
-  mkdir -p "$WORK_WATCHER_STATE_DIR" || sds_outcome_fail \
-    "FATAL: could not create the alert state directory $WORK_WATCHER_STATE_DIR"
-fi
-
-# THE RETIREMENT BEARER, and it is a THIRD secret rather than a third identity: the `propose`
-# credential lives in the change-manager BWS project the BROAD account already reads for the
-# listing above. Fetched only for a pass that will act, exactly as the SYSTEM bearer is -- a
-# reporting pass lists with the READ-scoped bearer it already has and cannot write anyway,
-# because the watcher's write is gated on its own flag and not on which credential is present.
-if [ "$_wants_register" -eq 1 ]; then
-  if [ -z "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
-    WORK_WATCHER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" \
-      "$BROAD_IDENTITY")"
-    export WORK_WATCHER_CHANGE_MANAGER_TOKEN
-  fi
-  [ -n "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
-    "FATAL: could not read the change-manager propose credential from BWS"
-else
-  # A reporting pass lists with the bearer it already has. It cannot write whatever it holds:
-  # the watcher's write is gated on `--retire`, not on which credential is present.
-  export WORK_WATCHER_CHANGE_MANAGER_TOKEN="$CHANGE_MANAGER_TOKEN"
-  # The orchestrator bearer was NOT fetched above, because a reporting pass is not entitled to
-  # the right to register. The watcher still needs a READ against the orchestrator to learn what
-  # is complete, so try for it here and SKIP the phase if this machine cannot read that project
-  # -- rather than reporting the whole pass unusable, which would break the read-only invocation
-  # this file's header promises works anywhere.
-  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  if [ -n "$SDS_IDENTITY" ] && [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
-    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
-  fi
-fi
-export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"
-
-# THE MEMBER-RECORD BEARER, for every run. Absent on a bare pass is not fatal here (the carry
-# stops with exit 2 and says why); a `--register` pass would have stopped already at its own
-# identity check above, so an empty token here is a failed fetch and is named as one.
-if [ -n "$SDS_IDENTITY" ] && [ -z "${SDS_MEMBERS_OBSERVER_TOKEN:-}" ]; then
-  SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_UUID" "$SDS_IDENTITY")"
-fi
-export SDS_MEMBERS_OBSERVER_TOKEN="${SDS_MEMBERS_OBSERVER_TOKEN:-}"
-if [ "$_wants_register" -eq 1 ] && [ -z "$SDS_MEMBERS_OBSERVER_TOKEN" ]; then
-  sds_outcome_fail "FATAL: could not read the orchestrator observer credential from BWS"
-fi
-
-# THE FACTORY-EVENTS CHAIN, behind the switch file (FE-5 cut-over plan, "The switch"; ADR-0055
-# amendments 24 and 26). The carry verifies each record's approval against the chain:
-# `emit-intake-payload`, the `orchestrator.factory_chain_read` walk it starts and intent-packages'
-# `verify-approval` all inherit `work-carrier`'s environment (`orchestrator/package_sources.py`),
-# and a set `FACTORY_EVENTS_READ_PASSWORD` with the three `FACTORY_EVENTS_DB_*` settings makes them
-# read the database chain.
-#   - No `~/.factory/chain-db.env`: nothing here runs, and no chain variable is set or cleared.
-#   - The file present: it is read with the refusals in `sds-bws.sh`, on every pass. With an
-#     `sds-operator` identity, the read password is fetched through it, and an empty value fails
-#     the pass, a bare one included: a carry that verified against the file instead would report
-#     the wrong chain. A bare pass with no identity fetches nothing, and each record refuses.
-#   - The password and the settings reach `work-carrier` alone, as an assignment prefix on its
-#     command below, and never `work-watcher`, which reads no chain.
-# Every name here is this script's own, unset before use so a caller's environment can't leave one
-# exported, and none is exported.
-FACTORY_EVENTS_READ_UUID="2f708d08-ea5d-4d11-bde0-b50200c9a60b"  # factory-events-read-password
-unset CHAIN_DB_HOST CHAIN_DB_PORT CHAIN_DB_NAME CHAIN_PASSWORD
+unset CHAIN_DB_HOST CHAIN_DB_PORT CHAIN_DB_NAME CHAIN_PASSWORD PACKAGES_CLONE
 CHAIN_MODE="file"
-if factory_events_switch_present; then
-  factory_events_read_settings \
-    || sds_outcome_fail "FATAL: the factory-events switch: $(factory_events_settings_refusal)"
-  # With the switch on, this script is the only source of the chain variables: an ambient one
-  # (a shell, or `~/.factory/env` under `set -a`) is cleared, so no other child gets one. A
-  # retired `FACTORY_EVENTS_*_DSN` is left set, so the child refuses it by name.
+if [ "$IN_CONTAINER" -eq 1 ]; then
+  # ---- THE LANE'S CONTAINER (ADR-0059 increment 4, step 3f-2) ---------------------------------
+  # Every read takes the lane's one token from the environment (`sds_bws_value` with one argument),
+  # so it never appears in a process argument, and no Keychain item is read. Each secret is always
+  # read, never taken from the environment, which `lane-run` passes nothing else through.
+  FROM=" (the lane's token)"
+
+  # THE CHAIN'S SETTINGS COME FROM THE COMPOSE, and a missing one fails the pass before anything is
+  # read. There is no `~/.factory/chain-db.env` here and no file mode to fall back to: a carry that
+  # couldn't reach the database chain would refuse every record (ADR-0055 amendment 26 item 5).
+  for _setting in FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME; do
+    [ -n "${!_setting:-}" ] || sds_outcome_fail \
+      "FATAL: $_setting is not set in the lane's container: the factory-events chain can't be read"
+  done
+  CHAIN_DB_HOST="$FACTORY_EVENTS_DB_HOST"
+  CHAIN_DB_PORT="$FACTORY_EVENTS_DB_PORT"
+  CHAIN_DB_NAME="$FACTORY_EVENTS_DB_NAME"
+  # Passed to the carry and the verify alone, as an assignment prefix, never to `work-watcher`.
   unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
     FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
-  if [ -n "$SDS_IDENTITY" ]; then
-    CHAIN_PASSWORD="$(sds_bws_value "$FACTORY_EVENTS_READ_UUID" "$SDS_IDENTITY")"
-    [ -n "$CHAIN_PASSWORD" ] || sds_outcome_fail \
-      "FATAL: could not read the factory-events read password from BWS (narrow)"
-    CHAIN_MODE="database"
-  else
-    echo "[chain] no sds-operator identity: the factory-events read password is not fetched" \
-      >> "$SDS_OUTCOME_REPORT"
-  fi
-fi
 
-# THE GITHUB CREDENTIAL, and it is NOT from BWS -- it is `gh auth token`, the same source the
-# ledger, the deploy watcher and the change proposer use for their GitHub reads. ONLY THE WATCHER
-# READS IT (ruling B1): one GET of the pull request a live work record names, to report a record
-# whose pull request was closed or merged by hand. The carry no longer does; it judges scope by the
-# member record's grant. Absent, the watcher prints what it could not assess and exits 2, and
-# `gh` not being installed must not take the pass down.
-if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]; then
-  WORK_CARRIER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+  CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID")"
+  [ -n "$CHANGE_MANAGER_TOKEN" ] || sds_outcome_fail \
+    "FATAL: could not read the change-manager credential from BWS$FROM"
+  export CHANGE_MANAGER_TOKEN
+  # The SYSTEM bearer, every pass: the watcher reads what each record caused with it on a bare pass
+  # too, as the Mac's bare pass does where it can read the project. It reaches the carry's own
+  # variable only on `--register`, below, as on the Mac: a reporting carry is not entitled to the
+  # right to register. (As on the Mac, the watcher's exported copy is in every later child's
+  # environment; the carry never reads that name.)
+  WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")"
+  [ -n "$WORK_CARRIER_ORCHESTRATOR_TOKEN" ] || sds_outcome_fail \
+    "FATAL: could not read the orchestrator system credential from BWS$FROM"
+  SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_UUID")"
+  [ -n "$SDS_MEMBERS_OBSERVER_TOKEN" ] || sds_outcome_fail \
+    "FATAL: could not read the orchestrator observer credential from BWS$FROM"
+  export SDS_MEMBERS_OBSERVER_TOKEN
+  CHAIN_PASSWORD="$(sds_bws_value "$FACTORY_EVENTS_READ_UUID")"
+  [ -n "$CHAIN_PASSWORD" ] || sds_outcome_fail \
+    "FATAL: could not read the factory-events read password from BWS$FROM"
+  CHAIN_MODE="database"
+
+  if [ "$_wants_register" -eq 1 ]; then
+    export WORK_CARRIER_ORCHESTRATOR_TOKEN
+    export WORK_CARRIER_OBSERVATION_KEY_ID="work-carrier-observer"
+    WORK_CARRIER_OBSERVATION_TOKEN="$(sds_bws_value "$WORK_CARRIER_OBSERVATION_UUID")"
+    [ -n "$WORK_CARRIER_OBSERVATION_TOKEN" ] || sds_outcome_fail \
+      "FATAL: could not read the work carrier's own observation bearer from BWS$FROM"
+    export WORK_CARRIER_OBSERVATION_TOKEN
+    SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
+    [ -n "$SDS_BRIDGE_ALERT_TOKEN" ] || sds_outcome_fail \
+      "FATAL: could not read the sds-bridge alert sender token from BWS$FROM"
+    export SDS_BRIDGE_ALERT_TOKEN
+    # The compose sets it to the lane's volume (decision 1, "Lane state").
+    [ -n "${WORK_WATCHER_STATE_DIR:-}" ] || sds_outcome_fail \
+      "FATAL: WORK_WATCHER_STATE_DIR is not set in the lane's container"
+    export WORK_WATCHER_STATE_DIR
+    mkdir -p "$WORK_WATCHER_STATE_DIR" || sds_outcome_fail \
+      "FATAL: could not create the alert state directory $WORK_WATCHER_STATE_DIR"
+    WORK_WATCHER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
+    [ -n "$WORK_WATCHER_CHANGE_MANAGER_TOKEN" ] || sds_outcome_fail \
+      "FATAL: could not read the change-manager propose credential from BWS$FROM"
+    export WORK_WATCHER_CHANGE_MANAGER_TOKEN
+  else
+    # A reporting pass lists with the READ bearer it already has, as on the Mac.
+    export WORK_WATCHER_CHANGE_MANAGER_TOKEN="$CHANGE_MANAGER_TOKEN"
+  fi
+  export WORK_WATCHER_ORCHESTRATOR_TOKEN="$WORK_CARRIER_ORCHESTRATOR_TOKEN"
+
+  # THE REPOSITORIES ARE THE WATCHER'S, NOT LISTED HERE: `work-watcher repositories` prints the
+  # packages repository and each repository whose pull request a live record names, the only
+  # GitHub reads this pass makes (ADR-0059 decision 2: the mint names only the lane's
+  # repositories). AN UNDERIVABLE LIST MINTS NOTHING, AND SAYS SO, on this launcher's scale: the
+  # subcommand exits 1 for an unreadable listing and 2 for a missing credential, as the watcher's
+  # pass would, and that code is the pass's; any other non-zero code is passed through verbatim.
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/work-watcher" repositories)"
+  derive_rc=$?
+  if [ "$derive_rc" -ne 0 ]; then
+    sds_outcome_fail \
+      "the work lane's repositories could not be derived: work-watcher repositories exited $derive_rc; nothing was minted or carried" \
+      "$derive_rc"
+  fi
+  TARGETS=()
+  while IFS= read -r repository; do
+    [ -n "$repository" ] && TARGETS+=(--repository "$repository")
+  done <<< "$REPOSITORIES"
+  [ "${#TARGETS[@]}" -gt 0 ] || sds_outcome_fail \
+    "the work lane's repositories could not be derived (an empty list); nothing was minted or carried" 2
+
+  # THE GITHUB TOKEN IS MINTED EACH PASS, bare or not, after the derivation, because the mint names
+  # its repositories. The App's key goes from the BWS read straight to the mint's stdin in its
+  # stored form, base64 of the PEM; it is never in a variable, an argument or a file, and the mint
+  # runs without the lane's token. The three permissions are what the pass's reads use: the clone
+  # (`contents`), the watcher's one GET of a pull request (`pull_requests`), and `metadata`, which
+  # GitHub grants with every token.
+  WORK_CARRIER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
+    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+        --app-id "$READ_APP_ID" "${TARGETS[@]}" \
+        --permission metadata=read --permission contents=read --permission pull_requests=read)"
+  mint_rc=$?
+  if [ "$mint_rc" -ne 0 ] || [ -z "$WORK_CARRIER_GITHUB_TOKEN" ]; then
+    sds_outcome_fail "FATAL: could not mint the work lane's GitHub token from the read-only App (sds-github-mint exited $mint_rc)"
+  fi
   export WORK_CARRIER_GITHUB_TOKEN
+
+  # EVERY BWS READ IS DONE, and nothing after this needs a BWS identity, git and the programs
+  # included, so the lane's token reaches none of them.
+  unset BWS_ACCESS_TOKEN
+
+  # THE PACKAGES CLONE, shallow, at `main`, into a directory the pass discards (decision 1). The
+  # image links `/intent-packages` to `$PACKAGES_CLONE`, so `package_sources` finds its `src`
+  # beside `/app` (`_intent_packages_src`), and the carry and the watcher read the same checkout.
+  # `WORK_CARRIER_CLONE_ROOT` is a test seam: `lane-run` never passes it.
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/scripts/sds-git.sh"
+  sds_git_credential WORK_CARRIER_GITHUB_TOKEN || sds_outcome_fail \
+    "FATAL: could not give git the work lane's GitHub credential"
+  _CLONE_ROOT="${WORK_CARRIER_CLONE_ROOT:-/var/tmp/sds-work-carrier}"
+  PACKAGES_CLONE="$_CLONE_ROOT/intent-packages"
+  rm -rf -- "$PACKAGES_CLONE" || sds_outcome_fail \
+    "FATAL: could not discard the previous pass's packages clone at $PACKAGES_CLONE"
+  # git's own message is kept for the report; it never holds the header (no trace is on).
+  _clone_out="$(git clone --quiet --depth 1 --single-branch --branch main \
+    "$PACKAGES_REMOTE" "$PACKAGES_CLONE" 2>&1)" || sds_outcome_fail \
+    "FATAL: could not clone $PACKAGES_REMOTE into $PACKAGES_CLONE: $_clone_out"
+  export WORK_CARRIER_CHECKOUT_ROOT="$_CLONE_ROOT"
+  export WORK_WATCHER_PACKAGES_CHECKOUT="$PACKAGES_CLONE"
+  # The image's security-standards (its `src` and registry, at the pin), which `package_sources`
+  # and intent-packages' `verify-approval` read. `lane-run` passes no `SECURITY_STANDARDS_DIR`.
+  export SECURITY_STANDARDS_DIR="$REPO_ROOT/security-standards"
+else
+  # ---- THE MAC, unchanged until increment 6 ----------------------------------------------------
+  BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
+  [ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
+    "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)"
+
+  if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
+    CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
+    export CHANGE_MANAGER_TOKEN
+  fi
+
+  # `set -e` is deliberately not used, so a failed fetch would otherwise leave this EMPTY and fall
+  # through -- into an exit 2 that reports "unusable input" for what is actually a credential
+  # failure. Name it here, so the exit code means what this header says it means.
+  [ -n "${CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
+    "FATAL: could not read the change-manager credential from BWS"
+
+  # THE SYSTEM BEARER IS FETCHED ONLY FOR A PASS THAT WILL WRITE, and the gate is not tidiness. It
+  # is a canonical-mutation credential, and a pass that cannot use it should not hold it. Fetching
+  # it unconditionally also broke the read-only invocation this file's own header advertises: on
+  # any machine that cannot read the `SDS Operator` project -- which is every machine but this one
+  # -- `run-work-carrier.sh` with no arguments would exit 1 on a credential it was never going to
+  # send. Inspecting what would be registered must not require the right to register it.
+  # `_wants_register` is set above, beside the alarm, which keys on the same flag.
+
+  if [ "$_wants_register" -eq 1 ]; then
+    SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+      -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+    [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
+      "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)"
+    if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
+      WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+      export WORK_CARRIER_ORCHESTRATOR_TOKEN
+    fi
+    [ -n "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ] || sds_outcome_fail \
+      "FATAL: could not read the orchestrator system credential from BWS"
+    # The observation identity is a credential this pass needs, so an unreadable one is a credential
+    # failure (exit 1), as the SYSTEM bearer's is. Carrying on without it would refuse a queued
+    # policy rotation as "no identity configured", a finding naming the wrong cause, and would say
+    # nothing at all on a pass with no such record queued.
+    export WORK_CARRIER_OBSERVATION_KEY_ID="work-carrier-observer"
+    if [ -z "${WORK_CARRIER_OBSERVATION_TOKEN:-}" ]; then
+      WORK_CARRIER_OBSERVATION_TOKEN="$(sds_bws_value "$WORK_CARRIER_OBSERVATION_UUID" \
+        "$SDS_IDENTITY")"
+      export WORK_CARRIER_OBSERVATION_TOKEN
+    fi
+    [ -n "${WORK_CARRIER_OBSERVATION_TOKEN:-}" ] || sds_outcome_fail \
+      "FATAL: could not read the work carrier's own observation bearer from BWS"
+  fi
+
+  # THE SENDER TOKEN, for a pass that will act, with the same narrow identity. Only an acting watcher
+  # (`--retire`) sends, so a bare pass neither fetches it nor creates the state directory: it must
+  # keep working on a machine that cannot read the `SDS Operator` project. Always fetched, never
+  # taken from the environment, as `run-bump-proposer.sh` does: a stale value left in a shell would
+  # otherwise send under a token BWS no longer holds.
+  if [ "$_wants_register" -eq 1 ]; then
+    SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
+    [ -n "${SDS_BRIDGE_ALERT_TOKEN:-}" ] || sds_outcome_fail \
+      "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)"
+    export SDS_BRIDGE_ALERT_TOKEN
+    export WORK_WATCHER_STATE_DIR="${WORK_WATCHER_STATE_DIR:-$HOME/Library/Application Support/sds/work-watcher}"
+    mkdir -p "$WORK_WATCHER_STATE_DIR" || sds_outcome_fail \
+      "FATAL: could not create the alert state directory $WORK_WATCHER_STATE_DIR"
+  fi
+
+  # THE RETIREMENT BEARER, and it is a THIRD secret rather than a third identity: the `propose`
+  # credential lives in the change-manager BWS project the BROAD account already reads for the
+  # listing above. Fetched only for a pass that will act, exactly as the SYSTEM bearer is -- a
+  # reporting pass lists with the READ-scoped bearer it already has and cannot write anyway,
+  # because the watcher's write is gated on its own flag and not on which credential is present.
+  if [ "$_wants_register" -eq 1 ]; then
+    if [ -z "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
+      WORK_WATCHER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" \
+        "$BROAD_IDENTITY")"
+      export WORK_WATCHER_CHANGE_MANAGER_TOKEN
+    fi
+    [ -n "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
+      "FATAL: could not read the change-manager propose credential from BWS"
+  else
+    # A reporting pass lists with the bearer it already has. It cannot write whatever it holds:
+    # the watcher's write is gated on `--retire`, not on which credential is present.
+    export WORK_WATCHER_CHANGE_MANAGER_TOKEN="$CHANGE_MANAGER_TOKEN"
+    # The orchestrator bearer was NOT fetched above, because a reporting pass is not entitled to
+    # the right to register. The watcher still needs a READ against the orchestrator to learn what
+    # is complete, so try for it here and SKIP the phase if this machine cannot read that project
+    # -- rather than reporting the whole pass unusable, which would break the read-only invocation
+    # this file's header promises works anywhere.
+    SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+      -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+    if [ -n "$SDS_IDENTITY" ] && [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
+      WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+    fi
+  fi
+  export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"
+
+  # THE MEMBER-RECORD BEARER, for every run. Absent on a bare pass is not fatal here (the carry
+  # stops with exit 2 and says why); a `--register` pass would have stopped already at its own
+  # identity check above, so an empty token here is a failed fetch and is named as one.
+  if [ -n "$SDS_IDENTITY" ] && [ -z "${SDS_MEMBERS_OBSERVER_TOKEN:-}" ]; then
+    SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_UUID" "$SDS_IDENTITY")"
+  fi
+  export SDS_MEMBERS_OBSERVER_TOKEN="${SDS_MEMBERS_OBSERVER_TOKEN:-}"
+  if [ "$_wants_register" -eq 1 ] && [ -z "$SDS_MEMBERS_OBSERVER_TOKEN" ]; then
+    sds_outcome_fail "FATAL: could not read the orchestrator observer credential from BWS"
+  fi
+
+  # THE FACTORY-EVENTS CHAIN, behind the switch file (FE-5 cut-over plan, "The switch"; ADR-0055
+  # amendments 24 and 26). The carry verifies each record's approval against the chain:
+  # `emit-intake-payload`, the `orchestrator.factory_chain_read` walk it starts and intent-packages'
+  # `verify-approval` all inherit `work-carrier`'s environment (`orchestrator/package_sources.py`),
+  # and a set `FACTORY_EVENTS_READ_PASSWORD` with the three `FACTORY_EVENTS_DB_*` settings makes them
+  # read the database chain.
+  #   - No `~/.factory/chain-db.env`: nothing here runs, and no chain variable is set or cleared.
+  #   - The file present: it is read with the refusals in `sds-bws.sh`, on every pass. With an
+  #     `sds-operator` identity, the read password is fetched through it, and an empty value fails
+  #     the pass, a bare one included: a carry that verified against the file instead would report
+  #     the wrong chain. A bare pass with no identity fetches nothing, and each record refuses.
+  #   - The password and the settings reach `work-carrier` alone, as an assignment prefix on its
+  #     command below, and never `work-watcher`, which reads no chain.
+  # Every name here is this script's own, unset before use so a caller's environment can't leave one
+  # exported, and none is exported.
+  if factory_events_switch_present; then
+    factory_events_read_settings \
+      || sds_outcome_fail "FATAL: the factory-events switch: $(factory_events_settings_refusal)"
+    # With the switch on, this script is the only source of the chain variables: an ambient one
+    # (a shell, or `~/.factory/env` under `set -a`) is cleared, so no other child gets one. A
+    # retired `FACTORY_EVENTS_*_DSN` is left set, so the child refuses it by name.
+    unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
+      FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
+    if [ -n "$SDS_IDENTITY" ]; then
+      CHAIN_PASSWORD="$(sds_bws_value "$FACTORY_EVENTS_READ_UUID" "$SDS_IDENTITY")"
+      [ -n "$CHAIN_PASSWORD" ] || sds_outcome_fail \
+        "FATAL: could not read the factory-events read password from BWS (narrow)"
+      CHAIN_MODE="database"
+    else
+      echo "[chain] no sds-operator identity: the factory-events read password is not fetched" \
+        >> "$SDS_OUTCOME_REPORT"
+    fi
+  fi
+
+  # THE GITHUB CREDENTIAL, and it is NOT from BWS -- it is `gh auth token`, the same source the
+  # ledger, the deploy watcher and the change proposer use for their GitHub reads. ONLY THE WATCHER
+  # READS IT (ruling B1): one GET of the pull request a live work record names, to report a record
+  # whose pull request was closed or merged by hand. The carry no longer does; it judges scope by the
+  # member record's grant. Absent, the watcher prints what it could not assess and exits 2, and
+  # `gh` not being installed must not take the pass down.
+  if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]; then
+    WORK_CARRIER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+    export WORK_CARRIER_GITHUB_TOKEN
+  fi
 fi
 
 export PATH="$REPO_ROOT/.venv/bin:$PATH"
@@ -383,16 +551,72 @@ else
   _record_outcome "$?"
 fi
 
-if [ "$CHAIN_MODE" = "database" ]; then
+_carry=1
+if [ "$IN_CONTAINER" -eq 1 ]; then
+  # THE CHAIN VERIFY, EVERY CONTAINER PASS, AFTER THE RETIREMENT AND BEFORE THE CARRY (D-52 A:
+  # "the carrier's first VPS pass carries the VPS verify"; ADR-0059 amendment 7, item 4 act 5). The carry reads the chain only for a
+  # queued record, so on an empty queue nothing else would prove the container reaches and verifies
+  # it. `orchestrator.factory_chain_read` walks every row under the read role in one read-only
+  # snapshot and prints one JSON record. A verified record also carries every `package.approved`
+  # event, which `package_sources` matches against and which grows with the chain, so only its
+  # summary fields (outcome, seq, head prefix, event count, a break's message, an error's type)
+  # reach the report; never the password, which the module never prints. Its stderr is discarded
+  # deliberately, as `package_sources` discards it: a driver's text can repeat connection details (ADR-0055 amendment 24 item 13), and
+  # the outcome isn't lost, because anything but a verified walk is a tool failure (1) with the
+  # record in the report, and the carry doesn't run. The retirement runs first because it reads no
+  # chain: a database outage mustn't stop built work being retired or its alerts resolving.
+  _verify_out="$(FACTORY_EVENTS_READ_PASSWORD="$CHAIN_PASSWORD" \
+    FACTORY_EVENTS_DB_HOST="$CHAIN_DB_HOST" \
+    FACTORY_EVENTS_DB_PORT="$CHAIN_DB_PORT" \
+    FACTORY_EVENTS_DB_NAME="$CHAIN_DB_NAME" \
+    PYTHONPATH="$SECURITY_STANDARDS_DIR/src" \
+    "$REPO_ROOT/.venv/bin/python" -m orchestrator.factory_chain_read 2>/dev/null)"
+  _verify_rc=$?
+  # The record is the last line. The summary parse exits 0 only for `"outcome": "verified"`.
+  _verify_summary="$(printf '%s\n' "$_verify_out" | tail -n 1 | "$REPO_ROOT/.venv/bin/python" -c '
+import json, sys
+try:
+    record = json.loads(sys.stdin.read())
+except ValueError:
+    record = None
+if not isinstance(record, dict):
+    print("outcome=unreadable")
+    sys.exit(1)
+fields = ("outcome", "seq", "head", "events", "error", "error_type")
+print(" ".join(f"{name}={record[name]}" for name in fields if name in record))
+sys.exit(0 if record.get("outcome") == "verified" else 1)
+')"
+  _verified_rc=$?
+  if [ "$_verify_rc" -ne 0 ] || [ "$_verified_rc" -ne 0 ]; then
+    echo "[chain] FATAL: the factory-events chain did not verify (exit $_verify_rc):" \
+      "${_verify_summary:-no record}; nothing was carried" >> "$SDS_OUTCOME_REPORT"
+    _record_outcome 1
+    _carry=0
+  else
+    echo "[chain] ${_verify_summary}" >> "$SDS_OUTCOME_REPORT"
+  fi
+fi
+
+# A chain that didn't verify carries nothing: the report says so and the pass exits 1.
+if [ "$_carry" -eq 1 ] && [ "$CHAIN_MODE" = "database" ]; then
   FACTORY_EVENTS_READ_PASSWORD="$CHAIN_PASSWORD" \
     FACTORY_EVENTS_DB_HOST="$CHAIN_DB_HOST" \
     FACTORY_EVENTS_DB_PORT="$CHAIN_DB_PORT" \
     FACTORY_EVENTS_DB_NAME="$CHAIN_DB_NAME" \
     "$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
-else
+  _record_outcome "$?"
+elif [ "$_carry" -eq 1 ]; then
   "$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
+  _record_outcome "$?"
 fi
-_record_outcome "$?"
 unset CHAIN_PASSWORD
+# The container's clone is removed here, at the end of a pass that reaches it, and before every
+# clone. A pass that stops earlier (a failed `sds_outcome_fail`) leaves it for the next pass to
+# remove; a clone left behind holds no credential (the header lives only in the environment), so a
+# failed removal is logged and doesn't change the pass's code.
+if [ -n "${PACKAGES_CLONE:-}" ]; then
+  rm -rf -- "$PACKAGES_CLONE" \
+    || echo "[clone] could not discard $PACKAGES_CLONE; the next pass removes it" >> "$SDS_OUTCOME_REPORT"
+fi
 
 sds_outcome_end "$WORST_CODE"

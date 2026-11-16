@@ -581,6 +581,79 @@ lane") still needs the following, in this order, each in its own change or act:
    (cut-over step 2, before the first pass in the container, or the alerts the Mac left firing
    never resolve), the paired reporting runs, the schedule, and the Mac job's retirement.
 
+`work-carrier`'s tracked files (`lanes/work-carrier/compose.yaml` and `crontab`) don't register it
+either. Its state is the watcher's `alerts.json`, so its compose mounts the named volume
+`sds-lanes-work-carrier-state` at `WORK_WATCHER_STATE_DIR` (`/var/lib/sds/work-carrier`). It's the
+one lane whose compose joins the external `coolify` network, because the carry and its chain verify
+connect to the factory-events database resource (ADR-0059 amendment 7 item 5). The compose sets
+the chain's three non-secret settings as plain values: `FACTORY_EVENTS_DB_HOST`
+`b82fa1vg5whecgnjreuqb5tk` (the resource's container), `FACTORY_EVENTS_DB_PORT` `5432` (its port
+inside the network; `15432` is the tailnet publish, for the Mac) and `FACTORY_EVENTS_DB_NAME`
+`postgres`. `lane-run` passes them on (`CHAIN_SETTINGS`), and the launcher fails a pass with any of
+them empty; it has no file mode. Its crontab runs `lane-run work-carrier --register` daily at 07:05
+New York time, as the Mac job does; minute 5 is one no other lane starts on. The flag is in the
+crontab line, so a scheduled pass registers, and the bare `lane-run work-carrier` is the reporting
+pass.
+
+Its `.bws-secrets.toml` secrets are eight, all read with the lane's one token:
+
+- On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer (the watcher's read;
+  the carry holds it only on `--register`), the orchestrator OBSERVER bearer, the factory-events
+  read password, and the read-only App's key.
+- On `--register` only: the carrier's own OBSERVER bearer, the `sds-bridge` alert sender, and the
+  change-manager PROPOSE bearer.
+
+The read password and the chain settings reach `work-carrier` and the chain verify alone, never
+`work-watcher`. Each pass mints the lane's GitHub read token (`metadata`, `contents` and
+`pull_requests`, read) for the repositories `work-watcher repositories` prints: intent-packages and
+each repository whose pull request a live record names. The pass then clones intent-packages,
+shallow at `main`, through `scripts/sds-git.sh` into `/var/tmp/sds-work-carrier/intent-packages`,
+which the image links as `/intent-packages`. That's where `package_sources` looks, beside `/app`.
+The pass discards the clone when it's done. After the retirement, which reads no chain, it runs
+`python -m orchestrator.factory_chain_read` once, before the carry. Any outcome but `verified`
+carries nothing and fails the pass with exit 1. This is the VPS verify D-52 A gives to the carrier's first VPS pass, and
+it runs whatever the queue holds. The check is an outcome alarm that pings only on `--register`. Its
+compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so an
+acting pass pings nothing until then, and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-work-carrier` from the compose
+   without deploying it.
+2. The VM root's keeper commands for the lane token and `work-carrier-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, the read-App key row's `runtime-fetch` reader for
+   `scripts/run-work-carrier.sh`, and the read password's `runtime-fetch` row's note naming the
+   lane account as its holder in place of `sds-operator`.
+4. The lane account's grants on its eight secrets and its ping-URL secret. Two are read by the broad
+   identity on the Mac, the change-manager READ bearer (`314f276d-…`) and PROPOSE bearer
+   (`acccb346-…`), and each becomes a direct grant to the lane account (Devon's act at the lane's
+   identity gate).
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `work-carrier` removed from
+   `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof over all eight secrets and a bare
+   `lane-run work-carrier` in the container. That bare run is the first in-network read of
+   `b82fa1vg5whecgnjreuqb5tk:5432` and the first VPS chain verify, and it proves the read App's
+   installation covers every repository a live record names. The proof is the only read of the
+   three `--register` secrets before the first acting pass. The run also fetches the four public
+   credential registries anonymously under `lane-run`'s `HOME`, which a standing rotation's carry
+   reads (`work_carrier/cli.py`, `RepoMirror`).
+8. The portfolio feed D-55 A chose, in its own step and ADR amendment (ADR-0059 decision 5: the
+   portfolio source is decided before the lane moves). Until the lane reads it, a
+   repository-targeted record holds (exit 2) in the container while the Mac carries it, so the
+   paired comparison fails whenever one is queued. A standing rotation still carries.
+9. Cut-over steps 2 onward:
+   - The copy of the Mac's `sds/work-watcher/alerts.json` into the volume, before the first
+     `--register` pass in the container, or the alerts the Mac left firing never resolve.
+   - The paired bare reporting runs on both hosts in the same minute, which register and ping
+     nothing. Fast-forward the Mac's `~/Projects/intent-packages` to `origin/main` first, because
+     the container clones `main` and a bare Mac pass leaves its checkout where it is.
+   - The schedule, and the Mac job's retirement. After the retirement, `sds-operator`'s read of the
+     read password goes, and the lane account is its one holder.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the

@@ -9,6 +9,9 @@ one-off `docker exec` alike. It starts the launcher with exactly the variables b
 - `BWS_ACCESS_TOKEN`, copied from the container's environment: the run's only secret.
 - `TZ` and `SDS_DEADMAN_PING_URL_UUID` (a BWS UUID, not a secret).
 - Each lane state variable in `STATE_VARIABLES`, only when the container's environment sets it.
+- The factory-events chain's three non-secret settings in `CHAIN_SETTINGS` (ADR-0055 amendment 26
+  item 3), which only the work carrier's compose sets. Its read password is a secret, so it isn't
+  here: the launcher reads it from BWS with the token.
 
 Each is copied only when the container's environment sets it. `LANE_SCHEDULE_ENABLED` is never
 passed: the entrypoint reads it at container start, and no launcher reads it. An increment that
@@ -58,6 +61,9 @@ STATE_VARIABLES = (
     "VERIFIER_STATE_DIR",
     "WORK_WATCHER_STATE_DIR",
 )
+# The chain's host, port and database (never its password), each a plain value in the work
+# carrier's compose; the launcher passes them to the carry and the chain verify alone.
+CHAIN_SETTINGS = ("FACTORY_EVENTS_DB_HOST", "FACTORY_EVENTS_DB_PORT", "FACTORY_EVENTS_DB_NAME")
 LANE = re.compile(r"^[a-z][a-z0-9-]*$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
@@ -68,7 +74,7 @@ def lane_environment(source: Mapping[str, str], home: str) -> dict[str, str]:
     """The launcher's whole environment: the fixed `PATH`, `home`, and each listed name `source`
     sets. Nothing else in `source` is copied."""
     environment = {"PATH": LANE_PATH, "HOME": home}
-    for name in (*COPIED, *STATE_VARIABLES):
+    for name in (*COPIED, *STATE_VARIABLES, *CHAIN_SETTINGS):
         if name in source:
             environment[name] = source[name]
     return environment

@@ -131,7 +131,10 @@ EDGES: dict[str, Edge] = {
         github=frozenset({("GET", "/repos/o/r/pulls/44")}),
         # through alert_hub_client: ALERT_HUB_THROUGH
         alert_hub=frozenset({("POST", "/v1/alerts")}),
-        bearers=DEADMAN | {PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER, SDS_BRIDGE_ALERT_BEARER},
+        # The read-only lane App's key its container mints the pull request read's token from,
+        # which also clones the packages checkout (ADR-0059 increment 4, step 3f-2).
+        bearers=DEADMAN
+        | {PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER, SDS_BRIDGE_ALERT_BEARER, READ_APP_KEY},
     ),
 }
 

@@ -21,6 +21,9 @@ finding on the morning the defect was fixed.
 
 EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings.
 
+`work-watcher repositories` changes nothing and prints the repositories the lane's GitHub token must
+name, which the lane's container mints it for (`repositories`, below).
+
 **WHAT IS NOT A FINDING**, because this estate has now left a control permanently red four times
 by getting this wrong. A retirement performed is not a finding -- it is the job. A replay of one
 already made is not a finding; change-manager answers 200 unchanged by design, because a sweeping
@@ -102,6 +105,11 @@ EXIT_FINDINGS = 3
 # with: the read is authentication-only and needs no role, and a second identity would attribute
 # nothing the change record does not already carry.
 SYSTEM_KEY_ID = "orchestrator-system"
+
+# The repository the packages checkout is cloned from. It is the source repository of every work
+# record (`work_carrier/workability.py`), and the lane's container clones it each pass, so its
+# GitHub token must name it whatever the records name.
+PACKAGES_REPOSITORY = "AlobarQuest/intent-packages"
 
 # Unit states in which nothing is running, mirrored from `orchestrator.kernel.states` (this program
 # may not import it; a test pins the two together). "In flight" means any unit OUTSIDE this set, so
@@ -187,6 +195,39 @@ def _github() -> PullRequestReader | None:
     if not token:
         return None
     return PullRequestReader(token)
+
+
+def repositories(source: PipelineSource | None = None, *, out=sys.stdout) -> int:
+    """Print the repositories this lane's GitHub token must name, one per line, and nothing else.
+
+    In the lane's container the launcher mints the pass's read token for exactly these (ADR-0059
+    decision 2: each pass's mint names only its lane's repositories). They are the packages
+    checkout's repository, which the pass clones, and each repository whose pull request a live
+    record names: the only GitHub read this lane makes is the staleness question's GET of that
+    pull request (`_staleness`), asked only of live records. A record the listing can't parse is
+    one the pass doesn't assess either, so it names nothing here. Repeats that differ only in
+    case are printed once, because the mint casefolds.
+
+    FAILS CLOSED, ON THE WATCHER'S OWN SCALE, WITH NOTHING ON STDOUT: no change-manager
+    credential is unusable input (2), and an unreadable listing is a tool failure (1), as `run`
+    reports each. So the launcher mints nothing for a list it couldn't derive.
+    """
+    listing = source if source is not None else _source(_parse_args([]))
+    if listing is None:
+        print("[UNUSABLE] WORK_WATCHER_CHANGE_MANAGER_TOKEN is not set", file=sys.stderr)
+        return EXIT_UNUSABLE
+    try:
+        pipeline = listing.work_pipeline()
+    except ListingError as error:
+        print(f"[TOOL FAILURE] {error}", file=sys.stderr)
+        return EXIT_TOOL_FAILURE
+    names = {PACKAGES_REPOSITORY.casefold(): PACKAGES_REPOSITORY}
+    for row in pipeline.records:
+        named = pull_request_of(row.reasoning) if row.status in LIVE else None
+        if named is not None:
+            names.setdefault(named[0].casefold(), named[0])
+    print("\n".join(names[key] for key in sorted(names)), file=out)
+    return EXIT_OK
 
 
 def _reader(args: argparse.Namespace) -> OrchestratorClient | None:
@@ -545,7 +586,13 @@ def _conclude(
 
 
 def main() -> int:
-    return run(sys.argv[1:])
+    argv = sys.argv[1:]
+    if argv[:1] == ["repositories"]:
+        if len(argv) > 1:
+            print("usage: work-watcher repositories", file=sys.stderr)
+            return EXIT_UNUSABLE
+        return repositories()
+    return run(argv)
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point
