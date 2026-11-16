@@ -26,13 +26,20 @@ OWNED = ["AlobarQuest/orchestrator", "AlobarQuest/brain", "AlobarQuest/rtk", "Al
 
 class Declarations:
     def __init__(
-        self, answers: dict[str, bool | None], registry_files: dict[str, bool | None] | None = None
+        self,
+        answers: dict[str, bool | None],
+        registry_files: dict[str, bool | None] | None = None,
+        hands_over: dict[str, bool | None] | None = None,
     ) -> None:
         self._answers = answers
         self._registry_files = registry_files or {}
+        self._hands_over = hands_over or {}
 
     def holds_registry(self, slug: str) -> Declaration:
         return Declaration(self._registry_files.get(slug, False), "test double")
+
+    def registry_hands_over(self, slug: str) -> Declaration:
+        return Declaration(self._hands_over.get(slug, False), "test double")
 
     def declaration(self, slug: str) -> Declaration:
         return Declaration(self._answers.get(slug, False), "test double")
@@ -333,6 +340,7 @@ def _wire(
     flagged=(),
     mirror_error=None,
     registry_files=None,
+    hands_over=None,
 ):
     for name in (
         "SDS_MEMBERS_OBSERVER_TOKEN",
@@ -362,7 +370,7 @@ def _wire(
     monkeypatch.setattr(
         cli,
         "GitHubDeclarationSource",
-        lambda token: Declarations(answers or {"A/one": True}, registry_files),
+        lambda token: Declarations(answers or {"A/one": True}, registry_files, hands_over),
     )
 
     def read_registries(_mirror):
