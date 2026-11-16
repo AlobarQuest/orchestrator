@@ -700,6 +700,8 @@ TABLE: dict[str, Row] = {
         "os",
         "pathlib",
         "re",
+        # `registry.py` quotes the paths and values it writes into the `bin/` wrapper script.
+        "shlex",
         "shutil",
         "subprocess",
         # `npm.py` unpacks the tarball `npm pack` produced, with the `data` extraction filter.

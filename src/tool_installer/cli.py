@@ -90,6 +90,7 @@ from tool_installer.record import (
     installation_observation,
     summary_of,
 )
+from tool_installer.registry import install_and_prove_registry
 from tool_installer.toolchain import (
     DEFAULT_BACKUP_ROOT,
     DEFAULT_INSTALL_ROOT,
@@ -100,7 +101,7 @@ from tool_installer.toolchain import (
     resolve_cargo,
     resolve_node,
 )
-from tool_installer.tools import TOOLS, CargoInstall, NpmInstall, Tool
+from tool_installer.tools import TOOLS, CargoInstall, NpmInstall, RegistryInstall, Tool
 from tool_installer.window import WindowUnreadable, window_from_policy
 
 EXIT_OK = 0
@@ -143,6 +144,8 @@ def _installed(tool: Tool, roots: _Roots) -> ArtifactRecord | None:
         return read_installed(roots.cargo, row.crate)
     if isinstance(row, NpmInstall):
         return read_installed_package(roots.npm, row.package, row.workspace)
+    if isinstance(row, RegistryInstall):
+        return read_installed_package(roots.npm, row.package)
     return loaded_entry(roots.sites, tool, row.marketplace)
 
 
@@ -150,7 +153,7 @@ def _root_of(tool: Tool, roots: _Roots) -> str:
     """Where this row's artifact lives, for the record."""
     if isinstance(tool.install, CargoInstall):
         return str(roots.cargo)
-    if isinstance(tool.install, NpmInstall):
+    if isinstance(tool.install, NpmInstall | RegistryInstall):
         return str(roots.npm)
     return str(roots.sites.plugins_root)
 
@@ -362,7 +365,7 @@ def main(  # noqa: PLR0911, PLR0912, C901
             actor: Cargo | Node | Path
             if isinstance(row.tool.install, CargoInstall):
                 actor = resolve_cargo()
-            elif isinstance(row.tool.install, NpmInstall):
+            elif isinstance(row.tool.install, NpmInstall | RegistryInstall):
                 actor = resolve_node()
             else:
                 actor = resolve_claude()
@@ -396,8 +399,10 @@ def main(  # noqa: PLR0911, PLR0912, C901
         # DISPATCHED ON THE RESOLVED ACTOR rather than on the row a second time: a cargo toolchain
         # performs the cargo install, a node the npm install and a `claude` executable the plugin
         # install, so the value that was resolved for this row IS the discriminator, and the
-        # readings cannot drift apart the way a repeated `isinstance` on the row could. The
-        # plugin act takes no backup directory (see above).
+        # readings cannot drift apart the way a repeated `isinstance` on the row could. A node
+        # performs two acts, so the row picks between them: the registry act for a
+        # `RegistryInstall`, the build for an `NpmInstall`. The plugin act takes no backup
+        # directory (see above).
         backup = backups / f"{row.tool.name}-{row.installed_version or 'first'}"
         # A ROLLBACK THAT FAILED IS FILED, NEVER THROWN, and the reason is the whole point of the
         # catch. It leaves the machine between two versions -- the single state an operator most
@@ -410,6 +415,14 @@ def main(  # noqa: PLR0911, PLR0912, C901
             if isinstance(actor, Cargo):
                 outcome = install_and_prove(
                     tool=row.tool, cargo=actor, install_root=roots.cargo, backup_root=backup
+                )
+            elif isinstance(actor, Node) and isinstance(row.tool.install, RegistryInstall):
+                outcome = install_and_prove_registry(
+                    tool=row.tool,
+                    node=actor,
+                    install_root=roots.npm,
+                    backup_root=backup,
+                    revision=row.available_revision,
                 )
             elif isinstance(actor, Node):
                 outcome = install_and_prove_npm(

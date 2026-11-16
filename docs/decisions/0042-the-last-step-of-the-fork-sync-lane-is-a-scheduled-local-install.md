@@ -234,3 +234,65 @@ before he runs it. This amendment points the installer at it.
   is the repository for both.
 - **The prefix link stays.** The hardened plugin runs a bare `n8nac`, which resolves through
   `/opt/homebrew/bin/n8nac`, the link the `n8nac` row owns.
+
+## Amendment 5 — modern-web-guidance: a CLI from the registry at the fork's version (2026-11-16)
+
+**Status:** Accepted (Devon, 2026-11-16: Option A, the skill from the reviewed fork and the CLI
+from the npm registry at exactly the fork's version). Plan:
+`docs/superpowers/plans/2026-11-16-modern-web-guidance-onboard.md` (workspace repository).
+
+Google's `GoogleChrome/modern-web-guidance` plugin is two skills of markdown guides that run a CLI.
+The CLI isn't in the plugin's repository: upstream builds it in `modern-web-guidance-src` and
+publishes the npm package `modern-web-guidance` at the plugin's tag version. The fork
+`AlobarQuest/modern-web-guidance` is on the fork-sync lane and has a hardening rule (ADR-0057
+amendment 1). Two rows follow, the CLI's first.
+
+- **An exception to "from source", and only this one.** Every other npm row builds the fork; this
+  one takes `npm pack modern-web-guidance@<the version in the tracked revision's package.json>`
+  (a plain `X.Y.Z` only), whose integrity npm verifies and the installed manifest records. It is
+  a fourth strategy type, `RegistryInstall` in `src/tool_installer/registry.py`, not a field on
+  `NpmInstall`: it fetches nothing to build and runs no `npm ci`, so it shares the act's swap and
+  rollback but none of its build.
+- **The tarball must agree with the fork's `main`.** Every tarball file that `main` (the hardened
+  commit's last parent, where `fork-harden` puts it) also has must be byte-identical, or the pass
+  refuses. `hardened` can't be the comparison: its skill files are rewritten. Measured at 1.0.1:
+  every shared file is identical, and 16 files are the tarball's alone (the CLI, its watchdog,
+  `gen/`, `skill-version.txt` and the notices).
+- **The fork's files are installed, plus only those 16.** `retrieve` serves the installed
+  package's `guides/*.md`, so upstream's copies would hand an agent the `npx` cross-references the
+  rule removes. Trees are read as git objects, never checked out, so `.gitattributes` can't
+  change what is compared or installed. A tarball whose manifests declare a dependency or any
+  script is refused; nothing runs `npm install` on it.
+- **The tarball's own files are a list on the row** (`RegistryInstall.published_files`, patterns
+  by structure covering those 16). Any other file only the tarball ships refuses the pass by name,
+  so upstream can't add a guide beside the reviewed ones for `retrieve` to serve. Paths are also
+  compared case-folded with the fork's tree (APFS folds case), and `.sds-bin/` is the lane's.
+- **The node is the one every npm row resolves** (`/opt/homebrew/bin/node` under the launchd
+  job), named by the wrapper, and it must satisfy the tarball's `engines.node`. A pass run by
+  hand under a versioned node (nvm, fnm, volta) bakes that path in: a stated limit.
+- **Telemetry off by a wrapper.** The CLI posts each query and retrieved guide ID to
+  `play.googleapis.com` unless `DISABLE_TELEMETRY` is `1` or `true`. The lane's
+  `bin/modern-web-guidance` links to a shell script inside the installed package that exports it
+  and execs this pass's node on the package's `bin` target, so it holds whatever command line an
+  agent writes, and it moves and rolls back with the package.
+- **The row owns `<npm prefix>/bin/modern-web-guidance`** (`/opt/homebrew/bin/`), on the n8nac
+  row's rules (amendment 2): taken over only when absent, already the lane's, or an `npm link`,
+  written last after every probe, proven by `--version` through it, and restored first.
+- **Probes:** `--version` by value; the stamp the hardened skill passes as `--skill-version`
+  equals the tarball's `skill-version.txt` (the CLI itself warns only from six days apart);
+  `search "light dismiss dialog" --skill-version <stamp>` exits 0, prints a JSON array and writes
+  nothing to stderr; `retrieve` of every returned ID, stdout to a file, names each guide and holds
+  no package-runner text. They run from an empty directory and with no telemetry variable of
+  their own, so the wrapper is what turns it off. Measured end to end against the would-be
+  `hardened` commit with scratch roots: all pass in about a second, and no watchdog process
+  remains; against `main` the `retrieve` probe finds `npx` and the pass rolls back.
+- **Two rows share the repository, and the CLI's row has its own name.** The plugin and its command
+  are both `modern-web-guidance`, and the plugin's name is fixed by its serving clone and Claude
+  Code's record, so the CLI's row is `modern-web-guidance-cli` and names its command in
+  `RegistryInstall.binary`. Row names stay unique: alerts, backups and observations are keyed by
+  them. The CLI row comes first in `TOOLS`; as with `n8nac` and `n8n-as-code`, that is the only
+  coupling, and a failed CLI row doesn't stop its plugin row in the same pass.
+- **Stated limit.** The CLI's own gate messages (`set-allow-origin-trials`,
+  `set-allow-volatile-features`) tell a person to run `npx modern-web-guidance@latest ...`. That
+  text is in `modern-web.mjs`, a tarball file no rule reaches; the hardened skill tells an agent
+  never to run such a command and to tell the user instead.

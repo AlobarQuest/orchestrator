@@ -1,5 +1,17 @@
 """What this lane may install, as a table rather than as code.
 
+SEVEN ROWS NOW. The sixth, `modern-web-guidance-cli`, is the first row NOT built from the fork's
+source: the CLI isn't in the fork at all (upstream builds it in another repository), so Devon chose
+on 2026-11-16 to take it from the npm registry at exactly the version the fork names, with the
+fork's own files in place of upstream's wherever the two overlap (ADR-0042 amendment 5). That is a
+different act rather than a different setting of the npm one -- it fetches nothing from git to
+build, runs no `npm ci`, and every field of `NpmInstall` but `package` would mean nothing to it --
+so it is a fourth strategy type, `RegistryInstall`, by the rule below that a row cannot be half of
+two. The seventh is its plugin. Both are called `modern-web-guidance` on this machine, and the
+plugin's name is fixed (its serving clone and Claude Code's record are keyed by it), so the CLI's
+row takes a name of its own and names its command in `RegistryInstall.binary`. Row names are
+unique: alerts, backups and records are keyed by them.
+
 FIVE ROWS NOW. The fifth, `n8n-as-code`, is the second plugin row, and its manifest is nested in
 its clone: so a plugin's folder is read from the hub's own `source`, as the old `PluginInstall`
 docstring said a second plugin row must. Both of n8n-as-code's rows and octo's track `hardened`
@@ -155,6 +167,41 @@ class NpmInstall:
 
 
 @dataclass(frozen=True)
+class RegistryInstall:
+    """A package taken from the npm registry at the fork's version, with the fork's files in it.
+
+    An exception to "from source", for a package whose code the fork doesn't hold: the fork holds
+    upstream's files that the package also ships, and the act refuses a tarball that differs from
+    them. See `registry.py` for the act and its reasons. The probe is this row's CLI's own (search,
+    then retrieve); a second row of this type brings its own.
+    """
+
+    package: str
+    """The npm package name, fetched at the version the fork's root `package.json` names."""
+
+    binary: str
+    """The command the package's `bin` map names, and the name of the lane's `bin/` entry and of
+    the npm prefix's link. Not the row's name, which belongs to the plugin row."""
+
+    environment: tuple[tuple[str, str], ...]
+    """Variables the lane's `bin/` entry sets before it runs the package, so they hold whatever
+    command line an agent writes."""
+
+    skill: str
+    """The fork's skill whose `--skill-version` stamp the search probe passes, so a skill and a
+    CLI that disagree fail the install."""
+
+    search: str
+    """The query the probe searches for; every guide it returns is then retrieved."""
+
+    published_files: tuple[str, ...]
+    """`PurePosixPath.full_match` patterns (`*` stays within one directory) for the files the
+    tarball may hold that the fork doesn't: the CLI's code and data. Anything else the tarball
+    alone ships refuses the pass, so upstream can't add a guide beside the reviewed ones. Patterns
+    name structure, never content."""
+
+
+@dataclass(frozen=True)
 class Tool:
     """One installable tool: where it comes from, how it is installed, how it is proven."""
 
@@ -168,7 +215,7 @@ class Tool:
     branch: str
     """The branch the install tracks, and the one whose head decides whether work is pending."""
 
-    install: CargoInstall | PluginInstall | NpmInstall
+    install: CargoInstall | PluginInstall | NpmInstall | RegistryInstall
     """How this row is fetched, replaced and proven. The one thing that varies per row."""
 
 
@@ -280,4 +327,55 @@ N8N_AS_CODE = Tool(
     install=PluginInstall(marketplace="devon-plugins"),
 )
 
-TOOLS: tuple[Tool, ...] = (RTK, OCTO, REA, N8NAC, N8N_AS_CODE)
+# The sixth row: modern-web-guidance's CLI, from the npm registry at the fork's version, holding the
+# fork's hardened skills (ADR-0042 amendment 5). The hardened skill runs a bare
+# `modern-web-guidance`, which resolves through the npm prefix's link this row owns; the lane's
+# `bin/` entry is a wrapper that turns the CLI's telemetry off. It tracks `hardened` because
+# `retrieve` serves the installed guides: upstream's copies carry the `npx` cross-references the
+# hardening rule removes.
+MODERN_WEB_GUIDANCE_CLI = Tool(
+    name="modern-web-guidance-cli",
+    repository="AlobarQuest/modern-web-guidance",
+    branch="hardened",
+    install=RegistryInstall(
+        package="modern-web-guidance",
+        binary="modern-web-guidance",
+        # The CLI posts every query and retrieved guide to `play.googleapis.com` unless this is
+        # `1` or `true`, read before it starts its watchdog (measured at 1.0.1).
+        environment=(("DISABLE_TELEMETRY", "1"),),
+        skill="skills/modern-web-guidance/SKILL.md",
+        # The skill's own example query.
+        search="light dismiss dialog",
+        # The 16 files of the 1.0.1 tarball that the fork doesn't hold: the CLI and its source
+        # map, the watchdog, the search index, the two skills' stamps, the CLI directory's own
+        # `package.json` (`"type": "module"`, no dependencies) and the notices.
+        published_files=(
+            "THIRD_PARTY_NOTICES",
+            "skills/*/skill-version.txt",
+            "skills/modern-web-guidance/*.mjs",
+            "skills/modern-web-guidance/*.mjs.map",
+            "skills/modern-web-guidance/package.json",
+            "skills/modern-web-guidance/watchdog/*.js",
+            "skills/modern-web-guidance/gen/*",
+        ),
+    ),
+)
+
+# The seventh row: the plugin, from the fork's `hardened` branch. It follows its CLI in `TOOLS`, so
+# the CLI its skill runs is installed first in a pass, as `n8n-as-code` follows `n8nac`.
+MODERN_WEB_GUIDANCE = Tool(
+    name="modern-web-guidance",
+    repository="AlobarQuest/modern-web-guidance",
+    branch="hardened",
+    install=PluginInstall(marketplace="devon-plugins"),
+)
+
+TOOLS: tuple[Tool, ...] = (
+    RTK,
+    OCTO,
+    REA,
+    N8NAC,
+    N8N_AS_CODE,
+    MODERN_WEB_GUIDANCE_CLI,
+    MODERN_WEB_GUIDANCE,
+)

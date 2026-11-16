@@ -120,3 +120,4 @@ version that stays behind `main` with nothing reporting it.
 | `octo-inline-python-isolated` | claude-octopus | Inserts `-I` after the interpreter in every `python3 -c`, `-m` and `-` in `hooks/` and `scripts/`. |
 | `n8n-mcp-server-from-the-fork` | n8n-as-code | Replaces the plugin's `npx -y @n8n-as-code/mcp` MCP server with `n8nac mcp`. |
 | `n8n-skill-runs-no-registry-package` | n8n-as-code | Rewrites the plugin's `npx --yes n8nac` to `n8nac`, and n8n-manager's commands to `n8n-manager-not-installed`, with a note in the skill. |
+| `mwg-skill-runs-the-installed-cli` | modern-web-guidance | Rewrites `npx -y modern-web-guidance@latest` to `modern-web-guidance` in `skills/`, and replaces the skill's "Using npx / pnpx" section with one that says the CLI is installed here and must never run through a package runner. |

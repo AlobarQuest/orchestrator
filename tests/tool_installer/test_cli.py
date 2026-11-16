@@ -26,7 +26,7 @@ from tool_installer.install import InstallOutcome, RollbackFailed
 from tool_installer.orchestrator_client import ObservationWriteError
 from tool_installer.plugin import Sites
 from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, Cargo, Node, ToolchainError
-from tool_installer.tools import OCTO, TOOLS
+from tool_installer.tools import MODERN_WEB_GUIDANCE_CLI, OCTO, TOOLS
 
 HEAD = "4be91ebe1fc4eaf73688e28cd62782eadb355379"
 OLD = "1111111111111111111111111111111111111111"
@@ -88,10 +88,19 @@ def _seed_n8nac(npm_root: Path, revision: str) -> None:
     )
 
 
+def _seed_guidance_cli(npm_root: Path, revision: str) -> None:
+    """The registry row's record is the installed package's root manifest, as the npm row's is."""
+    package = npm_root / "lib" / "node_modules" / "modern-web-guidance"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "package.json").write_text(
+        json.dumps({"name": "modern-web-guidance", "version": "1.0.1", "gitHead": revision})
+    )
+
+
 def _seed_plugin(plugins_root: Path, version: str, revision: str) -> None:
-    """Claude Code's own record, plus the cache directory it names, for both plugin rows."""
+    """Claude Code's own record, plus the cache directory it names, for every plugin row."""
     rows: dict[str, list[dict[str, str]]] = {}
-    for plugin in ("octo", "n8n-as-code"):
+    for plugin in ("octo", "n8n-as-code", "modern-web-guidance"):
         cache = plugins_root / "cache" / "devon-plugins" / plugin / version
         cache.mkdir(parents=True, exist_ok=True)
         (cache / "plugin.json").write_text("{}")
@@ -138,6 +147,7 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
                 "plugins": [
                     {"name": "octo", "source": "./octo"},
                     {"name": "n8n-as-code", "source": "./n8n-as-code/plugins/claude/n8n-as-code"},
+                    {"name": "modern-web-guidance", "source": "./modern-web-guidance"},
                 ],
             }
         )
@@ -145,6 +155,7 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     npm_root = tmp_path / "npm"
     _seed_rea(npm_root, HEAD)
     _seed_n8nac(npm_root, HEAD)
+    _seed_guidance_cli(npm_root, HEAD)
     monkeypatch.setattr(cli_module, "default_sites", lambda: sites)
 
     recorder = _Recorder()
@@ -266,7 +277,7 @@ def test_a_pass_files_its_row_even_when_it_was_not_permitted_to_act(
     """The finding's durable home is the observation, not the exit code -- so a machine running an
     old tool is recorded whether or not anybody permitted an install."""
     _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
-    # FOUR ROWS: the behind rtk and the current octo, rea and n8nac. The current rows are
+    # SEVEN ROWS: the behind rtk and every other row current. The current rows are
     # asserted here rather than ignored, because "every tool is filed every pass" is the
     # property that makes silence mean something -- a pass that filed only the interesting row
     # would be indistinguishable from a pass that stopped measuring the others.
@@ -277,6 +288,8 @@ def test_a_pass_files_its_row_even_when_it_was_not_permitted_to_act(
         "AlobarQuest/rea",
         "AlobarQuest/n8n-as-code",
         "AlobarQuest/n8n-as-code",
+        "AlobarQuest/modern-web-guidance",
+        "AlobarQuest/modern-web-guidance",
     ]
     row = machine.filed[0]
     assert row["source_system"] == "tool_installer"
@@ -653,6 +666,34 @@ def test_an_admitted_rea_row_is_handed_to_the_npm_act_with_the_head_it_measured(
     assert result.exit_code == 3
     assert seen["revision"] == HEAD
     assert seen["install_root"] == machine.npm_root  # type: ignore[attr-defined]
+
+
+def test_an_admitted_registry_row_is_handed_to_the_registry_act_never_the_build(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both acts take a node, so the row decides which one runs, and the record is read from the
+    package's root manifest."""
+    npm_root = tmp_path / "npm"
+    _seed_guidance_cli(npm_root, OLD)
+    _rtk_current(machine)
+    seen: dict[str, object] = {}
+
+    def act(**kwargs: object) -> InstallOutcome:
+        seen.update(kwargs)
+        return InstallOutcome(action="install_failed", installed=None, detail="stub")
+
+    def build(**_: object) -> InstallOutcome:
+        raise AssertionError("the registry row reached the npm build")
+
+    monkeypatch.setattr(cli_module, "resolve_node", lambda: Node(executable=Path("/usr/bin/true")))
+    monkeypatch.setattr(cli_module, "install_and_prove_registry", act)
+    monkeypatch.setattr(cli_module, "install_and_prove_npm", build)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 3
+    assert seen["tool"] == MODERN_WEB_GUIDANCE_CLI
+    assert seen["revision"] == HEAD
+    assert seen["install_root"] == npm_root
+    assert "modern-web-guidance-cli could not be installed at" in result.stdout
 
 
 # ---- alerts: one keyed alert per tool that fails to install --------------------------------------
