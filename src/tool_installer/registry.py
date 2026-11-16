@@ -412,8 +412,8 @@ def _probe_guidance(
 
 def _cli_stamp(target: Path, entry: str) -> str | None:
     try:
-        return (target / entry).parent.joinpath("skill-version.txt").read_text().strip()
-    except OSError:
+        return (target / entry).parent.joinpath("skill-version.txt").read_text("utf-8").strip()
+    except OSError, ValueError:
         return None
 
 
@@ -529,7 +529,14 @@ def _prove_in_place(
             install_root, row, "the installed package does not record its revision", []
         )
     results = [_probe_through(link, installed.version, env)]
-    results += _probe_guidance(row, link, staged.stamp, _cli_stamp(target, staged.entry), env)
+    try:
+        results += _probe_guidance(row, link, staged.stamp, _cli_stamp(target, staged.entry), env)
+    except OSError as error:
+        # The probe's own directory or output file: still a probe that did not pass, and the
+        # unproven package must not stay live because of it.
+        results.append(
+            ProbeResult(command=("search", row.search), passed=False, detail=type(error).__name__)
+        )
     if not all(result.passed for result in results):
         _undo(target, link, outgoing)
         return _rolled_back(

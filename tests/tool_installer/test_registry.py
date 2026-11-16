@@ -155,7 +155,7 @@ class Fork:
 
 
 def _member(archive: tarfile.TarFile, name: str, content: str | bytes) -> None:
-    data = content.encode() if isinstance(content, str) else content
+    data = content.encode("utf-8", "surrogateescape") if isinstance(content, str) else content
     info = tarfile.TarInfo(name)
     info.size = len(data)
     info.mode = 0o644
@@ -397,6 +397,17 @@ def test_a_skill_and_a_cli_that_disagree_are_ROLLED_BACK(
     assert outcome.action == ACTION_ROLLED_BACK
     assert not outcome.probes[1].passed
     assert "2026_11_12-0000000" in outcome.probes[1].detail
+    _assert_previous_in_place(tmp_path, prefix)
+
+
+def test_a_cli_stamp_that_is_not_text_is_ROLLED_BACK_not_raised(
+    node: Node, tmp_path: Path, fork: Fork, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_installed(_root(tmp_path))
+    monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path, stamp="\udcff")))
+    outcome = _act(node, tmp_path, fork.source, fork.hardened)
+    assert outcome.action == ACTION_ROLLED_BACK
+    assert not outcome.probes[1].passed
     _assert_previous_in_place(tmp_path, prefix)
 
 
