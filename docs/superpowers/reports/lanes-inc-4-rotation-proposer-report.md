@@ -32,6 +32,8 @@ remote-tracking refs only; neither working tree or branch was touched.
   pyright and shellcheck are clean. pytest **collected 15,387 items** (`10 workers [15387 items]`)
   and passed 15,386, with 1 skipped, in 320 s. That run preceded the last commit, which adds one
   test to the lane file; the affected files (152 tests) passed after it.
+- CI on #734 (Quality run `44190499114`, head `da9a257c`): **success**. It collected 15,388
+  items (`4 workers [15388 items]`) and passed 15,365, with 23 skipped, in 555 s.
 - Mutation controls on the launcher, each run against the new test file with `-x` (so the run
   stops at the first failure):
 
