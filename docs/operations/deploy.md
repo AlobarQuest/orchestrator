@@ -766,7 +766,7 @@ The compose sets `INFRADRIFT_CONFIG_DIR` and `SECURITY_DRIFT_STATE_DIR` to empty
 infraops' `cred-findings` reads `cred-consumers.list` from the first and `cred-rotation-state.json`
 from the second (infraops `src/security-drift/paths.ts`). The launcher refuses every pass, a dry
 run included, with exit 2 while either is empty or names a directory without its file, before it
-reads a secret or clones anything. Where the state file lives is decided outside this lane's code
+reads any of its four secrets or clones anything. Where the state file lives is decided outside this lane's code
 (ADR-0059 decision 5, "Verify in increment 4"), and so is how infra-drift's 03:00 credential scan
 on the Mac reads it.
 

@@ -311,6 +311,22 @@ def test_a_missing_file_exits_2_before_anything(tmp_path: Path, setting: str, na
     assert run.lane_reads() == [] and run.clone_lines() == [] and run.lines("proposer") == []
 
 
+def test_with_a_ping_url_named_the_fence_reads_only_that_secret(tmp_path: Path) -> None:
+    """The switch arms before the fence: once the compose names the ping-URL secret, a fenced pass
+    reads it (and pings `/fail`), and still none of the pass's own secrets."""
+    ping_url_secret = "11111111-2222-4333-8444-555555555555"
+    run = _run(
+        tmp_path,
+        "--submit",
+        SDS_DEADMAN_PING_URL_UUID=ping_url_secret,
+        BWS_ACCESS_TOKEN_BROAD=None,
+        INFRADRIFT_CONFIG_DIR="",
+    )
+    assert run.code == 2, run.output
+    assert run.lane_reads() == [ping_url_secret]
+    assert run.clone_lines() == [] and run.lines("proposer") == []
+
+
 def test_the_program_gets_the_directories_the_compose_named(tmp_path: Path) -> None:
     env = _run(tmp_path, "--submit").env()
     assert env["INFRADRIFT_CONFIG_DIR"] == f"{tmp_path}/infra-drift-config"
@@ -335,9 +351,11 @@ def test_no_chain_variable_reaches_the_program_whatever_the_environment_held(
     assert not any(name.startswith("FACTORY_EVENTS_") for name in run.env())
 
 
-def test_the_lane_files_name_no_chain_setting() -> None:
+def test_the_lane_files_name_no_chain_setting_and_join_no_network() -> None:
     assert "FACTORY_EVENTS" not in COMPOSE.read_text()
-    assert "coolify" not in yaml.safe_load(COMPOSE.read_text())
+    document = yaml.safe_load(COMPOSE.read_text())
+    assert "networks" not in document
+    assert "networks" not in document["services"]["rotation-proposer"]
 
 
 # ---- the clones and the push token -----------------------------------------------------------

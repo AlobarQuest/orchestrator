@@ -49,8 +49,8 @@
 # lane's container, and the block after the `--submit` test runs that pass and exits. There:
 #   - `INFRADRIFT_CONFIG_DIR` and `SECURITY_DRIFT_STATE_DIR` come from the compose alone; either
 #     unset or empty, or its file (`cred-consumers.list`, `cred-rotation-state.json`) missing,
-#     exits 2 before anything is read or run. Where those files live is decided outside this
-#     launcher (ADR-0059 decision 5).
+#     exits 2 before the pass's secrets, clones or program. Where those files live is decided
+#     outside this launcher (ADR-0059 decision 5).
 #   - `--submit` only, it reads the change-manager PROPOSE bearer (`acccb346-…`), the orchestrator
 #     OBSERVER bearer (`f793576f-…`), the `sds-bridge` alert sender (`b415d03b-…`) and the "SDS
 #     lanes" App's key (`b8f547b9-…`, piped straight into its mint), each with the lane's one token.
@@ -139,8 +139,9 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # (infraops `src/security-drift/paths.ts`), and falls back to `~/.config/infra-drift` when either is
   # unset. Both come from the compose alone; there is no default and no home-directory fallback.
   # An empty value is refused too: infraops' `??` keeps an empty string, which would resolve both
-  # files against the working directory. Checked first, before any read, clone or program, so a
-  # pass the fence stops reads nothing and exits 2 (could not use its inputs), saying why.
+  # files against the working directory. Checked before the pass's secrets, clones and program, so
+  # a pass the fence stops reads none of them and exits 2 (could not use its inputs), saying why.
+  # (The dead-man switch armed earlier, and reads the lane's ping-URL secret once one is named.)
   for _setting in INFRADRIFT_CONFIG_DIR SECURITY_DRIFT_STATE_DIR; do
     if [ -z "${!_setting:-}" ]; then
       echo "FATAL: $_setting is not set in the lane's container: infraops can't be asked what is due" >&2
