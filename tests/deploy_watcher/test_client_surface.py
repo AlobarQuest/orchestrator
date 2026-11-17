@@ -26,7 +26,9 @@ import pytest
 from deploy_watcher.change_manager import (
     SUPERSEDING_ACTOR,
     ChangeManagerClient,
+    ChangeManagerError,
     ForbiddenEndpointError,
+    RefusedError,
     is_allowed_read,
     is_allowed_write,
 )
@@ -240,3 +242,93 @@ def test_a_malformed_address_is_reported_as_the_address(base_url: str) -> None:
     """A typo that only fails at request time must not read as the orchestrator being down."""
     with pytest.raises(OrchestratorError, match="malformed host"):
         OrchestratorClient("t", base_url=base_url)
+
+
+# ---------------------------------------------------------------------------
+# A request that gets no answer is repeated, three attempts in all
+# ---------------------------------------------------------------------------
+
+OBSERVATION_PATH = "/api/items/70/deploy-observation"
+
+
+def _flaky_changes(
+    answer: httpx.Response, *, failures: int
+) -> tuple[ChangeManagerClient, list[str], list[float]]:
+    """A client whose first `failures` requests are reset before an answer, then answer."""
+    seen: list[str] = []
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.path}")
+        if len(seen) <= failures:
+            raise httpx.ReadError("connection reset", request=request)
+        return answer
+
+    client = ChangeManagerClient("t", transport=httpx.MockTransport(handler), sleep=sleeps.append)
+    return client, seen, sleeps
+
+
+def test_a_read_that_got_no_answer_is_repeated_and_answers() -> None:
+    client, seen, sleeps = _flaky_changes(httpx.Response(200, json=[{"id": 70}]), failures=1)
+    [record] = client.deploy_changes()
+    assert record.item_id == 70
+    assert seen == ["GET /api/items", "GET /api/items"]
+    assert len(sleeps) == 1
+
+
+def test_an_observation_that_got_no_answer_is_repeated_and_answers() -> None:
+    """change-manager answers a replayed observation 200 with the row it already holds."""
+    client, seen, _ = _flaky_changes(
+        httpx.Response(200, json={"id": 9, "item_status": "resolved"}), failures=2
+    )
+    assert client.observe(70, {"run_id": 1})["item_status"] == "resolved"
+    assert seen == [f"POST {OBSERVATION_PATH}"] * 3
+
+
+def test_a_supersession_that_got_no_answer_is_repeated_and_answers() -> None:
+    """A supersession of a record already terminal answers 200 unchanged, so it replays too."""
+    client, seen, _ = _flaky_changes(httpx.Response(200, json={"id": 70}), failures=1)
+    item = client.supersede(
+        70, pull_request_number=46, superseding_run_id=2, superseding_commit="b" * 40
+    )
+    assert item == {"id": 70}
+    assert seen == ["POST /api/items/70/deploy-supersession"] * 2
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            lambda client: client.deploy_changes(),
+            "change-manager is unreachable for GET /api/items: ReadError",
+        ),
+        (
+            lambda client: client.observe(70, {"run_id": 1}),
+            f"change-manager is unreachable for POST {OBSERVATION_PATH}: ReadError",
+        ),
+    ],
+)
+def test_three_requests_without_an_answer_raise_the_unreachable_error(call, message) -> None:
+    client, seen, sleeps = _flaky_changes(httpx.Response(200, json={}), failures=3)
+    with pytest.raises(ChangeManagerError) as raised:
+        call(client)
+    assert str(raised.value) == message
+    assert len(seen) == 3
+    assert len(sleeps) == 2
+
+
+@pytest.mark.parametrize(("status", "error"), [(409, RefusedError), (422, ChangeManagerError)])
+def test_an_answered_refusal_is_never_repeated(status: int, error: type[Exception]) -> None:
+    client, seen, sleeps = _flaky_changes(httpx.Response(status, json={"detail": "no"}), failures=0)
+    with pytest.raises(error):
+        client.observe(70, {"run_id": 1})
+    assert seen == [f"POST {OBSERVATION_PATH}"]
+    assert sleeps == []
+
+
+def test_a_gateway_answer_to_a_write_is_not_repeated() -> None:
+    """Only a request with NO answer repeats; a 502 is an answer and keeps its handling."""
+    client, seen, _ = _flaky_changes(httpx.Response(502, text="bad gateway"), failures=0)
+    with pytest.raises(ChangeManagerError, match="rejected POST .*: 502"):
+        client.observe(70, {"run_id": 1})
+    assert len(seen) == 1

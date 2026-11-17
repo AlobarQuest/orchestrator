@@ -14,13 +14,20 @@ request is built, so a path this program was never meant to reach never leaves t
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 import httpx
 
 from deploy_watcher.model import ChangeRecord
-from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
+from estate_clients.confined import (
+    ConfinedClient,
+    TransportFailure,
+    base_url_problem,
+    request_through_transport_failures,
+)
 
 DEFAULT_BASE_URL = "https://change-mgr.alobar.net"
 USER_AGENT = "deploy-watcher/1 (+AlobarQuest/orchestrator)"
@@ -81,7 +88,9 @@ class ChangeManagerClient:
         *,
         base_url: str = DEFAULT_BASE_URL,
         transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        self._sleep = sleep
         # A malformed address is reported as the address, not as change-manager being down
         # (ADR-0050); construction is guarded as well as the request.
         problem = base_url_problem(base_url)
@@ -114,9 +123,17 @@ class ChangeManagerClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
+    # Every request below repeats on no answer, writes included: change-manager treats a replay of
+    # either write as a repeat. An observation is keyed on its run attempt and facts (201 new, 200
+    # recorded), and a supersession of a record already terminal answers 200 unchanged.
+    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        return request_through_transport_failures(
+            self._client, method, path, sleep=self._sleep, **kwargs
+        )
+
     def _get(self, path: str, **params: Any) -> Any:
         try:
-            response = self._client.request("GET", path, params=params or None)
+            response = self._request("GET", path, params=params or None)
         except TransportFailure as failure:
             raise ChangeManagerError(
                 f"change-manager is unreachable for GET {path}: {failure.error_type}"
@@ -188,7 +205,7 @@ class ChangeManagerClient:
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
-            response = self._client.request("POST", path, json=body)
+            response = self._request("POST", path, json=body)
         except TransportFailure as failure:
             raise ChangeManagerError(
                 f"change-manager is unreachable for POST {path}: {failure.error_type}"

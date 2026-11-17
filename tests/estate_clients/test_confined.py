@@ -13,6 +13,7 @@ from estate_clients.confined import (
     error_code,
     error_detail,
     get_through_gateway_errors,
+    request_through_transport_failures,
 )
 
 
@@ -188,3 +189,35 @@ def test_a_gateway_retry_still_asks_the_permit_first() -> None:
             params=None,
             sleep=lambda _: None,
         )
+
+
+def test_a_transport_retry_still_asks_the_permit_first() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a refused path reached the transport")
+
+    sleeps: list[float] = []
+    with pytest.raises(Refused):
+        request_through_transport_failures(
+            _client(httpx.MockTransport(handler), permits=False),
+            "POST",
+            "/x",
+            sleep=sleeps.append,
+        )
+    assert sleeps == []
+
+
+def test_a_transport_retry_returns_the_first_answer_whatever_its_status() -> None:
+    """It interprets no status: a 500 after a reset is the program's to read, not repeated."""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("down", request=request)
+        return httpx.Response(500)
+
+    response = request_through_transport_failures(
+        _client(httpx.MockTransport(handler)), "GET", "/x", sleep=lambda _: None
+    )
+    assert response.status_code == 500
+    assert len(calls) == 2
