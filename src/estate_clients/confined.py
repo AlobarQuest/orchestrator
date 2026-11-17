@@ -31,8 +31,12 @@ What lives here and nowhere else:
   repeats a GET answered 502, 503 or 504, three attempts in all, and returns the last
   response. It interprets no status: the program still decides what every answer means, so a
   gateway error that outlasts the attempts reaches the program's own refusal as before. Nothing
-  else is retried -- not a request that got no answer, not a 500, 429 or 403 -- and nothing
-  retries unless a program calls this.
+  else is retried by it -- not a request that got no answer, not a 500, 429 or 403.
+* **A request may opt in to a bounded retry on no answer.** `request_through_transport_failures`
+  repeats a request that raised `TransportFailure`, three attempts in all, and returns the first
+  answer, whatever its status. It may send a write, so a program calls it only for a request
+  whose replay it has shown the service treats as a repeat. A failure that outlasts the attempts
+  raises the last `TransportFailure`. Nothing retries unless a program calls one of these two.
 
 This package imports nothing from any program, and no program's wording appears in it.
 """
@@ -58,6 +62,11 @@ MAX_DNS_LABEL = 63
 GATEWAY_ERRORS = frozenset({502, 503, 504})
 GATEWAY_ATTEMPTS = 3
 GATEWAY_RETRY_WAIT = 2.0
+
+# A request that got no answer: the connection was refused, reset or timed out before a response
+# arrived. Repeated on a fresh attempt only for a program that asks, for the reason given above.
+TRANSPORT_ATTEMPTS = 3
+TRANSPORT_RETRY_WAIT = 1.0
 
 # Tailscale's address range. WireGuard encrypts everything sent to it, so plain HTTP is allowed
 # there and nowhere else: production Coolify's API has no TLS (ADR-0055 amendment 9).
@@ -206,3 +215,23 @@ def get_through_gateway_errors(
             return response
         sleep(GATEWAY_RETRY_WAIT)
     return client.request("GET", path, params=params)
+
+
+def request_through_transport_failures(
+    client: ConfinedClient,
+    method: str,
+    path: str,
+    *,
+    sleep: Callable[[float], None],
+    **kwargs: Any,
+) -> httpx.Response:
+    """Send one request, repeating it while it gets no answer. Returns the first response.
+
+    A refusal raises at once, before any attempt. The last attempt's `TransportFailure` raises.
+    """
+    for _ in range(TRANSPORT_ATTEMPTS - 1):
+        try:
+            return client.request(method, path, **kwargs)
+        except TransportFailure:
+            sleep(TRANSPORT_RETRY_WAIT)
+    return client.request(method, path, **kwargs)
