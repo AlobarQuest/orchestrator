@@ -399,6 +399,10 @@ The holders in this repository:
 | `scripts/run-work-carrier.sh` | `factory-events-read-password` (`2f708d08-…`) | On the Mac, `sds-operator`, `Claude` / `BWS_ACCESS_TOKEN_SDS`, until ADR-0059 step 3f-2's cut-over retires the Mac job. After it, the `work-carrier` lane account alone, with the lane's own token in its container (no Keychain item). | On the Mac, every pass with the switch present and an `sds-operator` identity. In the container, every pass, with the chain settings from the lane's compose and no switch file. The password reaches `work-carrier` and the container's chain verify only, never `work-watcher`. |
 | `scripts/factory-events-session.sh` (FE-5 P-OR-2) | `factory-events-append-password` | `factory-events-session`, `Claude` / `BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION` | Each run, for an interactive session's `approve` or the one history import. |
 
+`scripts/run-rotation-proposer.sh` holds no chain password, on the Mac or, after ADR-0059 step
+3f-5's cut-over, in the `rotation-proposer` lane account's container (D-43 B; ADR-0055 amendment 24
+item 5). Its container clears every chain variable before the pass runs.
+
 Devon mints both new Keychain items at act step 0. Neither item has an environment override: a
 launcher reads it from the Keychain directly, so a caller's environment can't put the token in
 the children's environment. `sds_bws_value` passes a token to `bws` as an assignment prefix, so it

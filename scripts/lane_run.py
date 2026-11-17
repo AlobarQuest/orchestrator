@@ -12,6 +12,9 @@ one-off `docker exec` alike. It starts the launcher with exactly the variables b
 - The factory-events chain's three non-secret settings in `CHAIN_SETTINGS` (ADR-0055 amendment 26
   item 3), which only the work carrier's compose sets. Its read password is a secret, so it isn't
   here: the launcher reads it from BWS with the token.
+- infraops' two directory settings in `INFRAOPS_SETTINGS`, which only the rotation proposer's
+  compose sets: where `cred-findings` finds `cred-consumers.list` and `cred-rotation-state.json`.
+  The launcher refuses a pass with either unset, so it never falls back to `HOME`.
 
 Each is copied only when the container's environment sets it. `LANE_SCHEDULE_ENABLED` is never
 passed: the entrypoint reads it at container start, and no launcher reads it. An increment that
@@ -64,6 +67,9 @@ STATE_VARIABLES = (
 # The chain's host, port and database (never its password), each a plain value in the work
 # carrier's compose; the launcher passes them to the carry and the chain verify alone.
 CHAIN_SETTINGS = ("FACTORY_EVENTS_DB_HOST", "FACTORY_EVENTS_DB_PORT", "FACTORY_EVENTS_DB_NAME")
+# infraops' list and state directories (`src/security-drift/paths.ts`), each a plain value in the
+# rotation proposer's compose; the launcher hands them to `cred-findings` through the program.
+INFRAOPS_SETTINGS = ("INFRADRIFT_CONFIG_DIR", "SECURITY_DRIFT_STATE_DIR")
 LANE = re.compile(r"^[a-z][a-z0-9-]*$")
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
@@ -74,7 +80,7 @@ def lane_environment(source: Mapping[str, str], home: str) -> dict[str, str]:
     """The launcher's whole environment: the fixed `PATH`, `home`, and each listed name `source`
     sets. Nothing else in `source` is copied."""
     environment = {"PATH": LANE_PATH, "HOME": home}
-    for name in (*COPIED, *STATE_VARIABLES, *CHAIN_SETTINGS):
+    for name in (*COPIED, *STATE_VARIABLES, *CHAIN_SETTINGS, *INFRAOPS_SETTINGS):
         if name in source:
             environment[name] = source[name]
     return environment

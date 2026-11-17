@@ -150,6 +150,21 @@ def test_the_chain_settings_pass_only_when_set_and_the_password_never(lane: Lane
     assert "FACTORY_EVENTS_READ_PASSWORD" not in present
 
 
+def test_the_infraops_settings_pass_only_when_set(lane: Lane) -> None:
+    """The rotation proposer's compose sets infraops' list and state directories; a pass without
+    them is refused by its launcher, never sent to `HOME`."""
+    lane.run("example")
+    absent = lane.launcher_saw()["env"]
+    lane.run("example", INFRADRIFT_CONFIG_DIR="/srv/list", SECURITY_DRIFT_STATE_DIR="/srv/state")
+    present = lane.launcher_saw()["env"]
+
+    assert lane_run.INFRAOPS_SETTINGS == ("INFRADRIFT_CONFIG_DIR", "SECURITY_DRIFT_STATE_DIR")
+    for name in lane_run.INFRAOPS_SETTINGS:
+        assert name not in absent
+    assert present["INFRADRIFT_CONFIG_DIR"] == "/srv/list"
+    assert present["SECURITY_DRIFT_STATE_DIR"] == "/srv/state"
+
+
 def test_home_is_new_empty_and_removed_after_the_run(lane: Lane) -> None:
     lane.run("example")
     first = lane.launcher_saw()
@@ -229,7 +244,12 @@ def test_read_without_bws_on_path_is_a_usage_error(lane: Lane) -> None:
 
 
 def test_the_schedule_switch_and_lane_tokens_are_not_in_the_list() -> None:
-    passed = (*lane_run.COPIED, *lane_run.STATE_VARIABLES, *lane_run.CHAIN_SETTINGS)
+    passed = (
+        *lane_run.COPIED,
+        *lane_run.STATE_VARIABLES,
+        *lane_run.CHAIN_SETTINGS,
+        *lane_run.INFRAOPS_SETTINGS,
+    )
 
     assert "LANE_SCHEDULE_ENABLED" not in passed
     assert [name for name in passed if "TOKEN" in name] == ["BWS_ACCESS_TOKEN"]

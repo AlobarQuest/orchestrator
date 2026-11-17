@@ -87,6 +87,7 @@ from tests.architecture.edge_table import (
 from tests.architecture.import_scan import file_imports
 from tests.architecture.process_scan import process_heads
 from tests.architecture.test_bridge_edges import PROBES as BRIDGE_PROBES
+from tests.architecture.test_bridge_edges import PUSH_APP_KEY
 
 UNIT = "0b5bd8e1-6d0c-4e8a-9a0d-1f0b4d8f6a11"
 REVISION = "7f3a2c10-52de-4a11-8c55-90ab12cd34ef"
@@ -185,7 +186,10 @@ EDGES: dict[str, RotationEdge] = {
         ),
         github=frozenset(),
         alert_hub=ALERTS,  # through alerts.py
-        bearers=DEADMAN | {PROPOSE_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER},
+        # The "SDS lanes" App's key, read in the lane's container alone on `--submit`, for git's
+        # push (ADR-0059 increment 4, step 3f-5).
+        bearers=DEADMAN
+        | {PROPOSE_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER, PUSH_APP_KEY},
         base_urls={
             "change_manager": CHANGE_MANAGER_URL,
             "orchestrator": ORCHESTRATOR_LIVE_URL,

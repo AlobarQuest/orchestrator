@@ -750,6 +750,83 @@ its own change or act:
    - The schedule, and the Mac job's retirement. After the retirement, the Mac's
      `BWS_ACCESS_TOKEN_BUMP_PROPOSER` Keychain item has no reader.
 
+`rotation-proposer`'s tracked files (`lanes/rotation-proposer/compose.yaml` and `crontab`) don't
+register it either. Its state is the proposer's `alerts.json` and `approval-since.json`, so its
+compose mounts the named volume `sds-lanes-rotation-proposer-state` at
+`ROTATION_PROPOSER_STATE_DIR` (`/var/lib/sds/rotation-proposer`). It joins no external network: it
+holds no chain credential (D-43 B; ADR-0055 amendment 24 item 5), so its `revise` and `transition`
+record `event_id` None in the lineage, and every service it calls is an HTTPS URL. Its crontab runs
+`lane-run rotation-proposer --submit` daily at 06:31 New York time. The Mac job runs at 06:30, but
+minute 30 is execution-watch's, so the lane takes 31, which no other lane starts on and which still
+runs before the bump proposer's 06:55 and the carry's 07:05. The bare `lane-run rotation-proposer`
+is the dry run, which writes nothing, but this lane arms the dead-man switch, so a bare run pings
+its check (ADR-0059, "It pings the real check").
+
+The compose sets `INFRADRIFT_CONFIG_DIR` and `SECURITY_DRIFT_STATE_DIR` to empty placeholders.
+infraops' `cred-findings` reads `cred-consumers.list` from the first and `cred-rotation-state.json`
+from the second (infraops `src/security-drift/paths.ts`). The launcher refuses every pass, a dry
+run included, with exit 2 while either is empty or names a directory without its file, before it
+reads a secret or clones anything. Where the state file lives is decided outside this lane's code
+(ADR-0059 decision 5, "Verify in increment 4"), and so is how infra-drift's 03:00 credential scan
+on the Mac reads it.
+
+Its `.bws-secrets.toml` secrets are the following four, all read with the lane's one token on
+`--submit` only; a dry run reads none. Its ping-URL secret joins them when it exists; until then the
+compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane is in `test_deploy_lanes.py`'s
+`placeholders`.
+
+- The change-manager PROPOSE bearer.
+- The orchestrator OBSERVER bearer.
+- The `sds-bridge` alert sender.
+- The "SDS lanes" App's key (`lanes-push-app-private-key`).
+
+Each pass clones intent-packages and infraops-mcp-server anonymously (both are public), shallow at
+`main`, into `/var/tmp/sds-rotation-proposer`, with git given no credential, and discards both when
+it's done. Its registry mirrors (`RepoMirror`) live in that directory too. On `--submit` it mints the
+"SDS lanes" App's token for intent-packages alone (`contents: write`) after both clones, and hands
+it to git with the App's `[bot]` identity, so `standing.publish`'s `git push origin main` pushes as
+the App. No program variable holds the push token; only git's extraheader does. intent-packages'
+lifecycle runs under the image's interpreter with the clone's `src` on `PYTHONPATH`
+(`BUMP_PROPOSER_PACKAGES_PYTHON`), as the bump proposer's does.
+
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act:
+
+1. The decision on where `cred-rotation-state.json` lives and how infra-drift's Mac scan reads it,
+   with the way `cred-consumers.list` reaches the container: the Mac's list names four working
+   copies by `/Users/...` path. A change then writes both directory settings into the compose with
+   the volume or mount that carries the files. Until then every pass exits 2, so this precedes the
+   lane's `--add` proof run.
+2. The orchestrator serving this release; then HQ creates `sds-lane-rotation-proposer` from the
+   compose without deploying it.
+3. The VM root's keeper commands for the lane token and `rotation-proposer-ping-url`.
+4. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, a `runtime-fetch` reader for `scripts/run-rotation-proposer.sh` on the push
+   App key's row.
+5. The lane account's grants on its four secrets and its ping-URL secret. The PROPOSE bearer
+   (`acccb346-…`) is read by the broad identity on the Mac and becomes a direct grant to the lane
+   account (Devon's act at the lane's identity gate).
+6. Devon's change to intent-packages' `main` protection that admits the "SDS lanes" App's direct
+   push (the bump proposer's step 5, which serves both lanes). Until then every revising pass's
+   publish is refused: that credential reports `error` (exit 3), and the commit lived only in the
+   discarded clone. This lane approves nothing, so a refusal leaves no chain event, and the next
+   pass revises again from `main`.
+7. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+8. A served release whose compose names the ping-URL secret's id, with `rotation-proposer` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+9. The lane's `--add`, then the `lane-run --read` proof over all five secrets and a bare
+   `lane-run rotation-proposer` in the container. That bare run is the first anonymous clone of
+   both repositories and the first `cred-findings` in the container. It reads no secret, so the
+   proof is the only read of the four before the first acting pass.
+10. Cut-over steps 2 onward:
+    - The copy of the Mac's `sds/rotation-proposer/` files into the volume, before the first
+      `--submit` pass in the container, or alerts never resolve and approval-wait clocks restart.
+    - The paired dry runs on both hosts in the same minute, which write nothing and each ping the
+      real check. Fast-forward the Mac's `~/Projects/intent-packages` and
+      `~/Projects/infraops-mcp-server` to `origin/main` first, because the container clones `main`.
+    - The schedule, and the Mac job's retirement.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
