@@ -3,8 +3,10 @@ Outcome: done
 # Report: the rotation proposer's lane files and launcher (ADR-0059 increment 4, step 3f-5)
 
 Branch `hq/lanes-inc-4-rotation-proposer`, base `a410af18` (#733). PR #734, open and ready, not
-merged. No production act: no live call of any kind, no BWS read, no mint, no push to
-intent-packages, no `launchctl`.
+merged. No production act: no BWS read, no mint, no push, no `launchctl`, and no service call.
+The one network act was `git fetch origin` in `~/Projects/intent-packages` and
+`~/Projects/security-standards`, to read their `origin/main` with `git show`. It moved
+remote-tracking refs only; neither working tree or branch was touched.
 
 ## What changed (files)
 
@@ -17,7 +19,7 @@ intent-packages, no `launchctl`.
 | `.bws-secrets.toml` | `rotation-proposer` added to the `lanes` of the observer (`f793576f-…`), PROPOSE (`acccb346-…`), alert-sender (`b415d03b-…`) and push App key (`b8f547b9-…`) rows, with their reader comments updated. These name future grants; no grant is made. |
 | `docs/operations/deploy.md` | A rotation proposer block after the bump proposer's step 9 and its cut-over steps. The bump proposer's and the work carrier's text isn't touched. |
 | `docs/operations/credentials.md` | One line under the chain holders table: this launcher holds no chain password, on the Mac or in its container. |
-| `tests/scripts/test_run_rotation_proposer_lane.py` | New, 54 tests, registered in `layers.toml` (rotation layer, beside `test_run_rotation_proposer.py`). |
+| `tests/scripts/test_run_rotation_proposer_lane.py` | New, 52 tests, registered in `layers.toml` (rotation layer, beside `test_run_rotation_proposer.py`). |
 | `tests/scripts/test_run_rotation_proposer.py` | The one-fetch assertion now expects two `sds-bridge` reads, the Mac's and the container's, each inside a `--submit` gate. |
 | `tests/scripts/test_lane_run.py` | A test for `INFRAOPS_SETTINGS`; the "no token in the list" test includes it. |
 | `tests/architecture/test_rotation_edges.py` | The push App key joins `rotation_proposer`'s bearers. |
@@ -27,7 +29,9 @@ intent-packages, no `launchctl`.
 ## Tests and checks
 
 - `make check` with `TEST_DATABASE_URL` set to `orchestrator_test_hq_w_203`: ruff, ruff format,
-  pyright and shellcheck are clean. pytest: **15,386 passed, 1 skipped**, in 320 s.
+  pyright and shellcheck are clean. pytest **collected 15,387 items** (`10 workers [15387 items]`)
+  and passed 15,386, with 1 skipped, in 320 s. That run preceded the last commit, which adds one
+  test to the lane file; the affected files (152 tests) passed after it.
 - Mutation controls on the launcher, each run against the new test file with `-x` (so the run
   stops at the first failure):
 
@@ -102,10 +106,10 @@ the working directory. I picked no home and moved or copied no file.
 only):
 
 ```
-/Users/devon/Projects/infraops-mcp-server/.cred-consumers.toml
-/Users/devon/Projects/change-manager/.cred-consumers.toml
-/Users/devon/Projects/factory-runner/.cred-consumers.toml
-/Users/devon/Projects/orchestrator/.cred-consumers.toml
+~/Projects/infraops-mcp-server/.cred-consumers.toml
+~/Projects/change-manager/.cred-consumers.toml
+~/Projects/factory-runner/.cred-consumers.toml
+~/Projects/orchestrator/.cred-consumers.toml
 ```
 
 Only one of the four is a file in the container before `cred-findings` runs: infraops-mcp-server's,
@@ -290,6 +294,32 @@ decision.
   schedule is the crontab, which the entrypoint runs only when `LANE_SCHEDULE_ENABLED=true`.
   There's no Coolify task.
 
+## Self-review
+
+`/code-review` (medium) ran on `a410af18...HEAD` and returned five findings. None changes this PR:
+
+1. **The state directory's writability isn't checked**, only the file's existence. `record-rotation`
+   writes there, so a read-only or ephemeral mount would lose the write and leave the credential
+   due. That's a property of the home the decision picks: concern 4 and cut-over step 1.
+2. **The empty placeholders refuse every pass.** That's the design; deploy.md puts the decision
+   before the `--add` proof and the schedule.
+3. **The list's paths might not resolve in the container.** If they don't, infraops'
+   `loadCredConsumerFiles` throws `cannot read <file>` (`cred-consumers.ts` 240-245). That's a
+   non-zero exit, so the pass exits 2 visibly rather than reporting nothing due.
+4. **An exit after the first clone leaves it under `/var/tmp` until the next pass removes it.** It
+   holds no credential. Cleaning up on exit would need the EXIT trap, which the dead-man switch
+   owns (`sds_deadman_finish`); #733 leaves its clone the same way.
+5. **The container block repeats #733's read, mint and clone shape.** Extracting a shared helper
+   would change the bump proposer's launcher, which this handoff fences off. Follow-up 8.
+
+The advisor's review before completion found four more, all fixed:
+
+- the test count;
+- "before any read", which was true only while the ping-URL id is empty (a test now covers a named
+  id);
+- an assertion that couldn't fail (the compose's networks);
+- the overstated "no live call".
+
 ## Concerns and follow-ups
 
 1. **The worktree refusal in `/app`.** `sds_refuse_linked_worktree` runs in the container too,
@@ -312,6 +342,12 @@ decision.
    2) and file-permission requirements for a shared state file (concern 4).
 7. **No live anonymous clone was made.** The evidence is the decomposer's and membership check's
    live anonymous reads and the static import graph. Step 9's bare run is the first proof.
+8. **A shared container helper for the two proposers.** The read, mint, clone and credential steps
+   now exist in both launchers. Extracting them changes `run-bump-proposer.sh`, so it's its own
+   change.
+9. **A stale line in the bump proposer's fenced deploy.md section.** Its step 4 says its grant on
+   the push App key is "the first grant on `b8f547b9-…` to any account". That holds only if the bump
+   proposer cuts over first. I left it, because the section is fenced.
 
 ## Cut-over steps that remain
 
