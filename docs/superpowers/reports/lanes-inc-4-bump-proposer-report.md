@@ -258,6 +258,10 @@ rotation proposer (step 3f-5).
 
 - `make check`: green, **15,334 passed, 1 skipped** (final run on `a0ceb5c6`'s tree). Lint, type-check, shellcheck and
   the whole-repository scans are included.
+- CI on #733 at `bcd9a3b6`: all three checks pass. `Quality` ran **15,312 passed, 23 skipped**
+  (run 44175439204, job 134365588501), the same 15,335 tests as the local run, with more skipped
+  on CI's side. `Rollout transcription currency` and `Runner consumer compatibility` also pass.
+  This was the first Linux run of the new launcher tests.
 - Some of my targeted pytest runs had no `TEST_DATABASE_URL` set, so they would have defaulted
   to the shared `orchestrator_test`. `pytest --setup-plan` over those paths lists no database
   fixture (count 0), so none of them touched it. Every `make check` ran against
