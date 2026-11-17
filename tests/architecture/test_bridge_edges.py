@@ -61,6 +61,8 @@ from work_watcher import orchestrator_client as watcher_orchestrator
 
 # The read-only lane App `alobar-sds-lanes-read`'s key, read in a lane's container alone.
 READ_APP_KEY = "314a966c-5654-4e3c-8358-b4fd01268775"
+# The "SDS lanes" App `alobar-sds-lanes`'s key, read in the bump proposer's container alone.
+PUSH_APP_KEY = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
 
 EDGES: dict[str, Edge] = {
     "bump_proposer": Edge(
@@ -82,6 +84,11 @@ EDGES: dict[str, Edge] = {
             OBSERVER_BEARER,
             SDS_BRIDGE_ALERT_BEARER,
             FACTORY_EVENTS_APPEND_PASSWORD,
+            # The two lane Apps' keys its container mints from: the read-only App's for
+            # `BUMP_PROPOSER_GITHUB_TOKEN` and the clone, and the "SDS lanes" App's for git's push
+            # alone (ADR-0059 increment 4, step 3f-4).
+            READ_APP_KEY,
+            PUSH_APP_KEY,
         },
     ),
     "change_proposer": Edge(

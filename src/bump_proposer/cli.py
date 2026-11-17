@@ -51,6 +51,9 @@ unreadable one is exit 2, never a smaller population. A package created for a de
 has reach `[live_estate]`, one for an inert repository `[source_repository]` (ADR-0028 amendment
 3), and each repository's bumps are judged against its own block of the policy.
 
+`bump-proposer repositories` changes nothing and prints the repositories the lane's GitHub read
+token must name, which the lane's container mints it for (`repositories`, below).
+
 **A REPEAT PASS IS A REPLAY, in both halves.** A standing package whose tip revision already
 carries this bump is not revised again; change-manager answers 200 for an identical proposal.
 So the pass is safe to schedule, and a second run over an unchanged estate writes nothing.
@@ -1117,8 +1120,41 @@ def _send_alerts(
     return [] if failure is None else [Outcome("alert-hub", 0, "error", failure)]
 
 
+def repositories() -> int:
+    """Print the repositories the lane's GitHub read token must name, one per line, nothing else.
+
+    In the lane's container the launcher mints the pass's read token for exactly these (ADR-0059
+    decision 2: each pass's mint names only its lane's repositories). They are the packages
+    repository, which the pass clones, and each repository the member record grants
+    `dependency_updates`. A pass reads GitHub only for the repositories in its lane (`_lane`), and
+    every one of those is granted, so this list holds them all. It needs only the member record:
+    the lane's other two inputs, the standing packages and the landing policy, narrow it further,
+    and the packages are read from the clone this token makes. Repeats that differ only in case are
+    printed once, because the mint casefolds.
+
+    FAILS CLOSED WITH NOTHING ON STDOUT: an unreadable member record is unusable input (2), as
+    `run` reports it. So the launcher mints nothing for a list it couldn't derive.
+    """
+    try:
+        members = read_members_from_environment()
+    except MembersUnreadable as error:
+        print(f"[UNUSABLE] the member record could not be read: {error}", file=sys.stderr)
+        return EXIT_UNUSABLE
+    names = {PACKAGES_REPOSITORY.casefold(): PACKAGES_REPOSITORY}
+    for repository in granted_repositories(members, "dependency_updates"):
+        names.setdefault(repository.casefold(), repository)
+    print("\n".join(names[key] for key in sorted(names)), file=sys.stdout)
+    return EXIT_OK
+
+
 def main() -> None:
-    sys.exit(run())
+    argv = sys.argv[1:]
+    if argv[:1] == ["repositories"]:
+        if len(argv) > 1:
+            print("usage: bump-proposer repositories", file=sys.stderr)
+            sys.exit(EXIT_UNUSABLE)
+        sys.exit(repositories())
+    sys.exit(run(argv))
 
 
 if __name__ == "__main__":

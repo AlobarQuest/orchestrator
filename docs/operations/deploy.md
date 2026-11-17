@@ -673,6 +673,83 @@ its own change or act:
    - The schedule, and the Mac job's retirement. After the retirement, `sds-operator`'s read of the
      read password goes, and the lane account is its one holder.
 
+`bump-proposer`'s tracked files (`lanes/bump-proposer/compose.yaml` and `crontab`) don't register
+it either. Its state is the proposer's `alerts.json`, so its compose mounts the named volume
+`sds-lanes-bump-proposer-state` at `BUMP_PROPOSER_STATE_DIR` (`/var/lib/sds/bump-proposer`). Like
+the work carrier's, its compose joins the external `coolify` network and sets the chain's three
+non-secret settings, because a `--submit` pass's `approve --by-policy` appends to the
+factory-events database resource (ADR-0059 amendment 7). The launcher fails any pass, a dry run
+included, with one of them empty; it has no file mode. Its crontab runs
+`lane-run bump-proposer --submit` daily at 06:55 New York time. The Mac job runs at 06:50, but
+minute 50 is the rotation decomposer's, so the lane takes 55, which no other lane starts on and
+which still runs before the carry's 07:05. The flag is in the crontab line, so a scheduled pass
+writes, and the bare `lane-run bump-proposer` is the dry run, which writes and pings nothing.
+
+Its `.bws-secrets.toml` secrets are the following seven, all read with the lane's one token. Its
+ping-URL secret joins them when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
+empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+
+- On every pass: the change-manager READ bearer, the orchestrator OBSERVER bearer, the
+  `sds-bridge` alert sender, and the read-only App's key.
+- On `--submit` only: the change-manager PROPOSE bearer, the factory-events append password, and
+  the "SDS lanes" App's key (`lanes-push-app-private-key`).
+
+Each pass mints `BUMP_PROPOSER_GITHUB_TOKEN` from the read-only App (`metadata`, `contents`,
+`pull_requests` and `actions`, read) for the repositories `bump-proposer repositories` prints:
+intent-packages and each repository the member record grants `dependency_updates`, a superset of
+the repositories the pass reads. The read-only App must be installed on each of them, or the mint
+refuses and the pass fails. The pass clones intent-packages with that token, shallow at `main`,
+through `scripts/sds-git.sh` into `/var/tmp/sds-bump-proposer/intent-packages`, and discards the
+clone when it's done. On `--submit` it also mints the "SDS lanes" App's token for intent-packages
+alone (`contents: write`) and hands it to git with the App's `[bot]` identity in place of the read
+token, so `standing.publish`'s `git push origin main` pushes as the App and its commits are the
+App's. No program variable holds the push token; only git's extraheader does. intent-packages'
+lifecycle runs under the image's interpreter, with the clone's `src` on `PYTHONPATH`
+(`BUMP_PROPOSER_PACKAGES_PYTHON`), not a venv in the clone: the emitter runs the chain's writer
+under that interpreter, and only the image's venv carries `jsonschema` and `psycopg`. The check is
+an outcome alarm that pings only on `--submit`.
+
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-bump-proposer` from the compose
+   without deploying it.
+2. The VM root's keeper commands for the lane token and `bump-proposer-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, a `runtime-fetch` reader for `scripts/run-bump-proposer.sh` on both App
+   key rows (the push key's row names no reader yet), and the append password's row naming the
+   lane account's container read beside its Mac Keychain item.
+4. The lane account's grants on its seven secrets and its ping-URL secret. The account already
+   reads the append password (ADR-0059 amendment 7). Two are read by the broad identity on the Mac,
+   the change-manager READ bearer (`314f276d-…`) and PROPOSE bearer (`acccb346-…`), and each
+   becomes a direct grant to the lane account (Devon's act at the lane's identity gate). The push
+   App's key is the first grant on `b8f547b9-…` to any account.
+5. Devon's change to intent-packages' `main` protection that admits the "SDS lanes" App's direct
+   push, for example as a bypass actor of a ruleset that replaces the classic rule (ADR-0059,
+   "intent-packages `main` requires three status checks"). Until then every acting pass's publish
+   is refused, a finding (exit 3) that strands a commit only the discarded clone held. The pass
+   approves before it publishes, so each refusal also leaves a `package.approved` event in the
+   chain for a revision that exists nowhere. And because the clone is discarded,
+   `require_publishable` never sees the stranded commit: the next pass approves again. So this
+   change must come before the first acting pass.
+6. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+7. A served release whose compose names the ping-URL secret's id, with `bump-proposer` removed from
+   `test_deploy_lanes.py`'s `placeholders`.
+8. The lane's `--add`, then the `lane-run --read` proof over all eight secrets and a bare
+   `lane-run bump-proposer` in the container. That bare run is the first read mint over the
+   granted repositories and the first clone, and it proves the read App's installation covers
+   every one. It doesn't reach the chain or the push App: the proof is the only read of the three
+   `--submit` secrets before the first acting pass.
+9. Cut-over steps 2 onward:
+   - The copy of the Mac's `sds/bump-proposer/alerts.json` into the volume, before the first
+     `--submit` pass in the container, or the alerts the Mac left firing never resolve.
+   - The paired dry runs on both hosts in the same minute, which write and ping nothing.
+     Fast-forward the Mac's `~/Projects/intent-packages` to `origin/main` first, because the
+     container clones `main` and a dry run on the Mac leaves its checkout where it is.
+   - The schedule, and the Mac job's retirement. After the retirement, the Mac's
+     `BWS_ACCESS_TOKEN_BUMP_PROPOSER` Keychain item has no reader.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
