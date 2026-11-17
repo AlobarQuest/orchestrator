@@ -540,6 +540,7 @@ paths = [
   "tests/scripts/test_bridge_chain_switch.py",
   "tests/scripts/test_packages_checkout_activation.py",
   "tests/scripts/test_run_work_carrier.py",
+  "tests/scripts/test_run_bump_proposer.py",
   "tests/architecture/test_bridge_edges.py",
   "docs/operations/dependency-remediation.md",
   "docs/operations/infra-lane-linkage.md",

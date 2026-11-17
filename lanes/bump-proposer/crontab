@@ -1,0 +1,11 @@
+# sds-lane-bump-proposer's schedule: one writing pass a day at 06:55, in the image's
+# America/New_York time. The Mac job runs at 06:50 (`scripts/com.devon.bump-proposer.plist`,
+# `StartCalendarInterval` 06:50, `--submit`), but minute 50 is the rotation decomposer's (`50 * * *
+# *`), so the lane takes 55, the nearest minute no other lane uses: execution-watch runs on the
+# quarter-hours, the unit verifier on 2-52/10, the work carrier on 07:05, the deploy watcher on 20,
+# the pin watcher on 07:25, the landing ledger on 07:30, the change proposer on 35, the revision
+# watcher on 40, the membership check on 07:47 and the rotation decomposer on 50. 06:55 still runs
+# before the carry's 07:05, the order the launcher's header gives. `--submit` is passed here, where
+# it is visible, as the plist passes it: a bare run is the dry run, which writes and pings nothing.
+# The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+55 6 * * * lane-run bump-proposer --submit

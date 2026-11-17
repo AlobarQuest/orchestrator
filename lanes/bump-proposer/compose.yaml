@@ -1,0 +1,44 @@
+# sds-lane-bump-proposer (ADR-0059 increment 4, step 3f-4): the bump-proposer lane. HQ creates the
+# resource from this file. It serves nothing: no port, no domain, so no Traefik labels.
+# It joins the external `coolify` network, as the work carrier's does, because a `--submit` pass's
+# `approve --by-policy` appends to a separate Coolify database resource, the factory-events chain
+# (ADR-0059 amendment 7; workspace invariant: a compose service that connects to a separate Coolify
+# database resource joins `coolify`). That resource's container is `b82fa1vg5whecgnjreuqb5tk`,
+# answering on `5432` inside the network. The three chain settings are plain values (ADR-0055
+# amendment 26 item 3); `lane-run` passes them on, and the launcher refuses a pass with any of them
+# empty.
+# Its state is the proposer's `alerts.json`, on a named volume at `BUMP_PROPOSER_STATE_DIR`; the
+# Mac's `sds/bump-proposer` file is copied in at cut-over, before the first acting pass, or the
+# alerts the Mac left firing never resolve. Its intent-packages clone isn't state: the launcher
+# clones it each pass under `/var/tmp` and discards it (ADR-0059 decision 1).
+# The lane's token is the resource's own `BUMP_PROPOSER_BWS_ACCESS_TOKEN` variable, which the VM
+# rotation executor writes; this file names it and never holds a value. With it the launcher reads
+# every secret the pass needs (`scripts/run-bump-proposer.sh`, "TWO HOSTS, ONE LAUNCHER").
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
+# and not the ping URL, which a later change writes here. While it's empty the dead-man helper
+# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
+services:
+  bump-proposer:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["bump-proposer"]
+    environment:
+      BWS_ACCESS_TOKEN: ${BUMP_PROPOSER_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      BUMP_PROPOSER_STATE_DIR: /var/lib/sds/bump-proposer
+      SDS_DEADMAN_PING_URL_UUID: ""
+      FACTORY_EVENTS_DB_HOST: b82fa1vg5whecgnjreuqb5tk
+      FACTORY_EVENTS_DB_PORT: "5432"
+      FACTORY_EVENTS_DB_NAME: postgres
+    volumes:
+      - sds-lanes-bump-proposer-state:/var/lib/sds/bump-proposer
+    networks:
+      - coolify
+    restart: unless-stopped
+
+volumes:
+  sds-lanes-bump-proposer-state:
+
+networks:
+  coolify:
+    external: true

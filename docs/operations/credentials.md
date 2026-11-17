@@ -395,7 +395,7 @@ The holders in this repository:
 
 | Holder | Secret | Account and Keychain item | When it fetches |
 | --- | --- | --- | --- |
-| `scripts/run-bump-proposer.sh` | `factory-events-append-password` (`2ce0dbc7-…`) | `bump-proposer`, `Claude` / `BWS_ACCESS_TOKEN_BUMP_PROPOSER` | A `--submit` run, with the switch present. A dry run fetches nothing. |
+| `scripts/run-bump-proposer.sh` | `factory-events-append-password` (`2ce0dbc7-…`) | `bump-proposer`. On the Mac, `Claude` / `BWS_ACCESS_TOKEN_BUMP_PROPOSER`, until ADR-0059 step 3f-4's cut-over retires the Mac job. After it, the same `bump-proposer` lane account alone, with the lane's own token in its container (no Keychain item). | A `--submit` run: on the Mac with the switch present; in the container with the chain settings from the lane's compose and no switch file. A dry run fetches nothing. The password reaches `bump-proposer` alone. |
 | `scripts/run-work-carrier.sh` | `factory-events-read-password` (`2f708d08-…`) | On the Mac, `sds-operator`, `Claude` / `BWS_ACCESS_TOKEN_SDS`, until ADR-0059 step 3f-2's cut-over retires the Mac job. After it, the `work-carrier` lane account alone, with the lane's own token in its container (no Keychain item). | On the Mac, every pass with the switch present and an `sds-operator` identity. In the container, every pass, with the chain settings from the lane's compose and no switch file. The password reaches `work-carrier` and the container's chain verify only, never `work-watcher`. |
 | `scripts/factory-events-session.sh` (FE-5 P-OR-2) | `factory-events-append-password` | `factory-events-session`, `Claude` / `BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION` | Each run, for an interactive session's `approve` or the one history import. |
 
