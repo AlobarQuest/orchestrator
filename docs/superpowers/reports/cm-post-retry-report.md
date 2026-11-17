@@ -74,7 +74,9 @@ and each append an event. The status ends at `resolved` either way.
 
 ## What I found about the dropping hop
 
-I based this on the code and docs only. I touched no infrastructure and read no live logs.
+I based this on the code and docs, plus one statement of general proxy behavior that I label
+where it's used and didn't verify in this estate. I touched no infrastructure and read no live
+logs.
 
 1. **The error type says the client's own connection was reset, not closed or answered.** In
    httpcore's sync backend (`httpcore/_backends/sync.py`, lines 80 and 125) every `OSError` during
@@ -84,14 +86,14 @@ I based this on the code and docs only. I touched no infrastructure and read no 
    TLS peer reset the connection, or sent a TLS-level error, after the request was written.
 2. **The client's TCP peer is the first proxy, not uvicorn.** The client calls
    `https://change-mgr.alobar.net`, which is Cloudflare-proxied (root CLAUDE.md invariant on
-   `change-mgr.alobar.net`). A failure on a later hop reaches the client as an HTTP answer. For
-   example, Traefik reusing a connection that uvicorn had just closed returns a 502, and a
-   Cloudflare-to-origin failure returns a 52x page. Neither reaches the client as a transport
-   error. uvicorn runs with no keep-alive flag (`entrypoint.sh`:
+   `change-mgr.alobar.net`). A failure on a later hop reaches the client as an HTTP answer.
+   *General proxy behavior, not verified here:* Traefik that reuses a connection uvicorn has just
+   closed answers 502, and Cloudflare answers a 52x page when its origin fails. On that
+   assumption, neither reaches the client as a transport error. uvicorn runs with no keep-alive flag (`entrypoint.sh`:
    `uvicorn app.main:app --host 0.0.0.0 --port 8000`), so its default `timeout_keep_alive = 5`
    applies (read from uvicorn 0.51.0 `config.py`, line 228, in change-manager's local venv; I
-   didn't read the image's version). That timeout governs the Traefik-to-uvicorn connection, and a
-   drop there would show up as a 502 status, not a `ReadError`. **So the hop that can produce what
+   didn't read the image's version). That timeout governs the Traefik-to-uvicorn connection, and on
+   the preceding assumption a drop there shows up as a 502 status, not a `ReadError`. **So the hop that can produce what
    was seen is the one whose connection the client holds: Cloudflare's edge, or something on the
    network path between the VPS and that edge (for example the container's NAT state).** Code and
    docs can't tell those two apart.
@@ -106,7 +108,10 @@ I based this on the code and docs only. I touched no infrastructure and read no 
    including for POSTs that succeeded. That gap stops the log from showing whether a failed POST
    reached the app, so I relied on the replay-safety reading and not on a claim that it didn't.
 
-The retry is correct whichever hop it is: a fresh attempt gets a fresh connection from the pool.
+The retry works whichever hop it is. When a request fails mid-response, httpcore's
+`HTTP11Connection` calls `_response_closed()` in its exception path (`_sync/http11.py` line 132),
+and that method closes any connection whose exchange didn't reach `DONE` on both sides (line 250).
+The dead connection therefore leaves the pool, and the next attempt opens a new one.
 
 ## Tests and checks
 
@@ -144,7 +149,11 @@ source. Every mutation was killed:
 Checks:
 
 - `make check` against `orchestrator_test_hq_w_191`, with `SECURITY_STANDARDS_DIR` set: exit 0.
-  ruff and pyright are clean, with **15,274 passed and 1 skipped** (316 s).
+  ruff and pyright are clean. pytest collected **15,275 items**: 15,274 passed and 1 skipped
+  (316 s).
+- `/code-review` (medium) on `origin/main..hq/cm-post-retry`: five points, none needing a code
+  change. See "Self-review" for each one and what I did with it.
+- CI on #730: see "CI" at the end of this report.
 - Security scan from the repo root (`security_scan.cli . --category security`): no BLOCK. It
   reported two WARNs that predate this change and are outside the diff (gitignore glob
   `*-migration/` not covered; an undeclared UUID `aaff45ca-…` in code) and one INFO judgment item.
@@ -166,9 +175,25 @@ Checks:
   attempt, and a refusal isn't a `TransportFailure`, so it raises from the first attempt.
 - No log line was added. A retry is silent, and the last failure still raises the existing message
   (method, path, error type).
-- I checked that no existing deploy-watcher test raises a transport error through
-  `ChangeManagerClient`, so none waits on the real `time.sleep`. The full suite time didn't change
-  noticeably.
+- No existing deploy-watcher test raises a transport error through `ChangeManagerClient`. The
+  new tests inject `sleep`. With `--durations=5`, `tests/deploy_watcher` and `tests/estate_clients`
+  (266 tests) ran in 1.62 s, and the slowest single test took 0.29 s, so no test waits on the real
+  `time.sleep`.
+- `/code-review` (medium) raised five points:
+  - The retry also covers `InvalidURL` and `ValueError`, which don't heal on retry. Kept:
+    `base_url_problem` refuses a malformed host at construction and every path is a fixed
+    pattern, so the only cost is 2 s on a request that fails anyway. The handoff names
+    `TransportFailure` as the retried exception.
+  - Replaying a write rests on change-manager's behavior, not on a test here. Answered by the
+    "Replay safety of each write" section, which I read from change-manager's source. No replay
+    path reaches a 409, because the subject and pull-request checks see the same body both times.
+    No cross-repo contract test pins it, so I listed it under "Concerns".
+  - Blocking sleep with no total deadline. This is the duration point under "Concerns".
+  - A fixed 1 s wait with no jitter doesn't span a redeploy. Kept: the observed fault is a reset
+    pooled connection, which a fresh connection fixes at once. The handoff asked for a short
+    module-constant wait.
+  - The change-manager GETs don't also get the gateway-status retry. I listed it under
+    "Concerns" as a possible follow-up. It's outside this handoff.
 
 ## Concerns
 
@@ -185,6 +210,13 @@ Checks:
   reset. I didn't treat this as the handoff's stop point, which covers changing a record twice,
   and the observation write was already directed to retry.
 - **The missing POST lines** in change-manager's access log are unexplained (see the hop section).
+- **A recovered fault leaves no trace.** The retry is silent, as the handoff's no-logging scope
+  implies, so once this deploys nobody can tell from the pass output whether the hop still drops
+  connections. HQ decides whether a retried attempt warrants a line in the pass output.
+- **No contract test pins replay safety.** It's read from change-manager `67111f7`. If
+  change-manager changes either write's repeat handling, nothing here fails.
+- **No gateway retry on change-manager GETs.** They retry on no answer only. A 502, 503 or 504
+  still raises at once, as it did before this change.
 - **Follow-ups**, listed in the PR body: the other lanes' change-manager clients
   (`src/bump_proposer/change_manager.py`, `src/change_proposer/change_manager.py`,
   `src/estate_lander/change_manager.py`, `src/work_watcher/change_manager.py`,
@@ -214,3 +246,13 @@ Checks:
   requires https.
 - **Infra Brain 2890 (never commit a ping URL).** The diff contains no ping URL, and no ping
   handling changed.
+
+## CI
+
+CI on #730 at `ea8e6688` (run 44013698220) passed all three jobs:
+
+- `Quality` collected 15,275 items: 15,252 passed and 23 skipped (918 s).
+- `Runner consumer compatibility` passed.
+- `Rollout transcription currency` passed.
+
+The commit that adds this section changes only this report.
