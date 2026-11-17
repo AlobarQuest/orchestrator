@@ -4,9 +4,10 @@ Outcome: done
 
 - **PR:** AlobarQuest/orchestrator#735, ready for review, not merged.
 - **Base:** `a410af18f17ca50939e1b2589dd682542653e028`.
-- **Content commit:** `9383879ea15590038b790e0ca59eae8d1813000e`.
+- **Content commits:** `9383879ea15590038b790e0ca59eae8d1813000e` (the amendment) and
+  `898f52a3f82486f9c27661aa992f89354a27e93a` (corrections inside it, after self-review).
 - **Head:** the commit that adds this report, on `hq/adr-0059-a12-rotation-state`.
-- **Amendment's line range:** lines 3427-3630 of
+- **Amendment's line range:** lines 3427-3637 of
   `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md`.
 
 ## What I built
@@ -57,7 +58,7 @@ Verify items, each naming its step:
 
 | Passage (lines at `a410af18`) | Disposition |
 |---|---|
-| Decision 5, state file (800-803) | Answered |
+| Decision 5, the `cred-findings` inputs and state file (796-803) | Answered for the state file; the list stands |
 | Decision 1 "Lane state", `rotation-proposer` row (345) | Stands |
 | `infra-drift` row, credential scan reads rotation state (823) | Superseded for the state once the infraops change merges |
 | Increment 9, "reads the same list and rotation state" (1084-1085) | Stands as a description of today |
@@ -69,10 +70,11 @@ Verify items, each naming its step:
 
 ## Tests and checks
 
-- `make check` with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` pointed at
+- `make check` on `898f52a3` with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` pointed at
   `orchestrator_test_hq_w_205` (migrated with `alembic upgrade head`),
   `SECURITY_STANDARDS_DIR=tests/fixtures/security-standards` and `PGTZ=UTC`: exit 0. Lint
-  "All checks passed!", pyright 0 errors, **15334 passed, 1 skipped**, 11 warnings, in 335.52s.
+  "All checks passed!", pyright 0 errors, **15335 items collected, 15334 passed, 1 skipped**, 11 warnings, in 306.62s. An earlier run on
+  `9383879e` gave the same counts.
 - Security scan from the repo root (`security_scan.cli . --category security`): 0 BLOCK, 2 WARN,
   1 INFO. Neither WARN comes from this diff:
   - `bws.secret-files-gitignored`: the glob `*-migration/` isn't covered.
@@ -80,8 +82,8 @@ Verify items, each naming its step:
 
 ## Files changed
 
-- `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md`: append only (205
-  insertions, 0 deletions).
+- `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md`: append only (212
+  insertions, 0 deletions against the base).
 - `docs/superpowers/reports/adr-0059-a12-rotation-state-report.md`: this report.
 
 The question file stays uncommitted.
@@ -93,6 +95,16 @@ The question file stays uncommitted.
 - I corrected two citations:
   - HQ's `.bws-secrets.toml` 266-284 became 269-288 (the `sds-bridge` comment and block).
   - My first draft's line 238 became 236.
+- An advisor pass caught issues that `898f52a3` fixes:
+  - Context had said the work watcher runs `record-rotation`; the proposer's pass runs it after the
+    work watcher retires the record.
+  - Decision item 2 had named who runs a person's write beyond D-61's "a person ... from an
+    interactive session"; it now uses D-61's words.
+  - The notice claim now cites alert-hub `src/ingest/validate.ts` line 98 at `2218702`.
+  - The lane read of the bridge token now cites decision 2 (lines 486-490).
+  - "Don't page Devon per credential" is now a requirement with a verify item, not a claim.
+  - The decision 5 row now covers 796-803.
+  - The window item now says a write made on the Mac never reaches the volume.
 - D-61's "3029-3043" is quoted verbatim, and the line-number note says the item ends at 3044.
 - I reviewed the diff myself rather than running `/code-review`, because the change is a docs-only
   append that HQ sends to an Opus whole-branch review before merging.
@@ -104,12 +116,10 @@ The question file stays uncommitted.
   amendment says the lane identity joins that list at the proposer's cut-over, as the bump
   proposer's did, and treats that as the lane's move under decision 2, not a grant this amendment
   makes. If HQ reads it as a grant, the authority item needs revisiting.
-- **The claim that `warning` doesn't page Devon per credential.** It rests on alert-hub's routing
-  rules, which I read live on 2026-11-17: `critical` goes to two channels, while `warning` reaches
-  only the catch-all channel. Each credential still gets a `warning` message in that channel, as
-  the existing `rotation-finding` alerts do. The amendment doesn't cite the live rules.
-- **One amendment claim comes from HQ's answer, not a source I read.** That claim is "alert-hub
-  refuses status `resolved` on a notice".
+- **`warning` and paging.** The amendment states "must not page Devon per credential" as a
+  requirement and carries its proof as a verify item. alert-hub's routing rules, read live on
+  2026-11-17, send `critical` to two channels and `warning` only to the catch-all channel. Each
+  credential still gets a `warning` message there, as the existing `rotation-finding` alerts do.
 - **"The ADR's outcome 1".** ADR-0059 has no numbered outcomes. I read it as ADR-0021 amendment 1,
   "every signal has a machine home".
 
