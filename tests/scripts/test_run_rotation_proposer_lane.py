@@ -1,6 +1,6 @@
 """`scripts/run-rotation-proposer.sh` in the lane's container and on the Mac, and the lane's files.
 
-The real launcher runs from a throwaway tree with no `.git` (as `/app` has none) under `env -i`, with
+The real launcher runs under `env -i` from a throwaway tree with no `.git` (`/app` has none), with
 what `lane-run` passes it in the container: the lane's token as `BWS_ACCESS_TOKEN`, the state
 directory, infraops' two directory settings, `PATH` and `HOME`. `bws`, `git` and `curl` are stubs on
 PATH. In the venv, `rotation-proposer` and `sds-github-mint` are stubs that log what reached them,
@@ -79,8 +79,10 @@ mkdir -p "$target/src"
 _PROPOSER = """#!/bin/bash
 {
   echo "proposer args=$*"
-  echo "proposer packages=$([ -d "${BUMP_PROPOSER_PACKAGES_CHECKOUT:-/none}/src" ] && echo present)"
-  echo "proposer infraops=$([ -d "${ROTATION_PROPOSER_INFRAOPS_CHECKOUT:-/none}/src" ] && echo present)"
+  packages="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-/none}"
+  infraops="${ROTATION_PROPOSER_INFRAOPS_CHECKOUT:-/none}"
+  echo "proposer packages=$([ -d "$packages/src" ] && echo present)"
+  echo "proposer infraops=$([ -d "$infraops/src" ] && echo present)"
   env | sort | sed 's/^/proposer-env /'
 } >> "$LANE_LOG"
 exit "${FAKE_PROPOSER_RC:-0}"
