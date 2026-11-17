@@ -595,7 +595,8 @@ New York time, as the Mac job does; minute 5 is one no other lane starts on. The
 crontab line, so a scheduled pass registers, and the bare `lane-run work-carrier` is the reporting
 pass.
 
-Its `.bws-secrets.toml` secrets are eight, all read with the lane's one token:
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following eight, all read with the
+lane's one token:
 
 - On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer (the watcher's read;
   the carry holds it only on `--register`), the orchestrator OBSERVER bearer, the factory-events
@@ -625,8 +626,8 @@ why there is no usable event. A repository-targeted record whose repository has 
 holds as `UNDECIDED` and the pass exits 2. An empty queue with a stale feed exits as it would
 without it. The Mac pass gets no `--portfolio-scan` and still reads `~/.portfolio/portfolio.json`
 (`WORK_CARRIER_PORTFOLIO`); that read leaves with the Mac job. The check is an outcome alarm that pings only on `--register`. Its
-compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so an
-acting pass pings nothing until then, and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `work-carrier-ping-url`, which the
+container's dead-man helper reads the URL from with the lane's own token (`scripts/sds-deadman.sh`).
 
 Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
 its own change or act:
@@ -646,7 +647,7 @@ its own change or act:
    write (ADR-0055 amendment 23).
 6. A served release whose compose names the ping-URL secret's id, with `work-carrier` removed from
    `test_deploy_lanes.py`'s `placeholders`.
-7. The lane's `--add`, then the `lane-run --read` proof over all eight secrets and a bare
+7. The lane's `--add`, then the `lane-run --read` proof over all nine secrets and a bare
    `lane-run work-carrier` in the container. That bare run is the first in-network read of
    `b82fa1vg5whecgnjreuqb5tk:5432` and the first VPS chain verify, and it proves the read App's
    installation covers every repository a live record names. The proof is the only read of the

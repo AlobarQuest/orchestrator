@@ -1192,10 +1192,9 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     its compose names but the manifest doesn't list would go unproved until its first ping. An
     empty value is a placeholder until the lane's ping-URL secret exists, allowed only for a lane
     named in `placeholders`; a lane added before its ping-URL secret exists is named there until a
-    later change writes the id. The work carrier's keeper was created at HQ gate G-67; a later
-    change writes its id."""
+    later change writes the id. No lane is waiting for its keeper."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
-    placeholders = {"work-carrier"}
+    placeholders: set[str] = set()
     named = {}
     blank = set()
     for path in sorted((ROOT / "lanes").glob("*/compose.yaml")):
@@ -1216,6 +1215,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         "revision-watcher",
         "rotation-decomposer",
         "unit-verifier",
+        "work-carrier",
     } <= set(named), named
     for lane, uuid in named.items():
         assert uuid in deploy.lane_secrets(manifest, lane), lane

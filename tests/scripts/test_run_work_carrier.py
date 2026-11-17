@@ -619,8 +619,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BWS_ACCESS_TOKEN": "${WORK_CARRIER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "WORK_WATCHER_STATE_DIR": "/var/lib/sds/work-carrier",
-            # Empty until the lane's ping-URL secret exists.
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `work-carrier-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "55fbae20-e503-4eb5-b75c-b5040164d394",
             **CHAIN,
         },
         "volumes": ["sds-lanes-work-carrier-state:/var/lib/sds/work-carrier"],
@@ -664,15 +664,17 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
             assert 5 not in taken, lane
 
 
-def test_the_repositorys_manifest_lists_the_lanes_eight_secrets() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it, and the launcher names
-    each one it reads. The ping-URL secret joins when it exists."""
+def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
+    """The lane's `--token` proof reads what the manifest lists for it: its eight secrets and its
+    ping-URL secret. The launcher names each secret it reads, except the ping-URL secret, whose id
+    reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "55fbae20-e503-4eb5-b75c-b5040164d394"
     secrets = deploy.lane_secrets(manifest, "work-carrier")
-    assert sorted(secrets) == sorted(LANE_SECRETS)
+    assert sorted(secrets) == sorted([*LANE_SECRETS, ping_url_secret])
     launcher = LAUNCHER.read_text()
     for uuid in secrets:
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid
 
 
 def test_the_image_links_the_packages_clone_where_package_sources_looks() -> None:

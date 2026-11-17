@@ -15,12 +15,12 @@
 # The lane's token is the resource's own `WORK_CARRIER_BWS_ACCESS_TOKEN` variable, which the VM
 # rotation executor writes; this file names it and never holds a value. With it the launcher reads
 # every secret the pass needs (`scripts/run-work-carrier.sh`, CREDENTIALS).
-# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
-# secret, `work-carrier-ping-url` in `Rotation / Keepers`, created at HQ gate G-67. While it is
-# empty the dead-man helper falls back to the Mac's lookup by check name, which needs the broad
-# Keychain identity the container doesn't have, so a `--register` pass pings nothing and logs
-# `alerting disabled this run` (`scripts/sds-deadman.sh`); a bare pass pings nothing anyway. The
-# pass itself still runs.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `work-carrier-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
+# the lane's own token on a `--register` pass (`scripts/sds-deadman.sh`); a bare pass pings
+# nothing. The VM rotation executor writes the URL there from its inbox; while the secret holds the
+# inbox's empty marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:
   work-carrier:
@@ -30,7 +30,7 @@ services:
       BWS_ACCESS_TOKEN: ${WORK_CARRIER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       WORK_WATCHER_STATE_DIR: /var/lib/sds/work-carrier
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 55fbae20-e503-4eb5-b75c-b5040164d394
       FACTORY_EVENTS_DB_HOST: b82fa1vg5whecgnjreuqb5tk
       FACTORY_EVENTS_DB_PORT: "5432"
       FACTORY_EVENTS_DB_NAME: postgres
