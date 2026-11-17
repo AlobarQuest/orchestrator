@@ -67,7 +67,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final, NamedTuple, TextIO
+from typing import Any, Final, NamedTuple
 
 from bump_proposer import alerts
 from bump_proposer.change_manager import (
@@ -1120,7 +1120,7 @@ def _send_alerts(
     return [] if failure is None else [Outcome("alert-hub", 0, "error", failure)]
 
 
-def repositories(*, out: TextIO | None = None) -> int:
+def repositories() -> int:
     """Print the repositories the lane's GitHub read token must name, one per line, nothing else.
 
     In the lane's container the launcher mints the pass's read token for exactly these (ADR-0059
@@ -1143,7 +1143,7 @@ def repositories(*, out: TextIO | None = None) -> int:
     names = {PACKAGES_REPOSITORY.casefold(): PACKAGES_REPOSITORY}
     for repository in granted_repositories(members, "dependency_updates"):
         names.setdefault(repository.casefold(), repository)
-    print("\n".join(names[key] for key in sorted(names)), file=out or sys.stdout)
+    print("\n".join(names[key] for key in sorted(names)), file=sys.stdout)
     return EXIT_OK
 
 

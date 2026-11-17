@@ -89,7 +89,10 @@ _PROPOSER = """#!/bin/bash
 if [ "$1" = repositories ]; then
   echo "derive lane_token=${BWS_ACCESS_TOKEN:+set} members=${SDS_MEMBERS_OBSERVER_TOKEN:-}" \\
     >> "$LANE_LOG"
-  [ -n "${FAKE_DERIVE_RC:-}" ] && exit "$FAKE_DERIVE_RC"
+  if [ -n "${FAKE_DERIVE_RC:-}" ]; then
+    echo "[UNUSABLE] the member record could not be read" >&2
+    exit "$FAKE_DERIVE_RC"
+  fi
   printf '%s' "${FAKE_REPOSITORIES-AlobarQuest/crm
 AlobarQuest/intent-packages}"
   exit 0
@@ -365,6 +368,8 @@ def test_an_underivable_list_mints_nothing_and_passes_its_code_through(
     run = _run(tmp_path, FAKE_DERIVE_RC=rc)
     assert run.code == int(rc)
     assert run.mints() == [] and run.logs["git"] == [] and run.lines("proposer") == []
+    # The subcommand's reason is in the failure's message, which `/fail` carries.
+    assert f"exited {rc} ([UNUSABLE] the member record could not be read)" in run.output
 
 
 def test_an_empty_list_mints_nothing_and_is_unusable_input(tmp_path: Path) -> None:
@@ -410,7 +415,9 @@ def test_a_submitting_pass_hands_git_the_push_token_and_the_apps_identity(
         "alobar-sds-lanes[bot]",
     )
     assert env["GIT_CONFIG_KEY_2"] == "user.email"
-    assert env["GIT_CONFIG_VALUE_2"].endswith("+alobar-sds-lanes[bot]@users.noreply.github.com")
+    # The bot user's id (`GET /users/alobar-sds-lanes%5Bbot%5D`), neither the App's nor the
+    # installation's.
+    assert env["GIT_CONFIG_VALUE_2"] == "354576843+alobar-sds-lanes[bot]@users.noreply.github.com"
     assert env["GIT_CONFIG_COUNT"] == "3"
     # Only git's extraheader carries the push token: no variable a program reads holds it.
     assert [name for name, held in env.items() if PUSH_TOKEN in held] == []

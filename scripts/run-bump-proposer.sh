@@ -154,9 +154,10 @@ PUSH_APP_ID="5684778"
 # The App's `[bot]` identity, which authors and commits each revision this lane publishes
 # (ADR-0059 decision 2: without it, Q1's "its commits are the App's" would be false). GitHub's
 # noreply address for a bot is `<bot user id>+<slug>[bot]@users.noreply.github.com`; the bot user
-# id is the App's bot account's, neither the App id nor the installation id.
+# id is the App's bot account's (`GET /users/alobar-sds-lanes%5Bbot%5D`, read 2026-11-17), neither
+# the App id nor the installation id.
 PUSH_APP_BOT_NAME="alobar-sds-lanes[bot]"
-PUSH_APP_BOT_EMAIL="__BOT_USER_ID__+alobar-sds-lanes[bot]@users.noreply.github.com"
+PUSH_APP_BOT_EMAIL="354576843+alobar-sds-lanes[bot]@users.noreply.github.com"
 # The factory-events append password (`factory-events-append-password`), `--submit` only.
 FACTORY_EVENTS_APPEND_UUID="2ce0dbc7-eeac-4bf0-8204-b50200c97516"
 # The packages repository the container clones each pass, as a bare `https://github.com/` URL.
@@ -288,12 +289,17 @@ if [ "$IN_CONTAINER" -eq 1 ]; then
   # superset of the lane this pass reads (ADR-0059 decision 2: the mint names only the lane's
   # repositories). AN UNDERIVABLE LIST MINTS NOTHING, AND SAYS SO: the subcommand exits 2 for an
   # unreadable member record, as the pass would, and that code is the pass's; any other non-zero
-  # code is passed through verbatim.
-  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/bump-proposer" repositories)"
+  # code is passed through verbatim. Its reason, the subcommand's last stderr line, is in the
+  # failure's message, which `/fail` carries.
+  _DERIVE_ERR="$SDS_OUTCOME_REPORT.derive"
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/bump-proposer" repositories \
+    2> "$_DERIVE_ERR")"
   derive_rc=$?
+  _derive_reason="$(tail -n 1 "$_DERIVE_ERR")"
+  rm -f -- "$_DERIVE_ERR"
   if [ "$derive_rc" -ne 0 ]; then
     sds_outcome_fail \
-      "the bump lane's repositories could not be derived: bump-proposer repositories exited $derive_rc; nothing was minted or proposed" \
+      "the bump lane's repositories could not be derived: bump-proposer repositories exited $derive_rc (${_derive_reason:-no reason given}); nothing was minted or proposed" \
       "$derive_rc"
   fi
   TARGETS=()
