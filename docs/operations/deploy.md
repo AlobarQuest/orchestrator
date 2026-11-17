@@ -727,7 +727,11 @@ its own change or act:
 5. Devon's change to intent-packages' `main` protection that admits the "SDS lanes" App's direct
    push, for example as a bypass actor of a ruleset that replaces the classic rule (ADR-0059,
    "intent-packages `main` requires three status checks"). Until then every acting pass's publish
-   is refused, a finding that strands a commit only the discarded clone held.
+   is refused, a finding (exit 3) that strands a commit only the discarded clone held. The pass
+   approves before it publishes, so each refusal also leaves a `package.approved` event in the
+   chain for a revision that exists nowhere. And because the clone is discarded,
+   `require_publishable` never sees the stranded commit: the next pass approves again. So this
+   change must come before the first acting pass.
 6. The token's mint and the executor's write; then the ping URL's row made due and the executor's
    write (ADR-0055 amendment 23).
 7. A served release whose compose names the ping-URL secret's id, with `bump-proposer` removed from

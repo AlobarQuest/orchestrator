@@ -80,7 +80,10 @@ that no secret's value appears in the output.
   `pull_requests` and `actions`, all read. Those are what the pass's reads use:
   `landing_ledger/github.py`'s `default_branch` (repository), `read_pending_updates` (pull
   requests, their first commit) and `_concluded_checks` (Actions runs and jobs), plus the clone.
-  The token is `BUMP_PROPOSER_GITHUB_TOKEN`, which `GitHubReader` reads.
+  `GET /repos/{r}` needs only `metadata`, so `contents` serves the clone alone and is needed only
+  on intent-packages. One mint carries one permission set, so the token holds `contents: read` on
+  every granted repository. A second, narrower mint for the clone would remove that; I didn't add
+  one. The token is `BUMP_PROPOSER_GITHUB_TOKEN`, which `GitHubReader` reads.
 - **The push token**, `--submit` only. The mint asks the "SDS lanes" App (`5684778`) for
   `AlobarQuest/intent-packages` alone, `metadata=read` and `contents=write`, with `--allow-write`.
   It's held in the launcher's own unexported `_PUSH_TOKEN` until `sds_git_credential` takes it,
@@ -90,8 +93,9 @@ that no secret's value appears in the output.
   `standing._run` passes no `env`, so the publish inherits the helper's variables).
 - **The clone.** `sds_git_credential BUMP_PROPOSER_GITHUB_TOKEN`, then `git clone --quiet --depth 1
   --single-branch --branch main https://github.com/AlobarQuest/intent-packages.git` into
-  `/var/tmp/sds-bump-proposer/intent-packages`. `/var/tmp` is world-writable with the sticky bit,
-  so the lane user creates the directory (mode 0700) with no `lanes/Dockerfile` change. The
+  `/var/tmp/sds-bump-proposer/intent-packages`. The lane user creates the directory (mode 0700)
+  with no `lanes/Dockerfile` change, which assumes the image's `/var/tmp` is world-writable, as
+  Debian's is. I didn't check the image itself; cut-over step 8's bare run proves it. The
   previous pass's clone is removed first, and this pass's clone is removed at the end.
   `BUMP_PROPOSER_PACKAGES_CHECKOUT` points at it. On `--submit` the launcher then calls
   `sds_git_credential _PUSH_TOKEN 'alobar-sds-lanes[bot]'
@@ -133,6 +137,12 @@ can't approve. HQ accepted this choice on 2026-11-17. The evidence:
   <worktree>/.venv/bin/python -m intent_packages hash packages/change-manager-fastapi-bump`, run
   under `env -i`, printed `57dfef2b…a5c2`, the hash fixture's value for that package. I ran `hash`
   only, never `approve`.
+- **Checked, the emit side:** with `PYTHONPATH` at the `src` of security-standards at this
+  repository's pin (`08754a0f`, from `git archive`), the worktree's `.venv/bin/python` imports
+  `factory_events.db`, `factory_events.envelope`, `psycopg` (3.3.9) and `jsonschema` under
+  `env -i`, and `python -m factory_events emit --help` exits 0. I ran `--help` only: a real emit
+  with no chain variables would write a file chain. The first real append is the first acting
+  container pass.
 - No `uv` runs, so no `UV_CACHE_DIR` or `UV_PYTHON_INSTALL_DIR` is needed and nothing resolves
   unlocked packages each pass. (intent-packages' `.gitignore` lists `uv.lock`, so a clone's
   `uv sync` would have resolved fresh every pass.) A test holds that no `uv` runs and that the Mac
@@ -221,9 +231,23 @@ Not changed and not raised. intent-packages' `main` is under classic protection 
 required checks and `enforce_admins` off, which lets Devon's admin push land today. The "SDS lanes"
 App isn't an admin, so its direct push is refused until Devon admits it, for example as a bypass
 actor of a ruleset that replaces the classic rule. That's cut-over step 5 in `deploy.md`, before
-the first acting pass. A refused publish is a finding (exit 3) that names the stranded sha. In the
-container that commit lived only in the discarded clone, so nothing is left to reconcile. On the
-Mac, a stranded commit makes `require_publishable` refuse later passes.
+the first acting pass. A refused publish is a finding (exit 3) that names the stranded sha, and in
+the container it costs more than on the Mac, because of the order of the steps:
+
+- `advance` runs `approve --by-policy`, which appends a `package.approved` event, before
+  `commit` pushes (`cli.py` ~638-642; `standing.py` `advance`, `commit`, `publish`). A refused
+  push leaves that event in the append-only chain for a revision that exists in no repository.
+  `factory_events emit` appends without deduplication.
+- On the Mac the stranded commit stays in the checkout, so `require_publishable` refuses every
+  later pass until a person reconciles it. That stops a second approval. In the container the
+  clone is discarded, so the next pass clones `main`, revises again and approves again. Each daily
+  pass adds another orphan approval until the push is admitted.
+- So the branch-protection change must land before the first acting container pass (`deploy.md`
+  step 5 says so). A race, where `main` moves between the clone and the push, has the same effect
+  once; the window is one pass long.
+
+I left `standing.py` alone, as the ADR says it doesn't change. A brake that survives the discarded
+clone (for example a refusal recorded in the lane's volume) is a design question for HQ.
 
 ### The anonymous infraops clone (ADR lines 1034-1036)
 
@@ -234,6 +258,10 @@ rotation proposer (step 3f-5).
 
 - `make check`: green, **15,334 passed, 1 skipped** (final run on `a0ceb5c6`'s tree). Lint, type-check, shellcheck and
   the whole-repository scans are included.
+- Some of my targeted pytest runs had no `TEST_DATABASE_URL` set, so they would have defaulted
+  to the shared `orchestrator_test`. `pytest --setup-plan` over those paths lists no database
+  fixture (count 0), so none of them touched it. Every `make check` ran against
+  `orchestrator_test_hq_w_202`.
 - The existing Mac-path tests pass with no edits: `tests/scripts/test_bridge_launchers.py`,
   `tests/scripts/test_bridge_chain_switch.py` and `tests/scripts/test_packages_checkout_activation.py`.
 - `tests/scripts/test_run_bump_proposer.py` (52 tests) runs the real launcher under `env -i` with
@@ -281,6 +309,16 @@ rotation proposer (step 3f-5).
   pass fails. The first bare container run at cut-over proves the installation covers them.
 
 ## Concerns and follow-ups
+
+- **A refused publish in the container leaves an orphan approval each pass** and has no brake
+  (the branch protection section). The branch-protection change before the first acting pass
+  is what prevents it; HQ may want a lasting brake.
+- **The work carrier's text is now stale, and the handoff forbids me from editing it.** Its
+  `deploy.md` section says it is "the one lane whose compose joins the external `coolify`
+  network", and `lanes/work-carrier/compose.yaml`'s header says "unlike the other lanes". The bump
+  proposer's compose now joins it too.
+- **`contents: read` reaches every granted repository**, not only intent-packages, because one
+  mint carries one permission set (the GitHub tokens section).
 
 - **ADR-0059 increment 4's verify item** (lines 1030-1033) says each bridge proposer "needs a venv
   in its clone". This lane doesn't build one, for the reasons in the `.venv` section. HQ may want a

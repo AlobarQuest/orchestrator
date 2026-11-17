@@ -312,9 +312,11 @@ if [ "$IN_CONTAINER" -eq 1 ]; then
   # THE READ TOKEN IS MINTED EACH PASS, dry or writing. The App's key goes from the BWS read
   # straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a variable,
   # an argument or a file, and the mint runs without the lane's token. The four permissions are
-  # what the pass's reads use: the clone and each repository's record (`contents`, `metadata`), its
-  # open pull requests and their first commits (`pull_requests`), and their workflow runs and jobs
-  # (`actions`, `landing_ledger/github.py::_concluded_checks`).
+  # what the pass's reads use: each repository's record (`metadata`), its open pull requests and
+  # their first commits (`pull_requests`), their workflow runs and jobs (`actions`,
+  # `landing_ledger/github.py::_concluded_checks`), and the clone (`contents`). Only the clone needs
+  # `contents`, on intent-packages alone; one mint carries one permission set, so the token holds it
+  # on every listed repository.
   BUMP_PROPOSER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
     | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
