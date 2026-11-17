@@ -10,7 +10,7 @@ it. The PR is open and ready, not merged.
 
 1. In `.cred-consumers.toml`, the `work-carrier-ping-url` row (`bws_uuid` `55fbae20-…`) takes
    `rotate_requested = "2026-11-17"` at `:1236`, after `rotated_by_sds = true`. That is the order
-   the `rotation-decomposer-ping-url` row uses (`:1153-1154`). The row has no `created` and no
+   the `rotation-decomposer-ping-url` row uses (`:1182-1183`). The row has no `created` and no
    `last_rotated`.
 2. The work carrier's block comment (`:1194-1198`) states the rule as it stands, in the rotation
    decomposer block's words after #695: both rows are due by `rotate_requested`, and the ping
