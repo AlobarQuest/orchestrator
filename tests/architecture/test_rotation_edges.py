@@ -188,8 +188,7 @@ EDGES: dict[str, RotationEdge] = {
         alert_hub=ALERTS,  # through alerts.py
         # The "SDS lanes" App's key, read in the lane's container alone on `--submit`, for git's
         # push (ADR-0059 increment 4, step 3f-5).
-        bearers=DEADMAN
-        | {PROPOSE_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER, PUSH_APP_KEY},
+        bearers=DEADMAN | {PROPOSE_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER, PUSH_APP_KEY},
         base_urls={
             "change_manager": CHANGE_MANAGER_URL,
             "orchestrator": ORCHESTRATOR_LIVE_URL,
