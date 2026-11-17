@@ -61,7 +61,7 @@ from work_watcher import orchestrator_client as watcher_orchestrator
 
 # The read-only lane App `alobar-sds-lanes-read`'s key, read in a lane's container alone.
 READ_APP_KEY = "314a966c-5654-4e3c-8358-b4fd01268775"
-# The "SDS lanes" App `alobar-sds-lanes`'s key, read in the bump proposer's container alone.
+# The "SDS lanes" App `alobar-sds-lanes`'s key, read in the two proposers' containers alone.
 PUSH_APP_KEY = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
 
 EDGES: dict[str, Edge] = {
