@@ -82,6 +82,9 @@ program reports as a pull request it could not ask about, never as one it asked 
 refused. The two are different lines and different words, so a pass in that state is
 distinguishable from a genuine finding by reading it.
 
+`inert-landing repositories` changes nothing and prints the repositories the lane's GitHub read
+token must name, which the lane's container mints it for (`repositories`, below).
+
 EXIT CODES, the whole interface a scheduled run has:
   0  everything was measured; nothing was held for a reason that needs a person.
   1  the tool itself failed (a missing or unreadable credential, an unhandled error).
@@ -119,7 +122,7 @@ from inert_lander.orchestrator_client import (
     OrchestratorError,
 )
 from lander import core
-from lander.core import EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
+from lander.core import EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
 from lander.held_alerts import sync_held_alerts, sync_revert_alerts
 
 # The credential key id the orchestrator resolves the bearer against. A constant rather than a
@@ -579,8 +582,41 @@ def report(outcomes: list[Outcome], deferred: dict[str, int], policy_version: in
     return core.report(outcomes, [f"landing policy version {policy_version}"], deferral_lines)
 
 
+def repositories() -> int:
+    """Print the repositories the lane's GitHub read token must name, one per line, nothing else.
+
+    In the lane's container the launcher mints the pass's read token for exactly these (ADR-0059
+    decision 2: each pass's mint names only its lane's repositories). They are the landing policy's
+    inert population, the only repositories a pass lists pull requests in (`_subjects`), read with
+    the same READ-scoped change-manager credential the pass reads it with. The population is
+    lower-cased by the parse, and the mint casefolds, so each is printed once.
+
+    FAILS CLOSED WITH NOTHING ON STDOUT: a missing credential or a policy this can't read is
+    unusable input (2), as `run` reports it, so the launcher mints nothing for a list it couldn't
+    derive. The policy parse refuses an empty population, so a list read here is never empty.
+    """
+    cm_token = os.environ.get("INERT_LANDING_CHANGE_MANAGER_TOKEN", "")
+    cm_url = os.environ.get("INERT_LANDING_CHANGE_MANAGER_URL", "")
+    if not cm_token:
+        print("[UNUSABLE] INERT_LANDING_CHANGE_MANAGER_TOKEN is unset", file=sys.stderr)
+        return EXIT_UNUSABLE
+    try:
+        rule = read_landing_policy(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL)
+    except LandingPolicyError as error:
+        print(f"[UNUSABLE] the landing policy could not be read: {error}", file=sys.stderr)
+        return EXIT_UNUSABLE
+    print("\n".join(sorted(rule.inert)), file=sys.stdout)
+    return EXIT_OK
+
+
 def main() -> None:
-    sys.exit(run())
+    argv = sys.argv[1:]
+    if argv[:1] == ["repositories"]:
+        if len(argv) > 1:
+            print("usage: inert-landing repositories", file=sys.stderr)
+            sys.exit(EXIT_UNUSABLE)
+        sys.exit(repositories())
+    sys.exit(run(argv))
 
 
 if __name__ == "__main__":

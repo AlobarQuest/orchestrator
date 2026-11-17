@@ -1,0 +1,31 @@
+# sds-lane-inert-landing (ADR-0059 increment 5, step 3g-1): the inert-landing lane. HQ creates the
+# resource from this file. It serves nothing: no port, no domain, so no Traefik labels.
+# It joins no network beyond the resource's own: it reaches no separate Coolify database resource,
+# and every service it calls (change-manager, the orchestrator, alert-hub, GitHub) is an HTTPS URL.
+# It lands nothing itself: the orchestrator lands through its own dispatch App.
+# Its state is the lander's `held-since.json`, `alerts.json` and `revert-alerts.json`, on a named
+# volume at `LANDER_STATE_DIR`; the Mac's `sds/inert-landing` files are copied in at cut-over,
+# before the first `--submit` pass, or every held pull request's clock restarts and the alerts the
+# Mac left firing never resolve.
+# The lane's token is the resource's own `INERT_LANDING_BWS_ACCESS_TOKEN` variable, which the VM
+# rotation executor writes; this file names it and never holds a value. With it the launcher reads
+# every secret the pass needs (`scripts/run-inert-landing.sh`, "TWO HOSTS, ONE LAUNCHER").
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
+# and not the ping URL, which a later change writes here. While it's empty the dead-man helper
+# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
+services:
+  inert-landing:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["inert-landing"]
+    environment:
+      BWS_ACCESS_TOKEN: ${INERT_LANDING_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      LANDER_STATE_DIR: /var/lib/sds/inert-landing
+      SDS_DEADMAN_PING_URL_UUID: ""
+    volumes:
+      - sds-lanes-inert-landing-state:/var/lib/sds/inert-landing
+    restart: unless-stopped
+
+volumes:
+  sds-lanes-inert-landing-state:

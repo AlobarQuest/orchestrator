@@ -58,6 +58,24 @@
 # NOTHING HERE DECIDES ANYTHING. Every term is evaluated by the orchestrator, inside the
 # transaction that records the act. This script asks it two questions and relays the answers.
 #
+# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-1). A set `BWS_ACCESS_TOKEN` means the
+# lane's container: `lane-run` passes the lane's own token as its one secret, and the Mac's launchd
+# job never sets it. There the launcher skips activation (the container runs the image's own code),
+# reads no Keychain item and calls no `gh`, and reads every secret with that one token, in the
+# environment, never as a process argument:
+#   - every pass: the change-manager READ bearer (`314f276d-…`), the orchestrator SYSTEM bearer
+#     (`221a48d5-…`) and the read-only App's key (`314a966c-…`, piped straight into the mint);
+#   - `--submit` only: the `sds-bridge` alert sender (`b415d03b-…`), as on the Mac.
+# It mints `INERT_LANDING_GITHUB_TOKEN` from the read-only App, in place of `gh auth token`, for
+# exactly the repositories `inert-landing repositories` prints: the landing policy's inert
+# population, the only repositories a pass lists pull requests in. The token carries `metadata` and
+# `pull_requests`, read, and nothing else; this lane lands through the orchestrator's dispatch App,
+# never with it. It unsets `BWS_ACCESS_TOKEN` before the lander runs. The bare run, the exit codes
+# and the dead-man switch are the Mac's. The container block runs the whole pass and exits, so
+# everything after it is the Mac's launchd job, unchanged until increment 6.
+# Exit 1 there also covers a failed mint; exit 2 also covers a landing policy the repository list
+# couldn't be read from.
+#
 # Usage:
 #   scripts/run-inert-landing.sh              # reports; asks for nothing
 #   scripts/run-inert-landing.sh --submit     # asks for the landings that are admissible
@@ -78,6 +96,10 @@ CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 # The `sds-bridge` sender's alert-hub token, BWS `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE` in `SDS
 # Operator`, read with the narrow identity, as the bump proposer reads it.
 SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"
+# The read-only lane App's private key and id (ADR-0059 increment 3, Q9), `alobar-sds-lanes-read`,
+# in `SDS / Lane Apps`. Read in the container only, piped straight into `sds-github-mint`.
+READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
+READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled, and this
@@ -86,17 +108,20 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # finds, so this job is never gated on being able to update itself. It re-execs this script when
 # HEAD moves, because bash reads a script incrementally by byte offset and the file it just
 # rewrote is this one.
-_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-if [ -r "$_SDS_ACTIVATE" ]; then
-    # shellcheck source=/dev/null
-    . "$_SDS_ACTIVATE"
-else
-    activate_checkout() {
-        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-             "this run is not activated"
-    }
+# Skipped in the container, which runs the image's own code and has no `activate-checkout.sh`.
+if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+  _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+  if [ -r "$_SDS_ACTIVATE" ]; then
+      # shellcheck source=/dev/null
+      . "$_SDS_ACTIVATE"
+  else
+      activate_checkout() {
+          echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+               "this run is not activated"
+      }
+  fi
+  activate_checkout "$REPO_ROOT" "$0" "$@"
 fi
-activate_checkout "$REPO_ROOT" "$0" "$@"
 
 # THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
 # reach nobody: a pass that stops running, or that fails every hour, is silent. Armed AFTER
@@ -114,6 +139,94 @@ sds_deadman_arm sds-inert-landing --finding 3 "$@"
 # which breaks the parse below.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# ---- THE LANE'S CONTAINER (ADR-0059 increment 5, step 3g-1) -----------------------------------
+# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read takes the lane's one token from the
+# environment (`sds_bws_value` with one argument), so it never appears in a process argument, and
+# each secret is always read, never taken from the environment. Every failure names itself and
+# exits with the code the header gives it; the dead-man switch, armed above, pings on the way out.
+if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+  FROM=" (the lane's token)"
+  unset INERT_LANDING_CHANGE_MANAGER_TOKEN INERT_LANDING_ORCHESTRATOR_TOKEN \
+    INERT_LANDING_GITHUB_TOKEN SDS_BRIDGE_ALERT_TOKEN
+
+  # The compose sets it to the lane's volume (decision 1, "Lane state"). Without it the held and
+  # revert alerts' state would go to this run's `HOME`, which `lane-run` discards.
+  if [ -z "${LANDER_STATE_DIR:-}" ]; then
+    echo "FATAL: LANDER_STATE_DIR is not set in the lane's container" >&2
+    exit 1
+  fi
+  export LANDER_STATE_DIR
+
+  INERT_LANDING_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID")"
+  if [ -z "$INERT_LANDING_CHANGE_MANAGER_TOKEN" ]; then
+    echo "FATAL: could not read the change-manager credential from BWS$FROM" >&2
+    exit 1
+  fi
+  export INERT_LANDING_CHANGE_MANAGER_TOKEN
+
+  # THE REPOSITORIES ARE THE PROGRAM'S, NOT LISTED HERE: `inert-landing repositories` prints the
+  # landing policy's inert population, read with the change-manager credential alone (ADR-0059
+  # decision 2: the mint names only the lane's repositories). AN UNDERIVABLE LIST MINTS NOTHING:
+  # the subcommand exits 2 with its reason on stderr for a policy it can't read, as the pass would,
+  # and its code is the pass's.
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/inert-landing" repositories)"
+  derive_rc=$?
+  if [ "$derive_rc" -ne 0 ]; then
+    echo "FATAL: the inert lane's repositories could not be derived (inert-landing repositories exited $derive_rc); nothing was minted or asked" >&2
+    exit "$derive_rc"
+  fi
+  TARGETS=()
+  while IFS= read -r repository; do
+    [ -n "$repository" ] && TARGETS+=(--repository "$repository")
+  done <<< "$REPOSITORIES"
+  if [ "${#TARGETS[@]}" -eq 0 ]; then
+    echo "FATAL: the inert lane's repositories could not be derived (an empty list); nothing was minted or asked" >&2
+    exit 2
+  fi
+
+  # THE READ TOKEN IS MINTED EACH PASS, bare or submitting. The App's key goes from the BWS read
+  # straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a variable,
+  # an argument or a file, and the mint runs without the lane's token. The two permissions are what
+  # the pass's one GitHub read uses: each repository's open pull requests
+  # (`GitHubReader.open_pull_requests`, `pull_requests`), and `metadata`, which every installation
+  # token carries.
+  INERT_LANDING_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
+    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+        --app-id "$READ_APP_ID" "${TARGETS[@]}" \
+        --permission metadata=read --permission pull_requests=read)"
+  mint_rc=$?
+  if [ "$mint_rc" -ne 0 ] || [ -z "$INERT_LANDING_GITHUB_TOKEN" ]; then
+    echo "FATAL: could not mint the inert lane's GitHub read token from the read-only App (sds-github-mint exited $mint_rc)" >&2
+    exit 1
+  fi
+  export INERT_LANDING_GITHUB_TOKEN
+
+  INERT_LANDING_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")"
+  if [ -z "$INERT_LANDING_ORCHESTRATOR_TOKEN" ]; then
+    echo "FATAL: could not read the orchestrator system credential from BWS$FROM" >&2
+    exit 1
+  fi
+  export INERT_LANDING_ORCHESTRATOR_TOKEN
+
+  # THE ALERT TOKEN IS READ ONLY FOR A SUBMITTING RUN, the only one that sends, as on the Mac.
+  case " $* " in
+    *" --submit "*)
+      SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
+      if [ -z "$SDS_BRIDGE_ALERT_TOKEN" ]; then
+        echo "FATAL: could not read the sds-bridge alert sender token from BWS$FROM" >&2
+        exit 1
+      fi
+      export SDS_BRIDGE_ALERT_TOKEN
+      ;;
+  esac
+
+  # EVERY BWS READ IS DONE, so the lane's token reaches no program.
+  unset BWS_ACCESS_TOKEN
+  "$REPO_ROOT/.venv/bin/inert-landing" "$@"
+  rc=$?
+  exit "$rc"
+fi
 
 # SOURCED, not executed. `sds-token.sh` EXPORTS the value and prints nothing — its own header says
 # so — so command-substituting it yields the empty string and every fetch below fails with a

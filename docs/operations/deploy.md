@@ -827,6 +827,65 @@ its own change or act:
       `~/Projects/infraops-mcp-server` to `origin/main` first, because the container clones `main`.
     - The schedule, and the Mac job's retirement.
 
+`inert-landing`'s tracked files (`lanes/inert-landing/compose.yaml` and `crontab`) don't register
+it either. Its state is the lander's `held-since.json`, `alerts.json` and `revert-alerts.json`, so
+its compose mounts the named volume `sds-lanes-inert-landing-state` at `LANDER_STATE_DIR`
+(`/var/lib/sds/inert-landing`); the launcher refuses a pass with it unset. It joins no external
+network: it reaches no separate Coolify database resource, and every service it calls
+(change-manager, the orchestrator, alert-hub, GitHub) is an HTTPS URL. It lands nothing itself:
+the orchestrator lands through its own dispatch App. Its crontab runs
+`lane-run inert-landing --submit` hourly at minute 37 New York time. The Mac job runs at minute 35,
+but minute 35 is the change proposer's, so the lane takes 37, which no other lane starts on. The flag
+is in the crontab line, so a scheduled pass asks for landings. The bare `lane-run inert-landing` is
+the reporting run, which asks for nothing, but this lane arms the dead-man switch, so a bare run
+pings its check (ADR-0059, "It pings the real check").
+
+Its `.bws-secrets.toml` secrets are the following four, all read with the lane's one token. Its
+ping-URL secret joins them when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
+empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+
+- On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer, and the read-only
+  App's key.
+- On `--submit` only: the `sds-bridge` alert sender.
+
+Each pass mints `INERT_LANDING_GITHUB_TOKEN` from the read-only App (`metadata` and
+`pull_requests`, read) for the repositories `inert-landing repositories` prints: the landing
+policy's inert population, the only repositories a pass lists pull requests in. The read-only App
+must be installed on each of them, and they must share one owner, or the mint refuses and the pass
+fails (exit 1). On the Mac, a repository `gh` can't list is one `unreadable` line (exit 3) beside
+the others. A policy the list can't be read from fails the pass with exit 2 before anything is
+minted, as the pass itself would.
+
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-inert-landing` from the compose
+   without deploying it.
+2. The VM root's keeper commands for the lane token and `inert-landing-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, a `runtime-fetch` reader for `scripts/run-inert-landing.sh` on the read
+   App key's row.
+4. The lane account's grants on its four secrets and its ping-URL secret. The change-manager READ
+   bearer (`314f276d-…`) is read by the broad identity on the Mac and becomes a direct grant to the
+   lane account (Devon's act at the lane's identity gate). The SYSTEM bearer (`221a48d5-…`) and the
+   alert sender (`b415d03b-…`) are in `SDS Operator`, read on the Mac as `sds-operator`.
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `inert-landing` removed from
+   `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof over all five secrets and a bare
+   `lane-run inert-landing` in the container. That bare run is the first read mint over the inert
+   population, and it proves the read App's installation covers every one. It reads the alert
+   sender only on `--submit`, so the proof is that secret's only read before the first acting pass.
+8. Cut-over steps 2 onward:
+   - The copy of the Mac's `sds/inert-landing/` files into the volume, before the first `--submit`
+     pass in the container, or every held pull request's clock restarts and alerts never resolve.
+   - The paired bare reporting runs on both hosts in the same minute, which ask for nothing and
+     each ping the real check. The Mac's hourly `--submit` job still runs at minute 35, so run the
+     pair away from it; a bare run asks for nothing, so neither run lands beside it.
+   - The schedule, and the Mac job's retirement. The container's schedule is off until the Mac job
+     is booted out and disabled, so the two never submit in the same hour.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
