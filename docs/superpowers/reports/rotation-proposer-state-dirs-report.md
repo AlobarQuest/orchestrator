@@ -4,8 +4,9 @@ Outcome: done
 
 - PR: #743 (ready for review, not merged), branch `hq/rotation-proposer-state-dirs`, based on
   `90f26ecda1445eddb938e75720e6b17d7928b17a`.
-- Content commit: `2617a571f32184ce468449497e7de5d909f8f48b`. The head is the commit that adds this
-  report on top of it.
+- Content commits: `2617a571` (the change) and `608ad3dd6a916e43054df86dcc684162fd74cc3d` (the
+  list-write refusal test and the copy's exact command). The code is final at `608ad3dd`. The
+  commit after it holds only this report's update, so the PR head is the report commit. HQ merges.
 
 ## What I built
 
@@ -67,6 +68,11 @@ wrote the list, and added a 0600 copy of the Mac state file. Then I ran
 exited 0, and its `findings` equal those of the Mac's own `~/.config/infra-drift` run (one
 finding).
 
+After the change, I ran the documented session form for real: `sds_infraops_session cred-findings`
+(which writes nothing) under `env -i` with the real git and node, the lane token set, and the
+probe's state copy. It exited 0, its findings equal the Mac's, and its scratch directory was gone
+afterward.
+
 The scratch directory `/tmp/w218probe.ygePUg` is still there, because the permission rules denied
 `rm -rf`. It holds public clones and a copy of the rotation state. That copy carries no secret,
 but delete the directory.
@@ -76,8 +82,10 @@ has `.cred-consumers.toml` on `main`.
 
 ## Tests and checks
 
-- `make check`, run on a clean tree at the content commit with `orchestrator_test_hq_w_218`:
-  exit 0, **15,635 passed, 1 skipped** (ruff, format, pyright, shellcheck, and pytest).
+- `make check`, run on a clean tree at `608ad3dd` with `orchestrator_test_hq_w_218`: exit 0,
+  **15,636 passed, 1 skipped** (ruff, format, pyright, shellcheck, and pytest).
+- CI on PR #743 at `608ad3dd`: every check passed. The `Quality` job (Linux) collected and ran
+  **15,614 passed, 23 skipped**, including the Mac-branch test's exact variable set.
 - Security scan from the repo root (`security_scan.cli . --category security`): 0 BLOCK. The 2 WARN
   and 1 INFO findings are on `.gitignore`, `.bws-secrets.toml`, and machine-account scope. This
   change didn't touch those files.
@@ -96,6 +104,7 @@ has `.cred-consumers.toml` on `main`.
   - A clone without its registry file exits 2 and reads no secret, for each registry, dry and
     submit.
   - A stale list is removed before it can be read.
+  - A list that can't be written exits 1 with `FATAL:`, before any secret.
   - A missing state file exits 2 before anything, dry and submit.
   - A failed clone exits 1 with `FATAL:`, for all five repositories, and leaves no list and no
     secret read.
@@ -124,6 +133,7 @@ has `.cred-consumers.toml` on `main`.
 - `lanes/Dockerfile`: the comment changes from "five helpers" to "six". The `COPY scripts/sds-*.sh`
   line already ships the new helper.
 - `layers.toml`: places the new test.
+- `docs/operations/rotation-proposer.md`: the fence sentence (the list is the launcher's to write).
 - `docs/operations/deploy.md`: the two settings, the list, the clones, the person's command, cut-over
   item 1 marked done, and the copy's target and mode.
 
@@ -162,9 +172,15 @@ I ran `/code-review` at medium on the diff. It raised five points, and I changed
     each pass.
   - Amendment 12 decision 1's "the directory that holds the lane's `cred-consumers.list`" still
     holds, but that list is now per-pass output.
+  - The `infra-drift` row (line 823) and Amendment 12's row on it (line 3672) say infra-drift and
+    the proposer read "the same `cred-consumers.list`". The container reads its own list naming
+    the same four registries at `main`, not the Mac's file.
+  - Amendment 12's row on decision 5 (line 3664) says carrying the list "as data in a clone"
+    stands. The registries are data in clones, and the list is written from them.
 - A fifth registry (security-standards' `.cred-consumers.toml`) is an open item for an interactive
   session. The list keeps the Mac's four.
-- Delete the probe directory `/tmp/w218probe.ygePUg`.
+- Delete the scratch directories `/tmp/w218probe.ygePUg` and `/tmp/w218main` (a copy of `main`'s
+  launcher and a mutant, used for the Mac test's differential).
 - Tear down the test database `orchestrator_test_hq_w_218` and this worktree after merge.
 
 ## Standards followed
