@@ -3995,3 +3995,294 @@ sds-hq commit `9d97574`):
 
 Nothing. It removes amendment 27's one owner act. No credential, role, account, grant or reader is
 added, the owner password stays in Coolify, and nothing holds it at run time.
+
+## Amendment 29 — The rotation executor runs on the VPS host, and a lane token's revoke waits on the loaded fingerprint (2026-11-18)
+
+**Status: Proposed (2026-11-18).** Accepted on merge, as amendment 28 is. **Relates to:** decision
+2 and its accepted residual, T1, decision 3's R10 rule, amendment 17 (the VPS helper), amendment 19
+items 6, 7 and 10 with D-26 and D-27 (lane tokens and the departure), and ADR-0059 decision 4,
+increment 7 and Amendment 6 decision item 4.
+
+This is the design of ADR-0059 increment 7, written ahead of it. Increment 7 is built after
+increment 6 (ADR-0059, lines 1282 and 2692-2693, and its table row at line 2734). This amendment
+builds nothing and changes no resource, identity, token or grant. W-215's options report
+(`docs/superpowers/reports/rotation-executor-move-options-report.md`, at `68beef6a`) is its map.
+Devon answered three questions in interactive HQ sessions on 2026-11-18. They are quoted from sds-hq
+`state/decisions.md`: D-63 and D-64 at commit `902da11`, and D-65 at commit `7e43bc8`. None was
+made standing, so none is a general rule.
+
+- **D-63** (question): "Rotation executor's move to the VPS (ADR-0059 increment 7, ADR-0055
+  amendment 29; built after increment 6, designed now): when a lane's BWS token is reissued, who
+  restarts the lane so it loads the new token, and how is the old token's revoke proven safe
+  (ADR-0055 rule R10: no revoke until every consumer is shown to hold the new value)? Today the
+  deploying session restarts the lane, and the revoke rests on HQ's report of the lane's reads
+  (your D-27 departure, 'until increment 7'). (A) The executor restarts each lane itself: reverses
+  ADR-0055's 'the executor never redeploys a lane', changes every lane row's redeploy field, and
+  needs a quiet-slot reader and a slot wait once the change window narrows. (B) The session keeps
+  the restart, and the D-27 departure becomes permanent. (C) The session keeps the restart, and the
+  executor proves the new token before the revoke by reading the fingerprint (a short hash and
+  length, never the value) of the token the restarted lane container loaded, through the existing
+  VPS helper's loaded verb. Cost of C: a small helper change (a target with no database, only
+  consumers), one helper target per lane, and the lane-token adapter calling the helper; unchecked:
+  whether Coolify's container names are stable enough for the helper's exact-name match."
+  **Answer (2026-11-18T11:18:24Z):** "C. Devon, in an interactive session, chose C (the session
+  keeps the restart; the executor proves the new token before the revoke by reading the loaded
+  token's fingerprint, a short hash and length, never the value, through the VPS helper's loaded
+  verb)."
+- **D-64** (question): "Rotation executor's move to the VPS (ADR-0059 increment 7, ADR-0055
+  amendment 29): where does it run on the VPS, and do you accept what that does to its main
+  residual risk (T1: whoever gets root on its host gets its root identity, which reads the BWS
+  project Rotation / Admin and every lane token keeper in Rotation / Keepers)? Today it runs in its
+  own VM, so VPS root alone doesn't reach it. (A) A Coolify resource on the VPS: its root token sits
+  in a Coolify variable and in Coolify's /data/coolify backups, and Coolify's API holders gain a
+  path to it. (B) A systemd service on the VPS host under its own user, outside Docker and Coolify:
+  no Coolify path; VPS root gains Rotation / Admin and the keepers (no vps-backup recipe was found
+  that copies /etc, so the token doesn't land in backups, read by grep only). (C) Keep a dedicated
+  host or VM for it (the residual stays as today, plus a host to run)." **Answer
+  (2026-11-18T11:18:24Z):** "B. Devon, in an interactive session, chose B (a systemd service on the
+  VPS host under its own user, outside Docker and Coolify) and accepts the widened T1: VPS root
+  reaches Rotation / Admin and the keepers; the amendment's T1 text says so."
+- **D-65** (question): "D-64 follow-up (rotation executor on the VPS, ADR-0055 amendment 29): your
+  D-64 B (a systemd service on the VPS host) was offered as having no Coolify path. The amendment
+  worker found that false. Coolify logs in to its own host as root over SSH with its web terminal
+  on, and every session with infraops connected runs any shell command as root through vps_exec
+  (infraops ssh-client.ts: VPS_USER defaults to root; HQ checked). Root reads the executor's token
+  file, so Coolify admins and every infraops session would reach Rotation / Admin and every lane
+  token keeper. Which do you want? (1) Accept as found: the amendment's T1 says VPS root includes
+  Coolify's terminal and key holders and every infraops vps_exec holder. (2) Accept, and narrow the
+  root paths first: as (1), plus named cut-over prerequisites (for example infraops and Coolify off
+  the root user), each its own later decision. (3) Reopen D-64 and choose C, a dedicated host or VM,
+  as today." **Answer (2026-11-18T13:05:43Z):** "2. Devon, in an interactive session, chose option
+  2: accept D-64 B as found (VPS root includes Coolify's terminal and key holders and every infraops
+  vps_exec holder), and narrow the root paths first: named cut-over prerequisites for increment 7
+  (for example infraops and Coolify off the root user), each its own later decision."
+
+D-64 B is the choice for the development phase. Devon will stress-test it in a later security
+phase, before the SDS goes into production.
+
+### Decision
+
+1. **Placement (D-64 B).** The executor runs on the VPS host (`prod-vps`) as a systemd service and
+   timer under its own host user, `rotation`, outside Docker and Coolify. The user has no login
+   shell, no sudoers rule and no membership in the `docker` group or any other group that reaches
+   root. Its start path is proven with only `PATH` and `HOME` set, as decision 2 requires (R16).
+   - **What moves:** the service and its timer; the installed code (`/opt/rotation-worker`); the
+     state directory, `/var/lib/rotation-worker`; the configuration,
+     `/etc/rotation-worker/config.toml` (ids and paths, no value; root-owned, group `rotation`,
+     mode `0640`); and the root token's file, `/etc/rotation-worker/root-token` (owner
+     `rotation`, mode `0400`, holding the token and nothing else).
+   - **What doesn't move:** the `rotation-executor` BWS machine account and every grant it holds;
+     the WORKER bearer in `Rotation / Executor`, its key id and its agent id, so the orchestrator
+     needs no restart; the inbox (`Rotation / Inbox`); every keeper in `Rotation / Keepers`;
+     staging and quarantine in `Rotation / Work`; and the store kind, so the heartbeat key
+     `rotation-heartbeat:<store kind>` stays the same (W-215 Q5, and Q6 steps 3 and 9). The
+     Keychain instance on the Mac is unchanged.
+   - **How it reaches the helper.** It uses the same path as before: SSH to
+     `root@<VPS tailnet address>`, with the key it already holds in `Rotation / Keepers`
+     (amendment 17's "As built", lines 2152-2155), into the same `authorized_keys` line with its
+     forced command `/usr/local/sbin/sds-pg-rotate` and `restrict`. The connection now starts and
+     ends on one host, through that host's own tailnet address. The bound is the forced command and
+     the root-owned `targets.toml`, not the network hop (lines 2117-2127 and 2141-2142). Reusing
+     that key and path grants nothing new. The executor gets no other way into root or Docker.
+   - **Coolify.** `coolify_url` stays at the tailnet address, which the client's TLS-or-tailnet
+     rule already allows (`rotation_worker/coolify.py`, lines 16-17 and 35-37). The executor keeps
+     its own Coolify token in `Rotation / Coolify`, with the same abilities.
+2. **Decision 2 and T1, for the VPS host.** This item replaces decision 2's first bullet and
+   accepted residual (lines 133-149), the root's row in the asset table (line 338) and T1 (line
+   350), from increment 7's cut-over on.
+   - **Decision 2, as amended.** The executor runs on the VPS host as a systemd service under its
+     own user (item 1). The root token is in a file only the service's user reads, and decision
+     9's rule stands: the host holds nothing of the executor's that can't be rebuilt.
+   - **Who reaches the root token's file.** Anyone with root on the VPS host. A systemd user
+     isolates the file from other non-root users on the host, and from a container that has no
+     route to host root, and from nothing else. Root on that host is held by at least these paths,
+     each read from its source on 2026-11-18:
+     - **Coolify.** Production Coolify's one server, `localhost` (`is_coolify_host` true), logs in
+       to its own host over SSH as `root`, and its web terminal is enabled
+       (`coolify_get_server`: `user` `root`, `is_terminal_enabled` true). So anyone who can open
+       that terminal, and anyone who can read the SSH private key Coolify keeps for that server,
+       has root on the host. A Coolify API token with `write` or `deploy` can probably run a
+       container that mounts a host path, as the asset table says of the executor's own Coolify
+       token (line 341, and amendment 1, lines 623-625); that path isn't tested.
+     - **infraops `vps_exec`.** It runs any shell command on prod over SSH as `VPS_USER`, which
+       defaults to `root` (infraops-mcp-server `src/services/ssh-client.ts`, lines 30-33;
+       `src/tools/vps.ts`, lines 34-72), and no file in that repository sets another user. Every
+       session with infraops connected holds it, through the infraops SSH key on the Mac. So any
+       process that can use that key reaches the root token's file, as a process running as
+       Devon's user reaches the VM today.
+     - **Any other root login to the VPS host.**
+   - **T1, as amended.** Whoever has root on the VPS host gets the executor's root identity: write
+     on `Rotation / Keepers`, `Rotation / Work` and `Rotation / Inbox`, read on `Rotation / Admin`
+     (the OpenRouter management key and the rotation App's private key), `Rotation / Coolify`,
+     `Rotation / Executor` and `Rotation / Healthchecks`, and its direct read on the Healthchecks
+     Management key's secret. That includes every lane-token keeper and the keepers of credentials
+     that never touch the VPS. Root on that host already held every lane token in the lane
+     containers' environments, so the widening is `Rotation / Admin`, the rotation Coolify token,
+     and the keepers of credentials that never reach the host. Holders of Coolify's terminal and
+     SSH key and every infraops `vps_exec` holder are among those root holders. Devon accepts
+     this residual (D-64 B, D-65 option 2). Today's T1, an agent session on the Mac reaching what
+     the executor holds, stays inside it, through `vps_exec` instead of `orb`. The SYSTEM and
+     VERIFIER bearers stay outside the executor's BWS identity's reach.
+   - **Cut-over prerequisites: the root paths narrow first (D-65).** Before increment 7's cut-over,
+     each of the following is its own decision for Devon, made later and not here: whether and how
+     infraops `vps_exec` stops logging in as root, and whether and how Coolify's `localhost` server
+     stops logging in as root (with its terminal). The cut-over doesn't start until each has a
+     recorded answer, and a narrowing he chooses is done and verified before it starts. This
+     amendment decides neither.
+   - **No standard covers this.** Neither Code Brain nor Infra Brain has a rule on where a root
+     credential rests on a host or on host-user isolation. This item rests on this ADR's threat
+     model and on D-64 and D-65.
+3. **A lane token's restart stays with the session, and R10 is met by the loaded fingerprint
+   (D-63 C).**
+   - **The session keeps the restart.** The deploying session still restarts a lane after a
+     reissue, with the lane phases' `--token` mode in the lane's quiet slot. The executor still
+     never redeploys a lane: amendment 19 item 6 (lines 2324-2352) stands, and its client for a
+     lane is built with `restarts=False` (`rotation_worker/coolify.py`, lines 57-60 and 88-91).
+   - **The read.** Before the old token's revoke, the executor reads the fingerprint of the
+     `BWS_ACCESS_TOKEN` that the restarted lane container loaded. The fingerprint is the sha256
+     prefix and length, never the value. The executor reads it through the helper's `loaded` verb
+     (`deploy/vps/sds-pg-rotate`, lines 1-12, 100-106 and 166-182). It proceeds only when that
+     fingerprint equals the new keeper's. Both use the same form: 16 hex characters and a length
+     (`FINGERPRINT_PREFIX`, and `rotation_worker/values.py`'s `PREFIX_LENGTH`).
+   - **The changes it needs, for increment 7's code step (not made here).**
+     - A consumers-only helper target: a target with `consumer` tables and no `role` or
+       `database`. `_target` refuses it for `set` and `probe`, and `loaded` accepts it. Today
+       `_target` requires all three keys for every verb.
+     - One target per lane in the root-owned `targets.toml`. Each names the lane's container and
+       `BWS_ACCESS_TOKEN`. The lane token's registry row names it as its `helper_target`, as a
+       `postgres-role` row does (`adapters/postgres_role.py`, line 158). That's a row field, not
+       a destination identity field (`destinations.py`, `IDENTITY_FIELDS`).
+     - `bws_lane_token`'s consumer check calls the helper's `loaded` for that target in a
+       reissue's `verify` unit, and passes only on an equal fingerprint. An issue's `store` unit
+       runs `verify_consumers` right after its `PATCH`, before any restart
+       (`plans.derive_issue`), so it keeps amendment 19 item 7's proof, the `PATCH` answering
+       2xx. An issue has no revoke, so R10 doesn't reach it.
+   - **Where the executor waits for the restart.** It waits in the `verify` unit
+     (`verify_consumers`), unclaimed, as the mint and reader waits do
+     (`docs/operations/rotation-executor.md`, lines 134-145; `worker.py::_take`). Each pass reads
+     `loaded` before it claims the unit, and the unit stays unclaimed until the fingerprint equals
+     the new keeper's. An unreadable answer waits too. The wait is on the ordinary 48-hour
+     `rotation-unit-waiting` clock. The claimed step reads `loaded` once more and fails the unit on
+     any mismatch. The wait never sits in a claim, so the lease ceiling (decision 9, 2 hours)
+     bounds only the one read.
+   - **Fit with the narrowed window.** In operation, `live_estate`'s window narrows to 02:00-06:00
+     (`factory-policy.toml`, lines 499-510), and the quiet slot is its complement (W-215 summary
+     point 1). `verify` writes a hosted service (`plans.py`, lines 218-231), so its claim is
+     windowed. The session restarts the lane in the quiet slot. The executor's pre-claim read then
+     passes, and the claim waits for the next 02:00. No step waits past 06:00 inside a claim. The
+     cost is up to a day between the restart and the revoke alert, with both tokens live, which
+     decision 8 already accepts for a hosted unit.
+   - **The revoke.** The "Revoke the old … value" alert is first sent only once `verify` completes
+     (`docs/operations/rotation-executor.md`, lines 164-167), so Devon's revoke now follows a
+     machine read. After a leak, Devon still revokes first (D-26, amendment 19 item 10). The
+     `loaded` read then proves the restarted container holds the new token, as it does on a
+     non-leak reissue. An issue's plan is unchanged.
+   - **R10 is restored for lane tokens.** `retire_old` follows a machine `verify_consumers` for
+     every registered consumer, as decision 3 requires (lines 160-161). That's Infra Brain 1032's
+     fail-safe, no revoke without attested consumers, now held by machine evidence instead of
+     HQ's report. Amendment 19 item 7's
+     departure (lines 2370-2376, D-27) ends at increment 7's cut-over. The lane phases'
+     `lanes-finish` and `lane-run --read` stay as the lane's own deploy checks, but they're no
+     longer the revoke's precondition.
+4. **The cut-over (W-215 Q6, steps 1 to 9, as HQ's configuration).**
+   1. **Drain.** Start only when no VM-instance rotation unit is `executing`, no rotation is between `store` and `retire_old` with a hosted unit still to run,
+      and no dispatched run is live. A unit waiting unclaimed, such as a mint or reader wait, may
+      stay. The VPS instance picks it up with its wait clock restarted.
+   2. **The root token at the move: open, Devon's choice at the cut-over's mint gate.** He can move
+      the file, or mint a second access token on the same machine account, store it on the VPS
+      with `set-root-token`, prove one pass, and then revoke the VM's. W-215 recommends the second.
+      Either way it's the same identity with the same grants. This amendment doesn't decide it.
+   3. **The WORKER bearer** stays in `Rotation / Executor`, read at each pass. No orchestrator
+      restart.
+   4. **State.** Copy `announced-acts.json`, `wait-since.json` and `revokes-observed.json` from the
+      VM's `/var/lib/rotation-worker`, or accept their loss. Losing them restarts a wait and never
+      shortens it (`docs/operations/rotation-executor.md`, lines 114, 134 and 174).
+   5. **The helper's host key.** Re-read the pin from the new host against the VPS's own host key,
+      and keep `pg_helper_host` at the tailnet address (item 1).
+   6. **One instance at a time.** Stop and disable the VM's timer before the VPS's first pass.
+   7. **`--token` mode** stays the lane restart (item 3).
+   8. **The Mac's Keychain instance** is unchanged.
+   9. **The heartbeat.** The VPS instance sends the same `rotation-heartbeat:<store kind>` key.
+      Confirm the schedule fires within one interval of the VM's last pass and clears on the VPS's
+      first.
+5. **Increment 7's cut-over checks (its exit, ADR-0059 Amendment 6 decision item 4).** W-215 Q6
+   step 10:
+   - One pass run with only `PATH` and `HOME` (`env -i`) succeeds.
+   - The heartbeat clears from the new host.
+   - `rotation-instance-behind` is clear.
+   - The tailnet Coolify `PATCH` answers 2xx, on a canary or the next real issue.
+   - The helper's `loaded` answers for its targets.
+   - A ping-URL listing logs `ping_url_read`.
+   - The VM's timer is disabled, and after its revoke its root token is refused on a fresh login
+     with an empty `HOME`.
+   - One lane token's `loaded` fingerprint equals its keeper's.
+
+   These are the exit. No week is run.
+
+### Verify items
+
+Each item names the step that verifies it.
+
+- **Coolify's lane container names stay stable enough for the helper's exact-name match**, across
+  a `--token`, `--tag` and `--schedule` redeploy. Increment 7's code step.
+- **No vps-backup recipe copies the executor's root token or `/etc` off the host.** W-215 checked
+  this by grep only. Increment 7's cut-over.
+- **Where the `rotation-heartbeat:<store kind>` schedule is defined, and that it clears from the
+  new host.** The cut-over (item 4, step 9).
+- **The helper's `loaded` tells the new lane token from the old while both answer.** That includes
+  a lane image having the `sh` and `printf` the verb runs in the container. Increment 7's code
+  step.
+- **Item 3's restart wait fits the lease ceiling and the narrowed window.** Increment 7's code
+  step.
+
+### What it grants, and nothing more
+
+Nothing beyond D-63 C, D-64 B and D-65 option 2. No BWS identity, project, grant or scope is added or widened: the
+root keeps exactly its scope (Infra Brain 598). The executor's new home is a host user with no sudo
+and no `docker` group. It reaches root only through the existing helper key and forced command.
+The helper's consumers-only targets let it read one thing more: the fingerprint of each lane
+container's `BWS_ACCESS_TOKEN`, never the value. Each root-path narrowing in item 2 is a later
+decision of Devon's and isn't granted or refused here. Nothing here declares a credential exposed
+(Infra Brain 1032), and rotation ages are unchanged (Infra Brain 1031).
+
+### Consequences
+
+- **VPS root becomes the executor's root.** This includes Coolify's terminal and key holders and
+  every infraops session, until the narrowings in item 2 say otherwise.
+- **The lane-token revoke rests on a machine read again.** D-27's departure ends at the cut-over.
+- **A lane restart can wait a night for its revoke alert** once the window narrows (item 3).
+- **The executor stays outside Coolify**, so Infra Brain's Coolify-build, image-tag, sidecar,
+  webhook, migration and branch rules don't apply to it.
+- **Stale until updated, outside this amendment:** this ADR's header list, which stops at
+  amendment 24; `docs/operations/rotation-executor.md`'s VM procedures (install, `set-root-token`,
+  the helper's key and host pin, and the one-pass command); and ADR-0059's increment 7 text, which
+  still names `lane-run --read` as the revoke's read.
+
+### Passages it governs
+
+Line numbers are at `ad721fc0`. This amendment edits none of them.
+
+| Passage | Disposition |
+|---|---|
+| ADR-0055 decision 2, "Where it runs" (lines 133-143) | Amended by item 2: a systemd service on the VPS host under its own user. "Moves unchanged to a VPS" (line 136) is the move this amendment plans. |
+| ADR-0055 decision 2, accepted residual (lines 145-149) | Superseded by item 2's T1 text from the cut-over. |
+| ADR-0055 decision 3, R10 (lines 160-161) | Stands, and is restored for lane tokens by item 3. |
+| ADR-0055 decision 9, a rebuilt VM (lines 298-300) and the lease ceiling (lines 301-302) | Stand. Read "VM" as the executor's host. The lease bounds item 3's one claimed read. |
+| ADR-0055 asset table, the root's row (line 338) | Amended by item 2: the file is on the VPS host, readable by the executor and anything with root on that host. |
+| ADR-0055 T1 (line 350) | Amended by item 2. |
+| Amendment 1, T1 widened to control of production Coolify (lines 627-629) | Stands, inside item 2's T1. |
+| Amendment 2, the destination-list residual, "an agent on the Mac, already T1's accepted residual" (line 721) | Stands: that agent stays inside item 2's T1, through `vps_exec`. |
+| Amendment 12 item 7, the Mac instance's identity (lines 1495-1500) | Stands. The Mac's Keychain instance doesn't move. "The VM exists so an agent session on the Mac can't act as the executor" no longer holds after the cut-over, because `vps_exec` reaches the VPS host; item 2's T1 states that. |
+| Amendment 17 item 2, the helper (lines 2117-2127) | Stands, plus a consumers-only target for `loaded` (item 3). |
+| Amendment 17, the executor's reach (lines 2141-2142) and the helper key in `Rotation / Keepers` (lines 2152-2155) | Stand. The same key and path, from the same host (item 1). |
+| Amendment 19 item 1, "on the VM instance only" (line 2240), and every later "the VM instance" or "the VM executor" in this ADR | Read as the BWS-store instance, which runs on the VPS host after the cut-over. Nothing else changes. |
+| Amendment 19 item 3, the departure for a reissue (lines 2284-2285) | Ends at the cut-over (item 3). |
+| Amendment 19 item 6, the executor never redeploys a lane (lines 2324-2352) | Stands. The session keeps `--token` (D-63 C). |
+| Amendment 19 item 7, what each side proves, and the departure (lines 2353-2376) | The executor's proof becomes the `loaded` fingerprint. The departure (lines 2370-2376) ends at the cut-over. |
+| Amendment 19 item 10, the revoke's order (lines 2403-2422) | A leak still revokes first. Otherwise the revoke follows `verify`'s `loaded` match, not HQ's report of `lane-run --read`. |
+| ADR-0059 decision 4, the executor (lines 763-766) | Governed: this is the amendment it names. ADR-0059 isn't edited. |
+| ADR-0059 increment 7 (lines 1050-1070) | Governed: the session runs the restart, and R10 is met by `loaded` (item 3). |
+| ADR-0059 Dependencies, ADR-0055 (lines 1420-1426) | Governed: this is amendment 29. |
+| ADR-0059 Amendment 2, the lane-token restart (lines 1782-1787) | Governed as increment 7 is. |
+| ADR-0059 Amendment 6 decision item 4 (lines 2694-2696) | Governed: item 5 states the executor's cut-over checks. |
+| ADR-0059 Amendment 6 decision item 6, the heartbeat as an alarm (lines 2709-2710) | Stands. Item 4, step 9 keeps the key. |
