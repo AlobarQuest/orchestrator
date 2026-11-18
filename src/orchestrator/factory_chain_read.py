@@ -340,6 +340,10 @@ def _report_facts(event: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     report, why = _report_part(evidence[0])
     if report is None:
         return None, why
+    if report["generated_at"] is not None and report["generated_at"] != event.get("timestamp"):
+        # The producer sets both to the report's time. A `generated_at` past the `timestamp`
+        # would escape the skew check and never age out.
+        return None, "its report's generated_at is not its timestamp"
     facts: dict[str, Any] = {
         **report,
         "result": result,

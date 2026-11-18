@@ -204,6 +204,10 @@ def test_two_events_sharing_the_newest_time_are_ambiguous() -> None:
         ),
         ([{"type": "infra-drift-report-unreadable"}], "its unreadable report carries no reason"),
         (
+            [{"type": "infra-drift-report", "generated_at": "2099-01-01T00:00:00Z"}],
+            "its report's generated_at is not its timestamp",
+        ),
+        (
             [
                 {"type": "infra-drift-report-unreadable", "reason": "x"},
                 {"type": "infra-drift-instance", "name": "prod", "ok": True},
