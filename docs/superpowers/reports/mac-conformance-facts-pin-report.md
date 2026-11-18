@@ -4,7 +4,7 @@ Outcome: done
 
 ## What I built
 
-- PR: https://github.com/AlobarQuest/orchestrator/pull/744. Base `main` `0714aff9`. Branch
+- PR: https://github.com/AlobarQuest/orchestrator/pull/744 (head `1c7cd4ec` before this line was added). Base `main` `0714aff9`. Branch
   `hq/mac-conformance-facts-pin`. Pin commit `063c1874`. The PR head is the commit that adds this
   report on top of the pin commit. The PR is open and not merged.
 - `security-standards.pin.toml`:
