@@ -14,8 +14,8 @@ crontab minute is 51. I made no production act and no live call.
 |---|---|
 | `scripts/run-bump-driver.sh` | Adds a container branch, entered when `BWS_ACCESS_TOKEN` is set, which runs the whole pass and exits through `sds_outcome_end`. Activation is skipped in the container. It gains the read App's key UUID and id, and a header paragraph ("TWO HOSTS, ONE LAUNCHER"). The Mac lines are unchanged, apart from the activation block's re-indent inside `if [ -z "${BWS_ACCESS_TOKEN:-}" ]`. |
 | `src/bump_driver/cli.py` | Adds a `bump-driver repositories` subcommand and a `CLONED` tuple. `main` routes the subcommand before `argparse`. |
-| `tests/bump_driver/test_repositories.py` (new) | Covers the subcommand: the list, case-only repeats, retired and ungranted members, an unreadable record (exit 3), a missing credential (exit 1), and extra arguments. |
-| `tests/scripts/test_run_bump_driver.py` (new) | 44 tests that run the real launcher under `env -i` with stubs, on the container path and the Mac path, plus the lane's tracked files. |
+| `tests/bump_driver/test_repositories.py` (new) | Covers the subcommand: the list, case-only repeats, retired and ungranted members, an unreadable record (exit 3), a missing credential (exit 1), extra arguments, and the installed console script's routing. |
+| `tests/scripts/test_run_bump_driver.py` (new) | 46 tests that run the real launcher under `env -i` with stubs, on the container path and the Mac path, plus the lane's tracked files. |
 | `lanes/bump-driver/compose.yaml` (new) | One service, modeled on #738's. |
 | `lanes/bump-driver/crontab` (new) | `51 * * * * lane-run bump-driver`. |
 | `.bws-secrets.toml` | Adds `bump-driver` to the `lanes` of `221a48d5`, `b415d03b`, `314f276d` and `314a966c`. Adds `lanes = ["bump-driver"]` to `750f737f` and `da8134b0`. The reader comments name step 3g-3, including the READ readers' comment. |
@@ -103,10 +103,13 @@ git environment from the token (ADR lines 544-575), and the Mac's pass carries n
 driver's environment matches the Mac's.
 
 For `factory`'s Python I chose #733's approach over a per-pass `uv sync`. The shim is written to
-`$HOME/.local/bin/factory`, which goes first on `PATH`:
+`$HOME/.local/bin/factory`, which goes first on `PATH`. The launcher refuses the container block
+before any read when `$HOME/Projects` or `$HOME/.local` already exists, so a hand run under a real
+`HOME` with a BWS token exported can't write over a checkout or the Mac's `factory` (a code-review
+finding):
 
 ```sh
-PYTHONPATH='<home>/Projects/intent-packages/src'${PYTHONPATH:+:$PYTHONPATH} exec '/app/.venv/bin/python' -m intent_packages.factory_cli "$@"
+PYTHONPATH='<home>/Projects/intent-packages/src'${PYTHONPATH:+:$PYTHONPATH} exec '/app/.venv/bin/python' -P -m intent_packages.factory_cli "$@"
 ```
 
 I chose the shim for three reasons:
@@ -122,7 +125,17 @@ I chose the shim for three reasons:
 
 `test_factory_is_the_images_interpreter_on_the_clone` runs the shim for real against a stand-in
 `intent_packages.factory_cli`. It proves the shim is the `factory` on `PATH`, uses the image's
-interpreter, and puts the clone's `src` before `FACTORY_PYTHONPATH`.
+interpreter, and puts the clone's `src` before `FACTORY_PYTHONPATH`. `-P` keeps the working
+directory off `sys.path`, as the Mac's console script does. The generator's working directory is
+a scratch directory holding only the intake file (`decompose.py`, `Generator.__call__`), not the
+mirror, so nothing there could shadow an import, and `-P` makes that hold regardless.
+
+I also ran the real intent-packages module through the shim's exact invocation, from
+`~/Projects/intent-packages/src` under `env -i` and the worktree's interpreter. The command was
+`python -P -m intent_packages.factory_cli decompose --help`, and it exited 0 with the decompose
+usage. `intent_packages` uses neither `importlib.metadata` nor `importlib.resources`, so it needs
+no installed distribution. This is the only proof before an acting pass, because a `--dry-run`
+never runs `factory`.
 
 ## The conformance claim's Mac-only inputs (cut-over blocker)
 
@@ -153,7 +166,7 @@ to neither the mint nor any installation, and added no refusal.
 
 The crontab line is `51 * * * * lane-run bump-driver`. Minute 50, the Mac job's, belongs to the
 rotation decomposer. The free minutes nearest 50 are 49 and 51, and 51 follows the minute-after
-precedent of #736 (36→37) and #738 (15→16). `test_no_two_lanes_start_a_pass_in_the_same_minute`
+precedent of #738, whose Mac job runs at 15 and lane at 16. #736's Mac job runs at 35, the change proposer's minute, and its lane at 37. `test_no_two_lanes_start_a_pass_in_the_same_minute`
 and the image's `supercronic -test` cover it.
 
 The line carries no flag, as the plist carries none: the driver acts unless `--dry-run` is given
@@ -275,8 +288,13 @@ needs no `lane_run.py` change unless it gets a new non-secret variable.
 
 ## Tests and checks
 
-- `tests/scripts/test_run_bump_driver.py`: 44 passed. `tests/bump_driver/`: 248 passed,
+- `tests/scripts/test_run_bump_driver.py`: 46 passed. `tests/bump_driver/`: 249 passed,
   `test_launcher.py` unedited among them.
+- `env -i PATH=/usr/bin:/bin .venv/bin/bump-driver repositories` exits 1, with the credential
+  message on stderr and nothing on stdout. So the console script (`pyproject.toml`
+  `bump-driver = "bump_driver.cli:main"`) routes the subcommand. A test now pins it.
+- `/usr/bin/git diff d6a4d909 -- scripts/run-bump-driver.sh`: the only removed lines are the
+  activation block's 11, re-added indented inside the `if`.
 - Mutation pass over the launcher's guards, each run against the new test file:
 
   | Mutation | Result |
@@ -294,7 +312,10 @@ needs no `lane_run.py` change unless it gets a new non-secret variable.
   write as a heredoc rather than a `printf` that drew SC2016 and SC2015.
 - `make check` against `orchestrator_test_hq_w_211`, with `SECURITY_STANDARDS_DIR` at the
   fixtures and `PGTZ=UTC`: ruff check, ruff format and pyright are clean. Pytest:
-  15582 passed, 1 skipped (exit 0, 5 minutes 11 seconds). `make check` also ran shellcheck over every script (the repository has a `.shellcheckrc`).
+  15582 passed, 1 skipped, of 15583 collected (exit 0, 5 minutes 11 seconds). That run predates
+  the review fixes (the `HOME` check, `-P`, and three tests). The second run, on the final tree:
+  15585 passed, 1 skipped, of 15586 collected (exit 0, 6 minutes 3 seconds), ruff, pyright and
+  shellcheck clean. `make check` also ran shellcheck over every script (the repository has a `.shellcheckrc`).
 
 ## Self-review
 
@@ -308,6 +329,18 @@ needs no `lane_run.py` change unless it gets a new non-secret variable.
   `lane-run`'s `tempfile` home can't hold one.
 
 ## Concerns and follow-ups
+
+- `/code-review` (medium) raised six findings, which I triaged as follows:
+  - Fixed: the `HOME` guard, and the console-script test.
+  - Not a defect: the derive's reason in `/fail`. `MembersUnreadable`'s messages are fixed text
+    plus a status code or an error type (`sds_members/client.py` 168-196), never a body or a
+    header.
+  - Recorded, not changed: the container mode is keyed on a set `BWS_ACCESS_TOKEN`, as in #733,
+    #736 and #738; the new `HOME` guard bounds its one new risk here. The derive and the pass also
+    read the member record separately, so a `dependency_updates` grant added between the two reads
+    is read with a token that doesn't name it: a 404, reported as an unread (exit 3), which heals
+    on the next pass. And the derive and the pass both take `ORCHESTRATOR_API_URL` from the same
+    environment with the same default, so they can't disagree today.
 
 - **Cut-over blocker (HQ D-answer A):** the ADR-0059 amendment on the conformance claim's
   container inputs. Until it lands, the lane can be created and its `--dry-run` proven, but no

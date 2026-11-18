@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -85,3 +88,18 @@ def test_main_routes_the_subcommand_and_refuses_extra_arguments(
     assert cli.main(["repositories"]) == 0
     assert cli.main(["repositories", "--dry-run"]) == 1
     assert "usage: bump-driver repositories" in capsys.readouterr().err
+
+
+def test_the_console_script_routes_the_subcommand() -> None:
+    """Through the installed entry point, with no credential: refused, nothing on stdout."""
+    script = Path(sys.executable).parent / "bump-driver"
+    done = subprocess.run(
+        [str(script), "repositories"],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 1
+    assert done.stdout == ""
+    assert "ORCHESTRATOR_API_TOKEN and its key id are required" in done.stderr

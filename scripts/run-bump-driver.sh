@@ -119,6 +119,13 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   [ -n "${BUMP_DRIVER_STATE_DIR:-}" ] || sds_outcome_fail \
     "FATAL: BUMP_DRIVER_STATE_DIR is not set in the lane's container"
   export BUMP_DRIVER_STATE_DIR
+  # The clones and the `factory` shim go under `HOME`, so it must be the new, empty directory
+  # `lane-run` gives each pass. A run under a real `HOME` (a hand run with a BWS token exported)
+  # refuses here, before it reads a secret or writes over a checkout or a real `factory`.
+  if [ -e "$HOME/Projects" ] || [ -e "$HOME/.local" ]; then
+    sds_outcome_fail \
+      "FATAL: HOME ($HOME) is not a new directory: the container's clones and shim would write over it"
+  fi
 
   # The five the Mac reads, in its order, each fatal as there, on every pass.
   ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")"
@@ -213,7 +220,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   mkdir -p "$_SHIMS" || sds_outcome_fail "FATAL: could not create the shim directory $_SHIMS"
   cat > "$_SHIMS/factory" <<SHIM || sds_outcome_fail "FATAL: could not write the factory shim at $_SHIMS/factory"
 #!/bin/sh
-PYTHONPATH='$_CLONES/intent-packages/src'\${PYTHONPATH:+:\$PYTHONPATH} exec '$REPO_ROOT/.venv/bin/python' -m intent_packages.factory_cli "\$@"
+PYTHONPATH='$_CLONES/intent-packages/src'\${PYTHONPATH:+:\$PYTHONPATH} exec '$REPO_ROOT/.venv/bin/python' -P -m intent_packages.factory_cli "\$@"
 SHIM
   chmod 0755 "$_SHIMS/factory" || sds_outcome_fail \
     "FATAL: could not make the factory shim at $_SHIMS/factory executable"

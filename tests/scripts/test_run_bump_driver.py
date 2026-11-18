@@ -183,7 +183,7 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
     for name, body in (("bws", _BWS), ("gh", _GH), ("curl", _CURL), ("git", _GIT)):
         _executable(stubs / name, body)
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(exist_ok=True)
     logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "gh", "ping", "git")}
     for log in logs.values():
         log.write_text("")
@@ -316,6 +316,16 @@ def test_the_state_directory_must_be_set(tmp_path: Path) -> None:
     assert run.lane_reads() == [] and run.passes() == []
 
 
+@pytest.mark.parametrize("existing", ["Projects", ".local"])
+def test_a_home_that_is_not_new_fails_before_any_read(tmp_path: Path, existing: str) -> None:
+    """The clones and the shim go under `HOME`, so a real one is refused before anything."""
+    (tmp_path / "home" / existing).mkdir(parents=True)
+    run = _run(tmp_path)
+    assert run.code == 1, run.output
+    assert "is not a new directory" in run.output
+    assert run.lane_reads() == [] and run.logs["git"] == [] and run.passes() == []
+
+
 @pytest.mark.parametrize("args", [(), ("--dry-run",)], ids=["acting", "dry-run"])
 def test_no_token_reaches_an_argument(tmp_path: Path, args: tuple[str, ...]) -> None:
     run = _run(tmp_path, *args, FAKE_RUN_FACTORY="1")
@@ -433,7 +443,7 @@ def test_factory_is_the_images_interpreter_on_the_clone(tmp_path: Path) -> None:
         f"factory pythonpath={projects}/intent-packages/src:{env['FACTORY_PYTHONPATH']}",
     ]
     shim = (run.home / ".local" / "bin" / "factory").read_text()
-    assert f"exec '{root}/.venv/bin/python' -m intent_packages.factory_cli" in shim
+    assert f"exec '{root}/.venv/bin/python' -P -m intent_packages.factory_cli" in shim
 
 
 # ---- the pass --------------------------------------------------------------------------------
