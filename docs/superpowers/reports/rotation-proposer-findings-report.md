@@ -247,6 +247,10 @@ alert is meant to reach a person: it's an exposure, which Infra Brain rule 1032 
   `orchestrator_test_hq_w_209`, `SECURITY_STANDARDS_DIR` set to the fixture, and `PGTZ=UTC`: ruff
   check, ruff format, pyright (0 errors) and shellcheck all pass. **15,482 tests passed, 1
   skipped**, from the unfiltered log.
+  After that run, the code review changed one string in the age detail and its test. After that
+  edit, ruff, format and pyright pass, and the 406 tests in `tests/rotation_proposer` pass.
+- CI on PR #737 at `aa933f6e`, the head with that fix: `Quality` (9m42s), `Rollout transcription
+  currency` and `Runner consumer compatibility` all pass.
 - The new tests cover these cases:
   - each severity and kind, from the literal payload;
   - resolving on the next pass that doesn't report it;
