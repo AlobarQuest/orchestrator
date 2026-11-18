@@ -18,7 +18,7 @@ dependencies = [
   "pydantic-settings>=2.15.0",
   "python-multipart>=0.0.9",
   "pyyaml>=6.0",
-  "sqlalchemy>=2.0",
+  "sqlalchemy>=2.1.6",
   # The zone database `zoneinfo` reads, declared rather than inherited. The policy artifact's
   # change windows name IANA zones, so a runtime without one cannot load the artifact -- and a
   # document that does not load permits nothing, which is fail-closed and also a halt. The runtime
