@@ -1028,9 +1028,9 @@ its own change or act.
    can't show this. Amendment 13 needs these, as step 3g-3-inputs, before the acting pass:
    - Devon's acts: the read-only App installed on `AlobarQuest/code-standards` (`contents: read`),
      and a read grant on the factory-events read password (`2f708d08-…`) to the lane account.
-   - security-standards: the nightly's `mac_conformance.reported` adapter in
-     `adapt --source all`, its `source.system` value in the event schema, and the
-     credential-less `mac-conformance-facts` registry agent.
+   - security-standards: the nightly's adapter for the new event in `adapt --source all`, its
+     `source.system` value in the event schema, and one credential-less registry agent. The names
+     are HQ's proposals in the amendment (`mac_conformance.reported`, `mac-conformance-facts`).
    - This repository: code-standards in `CLONED` and the read mint; the launcher's clone into
      `$HOME/Developer/code-standards`, its `code-standards` shim and `tomlkit` for the image's
      interpreter, the wider new-`HOME` guard, the chain read and the files it writes under `HOME`;
