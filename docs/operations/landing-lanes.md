@@ -761,6 +761,28 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   `bump-act-refused:<repo>:<unit>` for a refused dispatch or merge, and
   `bump-run-unclaimed:<repo>:<unit>` above. Each resolves when its subject clears, and is held while
   its repository's records can't be read. A person's own proposal never alerts.
+- **The Mac's conformance facts, in the lane's container** (ADR-0059 Amendment 13, D-62 C). The
+  claim's `infra` and `checks` cells read the Mac's infra-drift report and its LaunchAgent and hook
+  wiring. The container reads them from the newest `mac_conformance.reported` event in the
+  factory-events chain, which the Mac's 03:30 nightly appends. Every container pass, dry or acting,
+  walks the chain (`orchestrator.factory_chain_read`, newest by `timestamp`, never by `seq`) and
+  hands the driver `--conformance-facts`. A bump whose member declares `infra`, or a
+  `launchagent:` or `hook:` required check, is `held` before its decomposition, proposing nothing,
+  while the chain didn't verify, there is no usable event, the report was unreadable, an instance
+  isn't ok, or the report is older than 35 hours (the matrix's bound is 36; the hour covers the
+  time until the generator measures again). It raises `bump-conformance-facts`, one key for the
+  lane, which resolves only on a pass whose facts are usable. A member that reads nothing from the
+  event isn't held, and while no bump needs the facts nothing fires, however stale they are; each
+  pass's report still prints `conformance facts: usable …` or `unusable: <reason>`. A member that
+  declares a wiring entry the event doesn't list is held under
+  `bump-conformance-wiring:<repo>`: add the entry to security-standards' `WIRING` set
+  (`factory_events.adapters.mac_conformance`). With usable facts, an acting pass writes them under
+  its `HOME` where project-standards reads them: the report, an empty plist per present
+  LaunchAgent and a `settings.json` registering each present hook. On the Mac the launcher walks no
+  chain and the driver reads its own files, so none of this happens there. A `held` bump is a
+  finding (exit 2), delivered as its alert. The `code` cell reads a shallow clone of
+  code-standards at `main` in `~/Developer/code-standards`, through a shim on the image's
+  interpreter.
 - **One acting pass at a time.** It holds an `fcntl` lock on `pass.lock` in the state directory, so a
   hand-run pass can't reset a mirror under a running `factory`. A second acting pass prints that and
   exits 0, a finding in neither. `--dry-run` takes no lock.

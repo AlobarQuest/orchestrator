@@ -10,8 +10,8 @@ one-off `docker exec` alike. It starts the launcher with exactly the variables b
 - `TZ` and `SDS_DEADMAN_PING_URL_UUID` (a BWS UUID, not a secret).
 - Each lane state variable in `STATE_VARIABLES`, only when the container's environment sets it.
 - The factory-events chain's three non-secret settings in `CHAIN_SETTINGS` (ADR-0055 amendment 26
-  item 3), which only the work carrier's compose sets. Its read password is a secret, so it isn't
-  here: the launcher reads it from BWS with the token.
+  item 3), which only the work carrier's and the bump driver's composes set. Its read password is
+  a secret, so it isn't here: the launcher reads it from BWS with the token.
 - infraops' two directory settings in `INFRAOPS_SETTINGS`, which only the rotation proposer's
   compose sets: where `cred-findings` finds `cred-consumers.list` and `cred-rotation-state.json`.
   The launcher refuses a pass with either unset, so it never falls back to `HOME`.
@@ -65,7 +65,7 @@ STATE_VARIABLES = (
     "WORK_WATCHER_STATE_DIR",
 )
 # The chain's host, port and database (never its password), each a plain value in the work
-# carrier's compose; the launcher passes them to the carry and the chain verify alone.
+# carrier's and the bump driver's composes; each launcher passes them to its chain reads alone.
 CHAIN_SETTINGS = ("FACTORY_EVENTS_DB_HOST", "FACTORY_EVENTS_DB_PORT", "FACTORY_EVENTS_DB_NAME")
 # infraops' list and state directories (`src/security-drift/paths.ts`), each a plain value in the
 # rotation proposer's compose; the launcher hands them to `cred-findings` through the program.

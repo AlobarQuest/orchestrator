@@ -3,9 +3,11 @@
 The real launcher runs under `env -i` from a throwaway tree, with what `lane-run` passes it in the
 container: the lane's token as `BWS_ACCESS_TOKEN`, the state directory, `PATH` and a new `HOME`.
 `bws`, `gh`, `curl` and `git` are stubs on PATH; the `git` stub "clones" by writing a stand-in
-`intent_packages.factory_cli` into the destination, so the `factory` shim runs for real. In the
-venv, `bump-driver` and `sds-github-mint` are stubs that log what reached them, and `python` is the
-real interpreter (`sds-bws.sh` parses BWS's JSON with it, and the shim runs it). On the Mac the two
+`intent_packages.factory_cli` and `code_standards.cli` into the destination, so the `factory` and
+`code-standards` shims run for real. In the venv, `bump-driver` and `sds-github-mint` are stubs
+that log what reached them, and `python` runs the real interpreter (`sds-bws.sh` parses BWS's JSON
+with it, and the shims run it) except for `-m orchestrator.factory_chain_read`, the chain walk,
+which a stand-in answers with `$FAKE_WALK` after logging what reached it. On the Mac the two
 identities are stand-ins, so no test reads the Keychain. Nothing reads BWS, GitHub,
 change-manager, the orchestrator, alert-hub, the Brains or Healthchecks.
 
@@ -16,6 +18,7 @@ branch, unedited.
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,11 +42,24 @@ READ_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 CODE_BRAIN_UUID = "750f737f-4cb6-4876-9a98-b48200ea1c0b"
 INFRA_BRAIN_UUID = "da8134b0-565f-45c8-8965-b48200ea1c40"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
+CHAIN_READ_UUID = "2f708d08-ea5d-4d11-bde0-b50200c9a60b"
 HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
-# The Mac's five, in the Mac's order, then the App key the mint needs.
+# The Mac's five, in the Mac's order, then the chain's read password and the App key the mint needs.
 FIVE = (SYSTEM_UUID, ALERT_UUID, READ_UUID, CODE_BRAIN_UUID, INFRA_BRAIN_UUID)
-LANE_SECRETS = (*FIVE, READ_APP_KEY_UUID)
-CLONES = ("intent-packages", "project-standards", "security-standards")
+LANE_SECRETS = (*FIVE, CHAIN_READ_UUID, READ_APP_KEY_UUID)
+CLONES = ("intent-packages", "project-standards", "security-standards", "code-standards")
+CHAIN_SETTINGS = {
+    "FACTORY_EVENTS_DB_HOST": "b82fa1vg5whecgnjreuqb5tk",
+    "FACTORY_EVENTS_DB_PORT": "5432",
+    "FACTORY_EVENTS_DB_NAME": "postgres",
+}
+# A verified walk's record, as `orchestrator.factory_chain_read` prints it, with no event yet.
+VERIFIED_WALK = (
+    '{"outcome": "verified", "seq": 7, "head": "abcdef012345", "events": 7, '
+    '"package_approved": [], "portfolio_scan": {"scan": null}, '
+    '"mac_conformance": {"event": null, "reason": "no mac_conformance.reported event in the chain",'
+    ' "skipped": 0, "skipped_reason": null}}'
+)
 
 LANE_TOKEN = "a-lane-token"
 READ_TOKEN = "ghs-minted-read-token"
@@ -72,14 +88,16 @@ _CURL = '#!/bin/sh\necho "curl $*" >> "$PING_LOG"\nexit 1\n'
 # git: logs its argv and the credential git's environment carries, refuses a URL naming
 # `$GIT_REFUSES`, and otherwise writes a stand-in intent-packages module into the destination.
 _GIT = """#!/bin/bash
+# Records whether the chain's read password is in its environment.
+echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
 echo "git args=$* count=${GIT_CONFIG_COUNT:-} key0=${GIT_CONFIG_KEY_0:-} \\
 value0=${GIT_CONFIG_VALUE_0:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$STUB_GIT_LOG"
 if [ -n "${GIT_REFUSES:-}" ]; then
   case "$*" in *"$GIT_REFUSES"*) echo "fatal: repository not found" >&2; exit 128 ;; esac
 fi
 dest="${@: -1}"
-mkdir -p "$dest/src/intent_packages"
-touch "$dest/src/intent_packages/__init__.py"
+mkdir -p "$dest/src/intent_packages" "$dest/src/code_standards"
+touch "$dest/src/intent_packages/__init__.py" "$dest/src/code_standards/__init__.py"
 cat > "$dest/src/intent_packages/factory_cli.py" <<'PY'
 import os
 import sys
@@ -88,11 +106,38 @@ if __name__ == "__main__":
     print("factory argv=" + " ".join(sys.argv[1:]))
     print("factory pythonpath=" + os.environ.get("PYTHONPATH", ""))
 PY
+cat > "$dest/src/code_standards/cli.py" <<'PY'
+import os
+import sys
+
+import tomlkit
+
+if __name__ == "__main__":
+    print("code-standards argv=" + " ".join(sys.argv[1:]) + " tomlkit=" + tomlkit.__name__)
+    print("code-standards pythonpath=" + os.environ.get("PYTHONPATH", ""))
+    print("code-standards path0=" + sys.path[0])
+PY
+"""
+# python: the chain walk is a stand-in that logs what reached it; everything else is the real
+# interpreter.
+_PYTHON = """#!/bin/bash
+if [ "${1:-}" = -m ] && [ "${2:-}" = orchestrator.factory_chain_read ]; then
+  echo "walk args=$* password=${FACTORY_EVENTS_READ_PASSWORD:-} \\
+host=${FACTORY_EVENTS_DB_HOST:-} port=${FACTORY_EVENTS_DB_PORT:-} \\
+name=${FACTORY_EVENTS_DB_NAME:-} pythonpath=${PYTHONPATH:-} \\
+lane_token=${BWS_ACCESS_TOKEN:+set} github=${BUMP_DRIVER_GITHUB_TOKEN:+set}" >> "$LANE_LOG"
+  echo "a driver's text with connection details" >&2
+  printf '%s\\n' "$FAKE_WALK"
+  exit "${FAKE_WALK_RC:-0}"
+fi
+exec "__PYTHON__" "$@"
 """
 # bump-driver: `repositories` logs what it was handed and prints the lane's list; a pass logs its
 # argv and every variable it was handed, one per line, and runs `factory` as the generator does
 # when asked to.
 _DRIVER = """#!/bin/bash
+# Records whether the chain's read password is in its environment.
+echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
 if [ "$1" = repositories ]; then
   echo "derive args=$* lane_token=${BWS_ACCESS_TOKEN:+set} \\
 system=${ORCHESTRATOR_API_TOKEN:-} key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-}" >> "$LANE_LOG"
@@ -109,6 +154,13 @@ fi
 {
   echo "driver args=$*"
   env | sort | sed 's/^/driver-env /'
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --conformance-facts ]; then
+      echo "driver-facts $(cat "$2")"
+      echo "$2" > "$LANE_LOG.facts-path"
+    fi
+    shift
+  done
 } >> "$LANE_LOG"
 if [ -n "${FAKE_RUN_FACTORY:-}" ]; then
   env -i PATH="$PATH" HOME="$HOME" PYTHONPATH="$FACTORY_PYTHONPATH" \\
@@ -118,6 +170,8 @@ echo "a bump-driver report line"
 exit "${FAKE_DRIVER_RC:-0}"
 """
 _MINT = """#!/bin/bash
+# Records whether the chain's read password is in its environment.
+echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
 key="$(cat)"
 echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
@@ -165,6 +219,11 @@ class Run:
     def passes(self) -> list[str]:
         return self.lines("driver")
 
+    def facts(self) -> dict:
+        """The conformance facts file the driver was handed."""
+        [line] = self.lines("driver-facts")
+        return json.loads(line.removeprefix("driver-facts "))
+
 
 def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
     """A `None` in `fake` removes that variable from the launcher's environment."""
@@ -175,7 +234,9 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
         shutil.copy(Path("scripts") / helper, root / "scripts" / helper)
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
-    (venv / "python").symlink_to((Path.cwd() / ".venv" / "bin" / "python").resolve())
+    # The venv's own path, not its resolved target, so the interpreter keeps the venv's packages.
+    real = str(Path.cwd() / ".venv" / "bin" / "python")
+    _executable(venv / "python", _PYTHON.replace("__PYTHON__", real))
     _executable(venv / "bump-driver", _DRIVER)
     _executable(venv / "sds-github-mint", _MINT % READ_TOKEN)
     stubs = tmp_path / "stubs"
@@ -202,6 +263,8 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
         "GH_LOG": str(logs["gh"]),
         "PING_LOG": str(logs["ping"]),
         "STUB_GIT_LOG": str(logs["git"]),
+        "FAKE_WALK": VERIFIED_WALK,
+        **CHAIN_SETTINGS,
         **fake,
     }
     result = subprocess.run(
@@ -316,9 +379,12 @@ def test_the_state_directory_must_be_set(tmp_path: Path) -> None:
     assert run.lane_reads() == [] and run.passes() == []
 
 
-@pytest.mark.parametrize("existing", ["Projects", ".local"])
+@pytest.mark.parametrize(
+    "existing", ["Projects", "Developer", ".local", "infra-drift", "Library", ".claude"]
+)
 def test_a_home_that_is_not_new_fails_before_any_read(tmp_path: Path, existing: str) -> None:
-    """The clones and the shim go under `HOME`, so a real one is refused before anything."""
+    """The clones, the shims and the Mac's facts go under `HOME`, so a real one is refused before
+    anything: each path the pass writes, `Developer` and the driver's three included."""
     (tmp_path / "home" / existing).mkdir(parents=True)
     run = _run(tmp_path)
     assert run.code == 1, run.output
@@ -401,21 +467,30 @@ def test_a_failed_mint_fails_the_pass(tmp_path: Path) -> None:
 # ---- the clones and `factory` ----------------------------------------------------------------
 
 
-def test_the_three_clones_are_shallow_at_main_under_home_with_the_read_token(
+def test_the_four_clones_are_shallow_at_main_under_home_with_the_read_token(
     tmp_path: Path,
 ) -> None:
+    """code-standards goes to `~/Developer`, the one path the matrix resolves for it."""
     run = _run(tmp_path)
     assert run.code == 0, run.output
     header = (
         "AUTHORIZATION: basic " + base64.b64encode(f"x-access-token:{READ_TOKEN}".encode()).decode()
     )
-    projects = run.home / "Projects"
+    destinations = {name: run.home / "Projects" / name for name in CLONES}
+    destinations["code-standards"] = run.home / "Developer" / "code-standards"
     assert run.logs["git"] == [
         f"git args=clone --quiet --depth 1 --single-branch --branch main"
-        f" https://github.com/AlobarQuest/{name}.git {projects / name}"
+        f" https://github.com/AlobarQuest/{name}.git {destinations[name]}"
         f" count=1 key0=http.https://github.com/.extraheader value0={header} lane_token="
         for name in CLONES
     ]
+
+
+def test_the_cloned_repositories_are_the_programs() -> None:
+    """The launcher clones exactly what `bump-driver repositories` puts in the read mint."""
+    from bump_driver.cli import CLONED
+
+    assert sorted(f"AlobarQuest/{name}" for name in CLONES) == sorted(CLONED)
 
 
 def test_a_failed_clone_fails_the_pass_with_gits_message(tmp_path: Path) -> None:
@@ -446,6 +521,38 @@ def test_factory_is_the_images_interpreter_on_the_clone(tmp_path: Path) -> None:
     assert f"exec '{root}/.venv/bin/python' -P -m intent_packages.factory_cli" in shim
 
 
+def test_code_standards_is_the_images_interpreter_on_the_clone_at_the_path_the_matrix_tries_first(
+    tmp_path: Path,
+) -> None:
+    """`checkers._code_cmd` runs `~/Developer/code-standards/.venv/bin/code-standards` when it is
+    a file, else `uv run`, which would reach PyPI. The shim is that file: the image's interpreter,
+    whose venv carries `tomlkit`, on the clone's `src`, with the caller's directory (a member's
+    mirror) kept off `sys.path`."""
+    run = _run(tmp_path)
+    assert run.code == 0, run.output
+    clone = run.home / "Developer" / "code-standards"
+    shim = clone / ".venv" / "bin" / "code-standards"
+    root = tmp_path / "tree"
+    assert f"exec '{root}/.venv/bin/python' -P -m code_standards.cli" in shim.read_text()
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    (mirror / "code_standards").mkdir()  # a shadowing package in the caller's directory
+    result = subprocess.run(
+        [str(shim), "check", "--repo", str(mirror)],
+        cwd=mirror,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": "/claim/path"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        f"code-standards argv=check --repo {mirror} tomlkit=tomlkit",
+        f"code-standards pythonpath={clone}/src:/claim/path",
+        f"code-standards path0={clone}/src",
+    ]
+
+
 # ---- the pass --------------------------------------------------------------------------------
 
 
@@ -454,8 +561,102 @@ def test_the_driver_runs_with_the_launchers_arguments_and_its_report_is_kept(
     tmp_path: Path, args: tuple[str, ...]
 ) -> None:
     run = _run(tmp_path, *args)
-    assert run.passes() == [f"driver args={' '.join(args)}"]
+    [driver] = run.passes()
+    path = (tmp_path / "lane.log.facts-path").read_text().strip()
+    assert driver == " ".join(["driver args=", *args, "--conformance-facts", path]).replace(
+        "= ", "=", 1
+    )
     assert "a bump-driver report line" in run.result.stdout
+    # The file is under the pass's `HOME`, which `lane-run` discards on every exit path.
+    assert Path(path).parent == run.home
+
+
+# ---- the chain walk (ADR-0059 Amendment 13 decision item 4) ------------------------------------
+
+
+@pytest.mark.parametrize("args", [(), ("--dry-run",)], ids=["acting", "dry-run"])
+def test_every_pass_walks_the_chain_once_with_the_password_and_the_images_security_standards(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    run = _run(tmp_path, *args)
+    assert run.code == 0, run.output
+    root = tmp_path / "tree"
+    assert run.lines("walk") == [
+        f"walk args=-m orchestrator.factory_chain_read password={value(CHAIN_READ_UUID)}"
+        " host=b82fa1vg5whecgnjreuqb5tk port=5432 name=postgres"
+        f" pythonpath={root}/security-standards/src lane_token= github=set"
+    ]
+    # A verified walk's selection reaches the driver; only its summary reaches the report.
+    assert run.facts() == {
+        "verified": True,
+        "summary": "outcome=verified seq=7 head=abcdef012345 events=7 exit=0",
+        "mac_conformance": json.loads(VERIFIED_WALK)["mac_conformance"],
+    }
+    assert "[chain] outcome=verified seq=7 head=abcdef012345 events=7 (exit 0)" in run.output
+    assert "connection details" not in run.output
+    assert "package_approved" not in run.output
+
+
+def test_the_read_password_reaches_the_chain_walk_and_no_other_process(tmp_path: Path) -> None:
+    """Never exported, never in an argument: not the derive, the mint, git, the driver or
+    `factory`, and nowhere in the output."""
+    password = value(CHAIN_READ_UUID)
+    run = _run(tmp_path, FAKE_RUN_FACTORY="1", FACTORY_EVENTS_READ_PASSWORD="ambient")
+    assert run.code == 0, run.output
+    [walk] = run.lines("walk")
+    assert f"password={password} " in walk
+    others = [line for line in run.logs["lane"] if not line.startswith("walk ")]
+    others += run.logs["git"] + run.logs["bws"] + run.logs["ping"]
+    assert others and not [line for line in others if password in line or "ambient" in line]
+    env = run.env()
+    assert "FACTORY_EVENTS_READ_PASSWORD" not in env and "CHAIN_PASSWORD" not in env
+    assert not [name for name in env if name.startswith(("FACTORY_EVENTS_", "CHAIN_"))]
+    assert password not in run.output
+    scans = run.lines("envscan")
+    # derive, mint, four clones, the pass: none holds the password in its environment.
+    assert len(scans) == 7 and all(line.endswith(" 0") for line in scans), scans
+
+
+@pytest.mark.parametrize(
+    ("walk", "rc", "summary"),
+    [
+        (
+            '{"outcome": "broken", "seq": 4, "head": "abcdef012345", "events": 4,'
+            ' "error": "seq 4: hash mismatch"}',
+            2,
+            "outcome=broken seq=4 head=abcdef012345 events=4 error=seq 4: hash mismatch exit=2",
+        ),
+        (
+            '{"outcome": "failure", "error_type": "OperationalError"}',
+            2,
+            "outcome=failure error_type=OperationalError exit=2",
+        ),
+        ("not json", 2, "outcome=unreadable exit=2"),
+        ("", 1, "outcome=unreadable exit=1"),
+        # A verified record from a walk that exited non-zero is not a verified walk.
+        (VERIFIED_WALK, 2, "outcome=verified seq=7 head=abcdef012345 events=7 exit=2"),
+    ],
+    ids=["broken", "failure", "unreadable", "empty", "verified-but-failed"],
+)
+def test_a_walk_that_did_not_verify_reaches_the_driver_as_unverified_and_the_pass_goes_on(
+    tmp_path: Path, walk: str, rc: int, summary: str
+) -> None:
+    """The driver holds every bump that reads the facts and alerts; dispatches and merges of bumps
+    already decomposed don't wait on the chain, so the pass still runs."""
+    run = _run(tmp_path, FAKE_WALK=walk, FAKE_WALK_RC=str(rc))
+    assert run.code == 0, run.output
+    assert run.facts() == {"verified": False, "summary": summary}
+    assert len(run.passes()) == 1
+
+
+@pytest.mark.parametrize("setting", sorted(CHAIN_SETTINGS))
+def test_a_missing_chain_setting_fails_the_pass_before_any_read(
+    tmp_path: Path, setting: str
+) -> None:
+    run = _run(tmp_path, **{setting: None})
+    assert run.code == 1, run.output
+    assert f"FATAL: {setting} is not set in the lane's container" in run.output
+    assert run.lane_reads() == [] and run.passes() == [] and run.lines("walk") == []
 
 
 @pytest.mark.parametrize(("rc", "expected"), [(0, 0), (1, 1), (2, 2), (3, 3), (127, 1)])
@@ -521,7 +722,12 @@ def test_on_the_mac_the_identities_and_gh_are_as_before_and_nothing_is_minted(
         f"{run.home}/Projects/project-standards/src:{run.home}/Projects/security-standards/src"
     )
     assert "BUMP_DRIVER_STATE_DIR" not in env and "BWS_ACCESS_TOKEN" not in env
+    # The Mac reads its own files (Amendment 13 decision item 2): no chain walk, no read password,
+    # no facts file, so the driver holds nothing for the chain and writes nothing under HOME.
     assert run.passes() == [f"driver args={' '.join(args)}"]
+    assert run.lines("walk") == [] and run.lines("driver-facts") == []
+    assert CHAIN_READ_UUID not in [uuid for uuid, _ in run.reads()]
+    assert not (run.home / "Developer").exists()
 
 
 def test_on_the_mac_a_preset_github_token_is_used_as_before(tmp_path: Path) -> None:
@@ -551,14 +757,23 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BUMP_DRIVER_STATE_DIR": "/var/lib/sds/bump-driver",
             # A placeholder until the lane's ping-URL secret exists.
             "SDS_DEADMAN_PING_URL_UUID": "",
+            # The work carrier's three chain settings: the chain's container inside `coolify`.
+            **CHAIN_SETTINGS,
         },
         "volumes": ["sds-lanes-bump-driver-state:/var/lib/sds/bump-driver"],
+        # The chain walk connects to a separate Coolify database resource (workspace invariant).
+        "networks": ["coolify"],
         "restart": "unless-stopped",
     }
     document = yaml.safe_load(COMPOSE.read_text())
-    # No `networks`, the `coolify` network included: every service it calls is an HTTPS URL.
-    assert set(document) == {"services", "volumes"}
+    assert set(document) == {"services", "volumes", "networks"}
     assert document["volumes"] == {"sds-lanes-bump-driver-state": None}
+    assert document["networks"] == {"coolify": {"external": True}}
+    carrier = deploy.lane_service(
+        Path("lanes/work-carrier/compose.yaml").read_text(), "work-carrier"
+    )
+    assert {k: carrier["environment"][k] for k in CHAIN_SETTINGS} == CHAIN_SETTINGS
+    assert set(CHAIN_SETTINGS) == set(lane_run.CHAIN_SETTINGS)
     assert deploy._state_volume(service, "bump-driver") == "sds-lanes-bump-driver-state"
     assert "bump-driver" in deploy.STATEFUL_LANES
     assert deploy.LANE_CHECKS["bump-driver"] == "sds-bump-driver"
@@ -594,8 +809,9 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 
 def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it: its six secrets. Its
-    ping-URL secret joins them when it exists. The launcher names each secret it reads."""
+    """The lane's `--token` proof reads what the manifest lists for it: its seven secrets, the
+    chain's read password included. Its ping-URL secret joins them when it exists. The launcher
+    names each secret it reads."""
     manifest = Path(".bws-secrets.toml").read_text()
     secrets = deploy.lane_secrets(manifest, "bump-driver")
     assert sorted(secrets) == sorted(LANE_SECRETS)

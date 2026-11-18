@@ -1,8 +1,14 @@
 # sds-lane-bump-driver (ADR-0059 increment 5, step 3g-3): the bump-driver lane. HQ creates the
 # resource from this file. It serves nothing: no port, no domain, so no Traefik labels.
-# It joins no network beyond the resource's own, the `coolify` network included: it reaches no
-# separate Coolify database resource. Every service it calls (change-manager, the orchestrator,
-# alert-hub, GitHub, the Brains) is an HTTPS URL, each at the program's default.
+# It joins the external `coolify` network, because each pass's chain walk connects to a separate
+# Coolify database resource, the factory-events chain, to read the Mac's conformance facts
+# (ADR-0059 Amendment 13 decision items 4 and 7; workspace invariant: a compose service that
+# connects to a separate Coolify database resource joins `coolify`). The three chain settings are
+# the work carrier's plain values (`lanes/work-carrier/compose.yaml`): the resource's container
+# `b82fa1vg5whecgnjreuqb5tk`, answering on `5432` inside the network. `lane-run` passes them on,
+# and the launcher refuses a pass with any of them empty. Every other service it calls
+# (change-manager, the orchestrator, alert-hub, GitHub, the Brains) is an HTTPS URL, each at the
+# program's default.
 # It writes nothing to GitHub: it dispatches and lands through the orchestrator as SYSTEM.
 # Its state is the driver's `alerts.json`, `pass.lock` and `mirrors/`, on a named volume at
 # `BUMP_DRIVER_STATE_DIR`; the Mac's `sds/bump-driver/alerts.json` is copied in at cut-over, before
@@ -14,8 +20,7 @@
 # `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
 # and not the ping URL, which a later change writes here. While it's empty the outcome alarm
 # resolves no ping URL in the container and pings nothing; the pass itself still runs.
-# The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on, which waits on
-# an ADR-0059 amendment deciding the conformance claim's Mac-only inputs in the container
+# The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on
 # (`docs/operations/deploy.md`, the bump driver's cut-over).
 services:
   bump-driver:
@@ -26,9 +31,18 @@ services:
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       BUMP_DRIVER_STATE_DIR: /var/lib/sds/bump-driver
       SDS_DEADMAN_PING_URL_UUID: ""
+      FACTORY_EVENTS_DB_HOST: b82fa1vg5whecgnjreuqb5tk
+      FACTORY_EVENTS_DB_PORT: "5432"
+      FACTORY_EVENTS_DB_NAME: postgres
     volumes:
       - sds-lanes-bump-driver-state:/var/lib/sds/bump-driver
+    networks:
+      - coolify
     restart: unless-stopped
 
 volumes:
   sds-lanes-bump-driver-state:
+
+networks:
+  coolify:
+    external: true

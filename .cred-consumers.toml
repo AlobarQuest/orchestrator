@@ -1415,6 +1415,13 @@ rotated_by_sds = false
   healthchecks_check = "sds-work-carrier"
   note = "read in the sds-lane-work-carrier container with the lane's own token, each pass (bare or --register); held by the work-carrier lane account (ADR-0059 step 3f-2); passed to work-carrier and its chain verify alone, never work-watcher"
 
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-bump-driver.sh"
+  healthchecks_check = "sds-bump-driver"
+  note = "read in the sds-lane-bump-driver container with the lane's own token, each pass (dry or acting); held by the bump-driver lane account by Devon's grant (ADR-0059 Amendment 13 decision item 7, D-62 C); passed to the orchestrator.factory_chain_read walk alone, never factory, git, the mint or bump-driver"
+
 # ── The Mac Keychain tokens this repository's launchers read for the chain (FE-5 plan follow-up 1) ──
 # Minted by Devon at FE-5 act step 0. Console-minted, hand-rotated. The act ran step 0 on 2026-11-15
 # by D-54 A: each token reached its Keychain item from a BWS copy in Rotation / Keepers, which

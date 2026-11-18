@@ -24,6 +24,10 @@ dependencies = [
   # document that does not load permits nothing, which is fail-closed and also a halt. The runtime
   # base image ships a system zone database today; this makes that true of any image.
   "tzdata>=2026.5",
+  # code-standards' one runtime dependency. The bump-driver lane's container runs code-standards
+  # from a clone on this image's interpreter, with no venv and no PyPI reach (ADR-0059 Amendment
+  # 13 decision item 1), so its conformance claim's `code` cell can run at all.
+  "tomlkit>=0.15.1",
   "typer>=0.27.1",
   "uvicorn[standard]>=0.52.1",
 ]
