@@ -233,12 +233,10 @@ alert is meant to reach a person: it's an exposure, which Infra Brain rule 1032 
 
 ## Checks run
 
-- `make check`, with the worktree's venv, `TEST_DATABASE_URL` set to `orchestrator_test_hq_w_209`,
-  `SECURITY_STANDARDS_DIR` set to the fixture, and `PGTZ=UTC`: ruff check, ruff format, pyright (0
-  errors) and shellcheck all pass. **15,482 tests passed, 1 skipped**, from the unfiltered log. That
-  run came before two edits: the `False` defaults on `_pass` and `_walks` became required keywords,
-  and the `CLAUDE.md` bullet was added. After those edits, ruff, format and pyright pass, and the 475
-  tests in `tests/rotation_proposer` and the two launcher test files pass.
+- `make check` on the final tree, with the worktree's venv, `TEST_DATABASE_URL` set to
+  `orchestrator_test_hq_w_209`, `SECURITY_STANDARDS_DIR` set to the fixture, and `PGTZ=UTC`: ruff
+  check, ruff format, pyright (0 errors) and shellcheck all pass. **15,482 tests passed, 1
+  skipped**, from the unfiltered log.
 - The new tests cover these cases:
   - each severity and kind, from the literal payload;
   - resolving on the next pass that doesn't report it;
