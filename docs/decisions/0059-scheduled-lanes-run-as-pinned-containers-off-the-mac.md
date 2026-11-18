@@ -3670,3 +3670,332 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Amendment 9, "Verify in increment 4", "How infra-drift's credential scan reads the rotation state" (lines 3029-3044) | Closed as to the decision: decision items 1 to 4 decide the file's home and what the Mac scan stops reporting. Its checks carry to this amendment's verify items. |
 | Amendment 9's row on decision 5, "How infra-drift's Mac credential scan reads the state once that increment decides its home is carried by 'Verify in increment 4'" (line 3059) | Answered by decision item 3. The rest of the row stands. |
 | Amendment 9's row on increment 9, "It is the drift audit that feeds the rotation proposer" (line 3065) | Stands. "both read the same `cred-consumers.list` and `cred-rotation-state.json`" holds until the infraops change merges, after which they share only the list's content. "The shared state file is the subject of 'Verify in increment 4'" is answered by this amendment. |
+
+## Amendment 13 (2026-11-18): the bump driver's conformance claim reads code-standards from a clone and the Mac's facts from the factory-events chain
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
+  D-12, limit 3). The ADR's own status is unchanged.
+- **Decided by:** Devon, on 2026-11-18 in an interactive session, answering HQ D-62 (sds-hq
+  `state/decisions.md` at `902da11b`). D-62 asked: "Bump driver's move to the VPS (ADR-0059
+  increment 5, step 3g-3): its conformance claim, which every bump must pass before dispatch,
+  reads three inputs only the Mac has. code-standards (the private AlobarQuest/code-standards
+  checkout; can fail all 8 members with a PROJECT.md), the latest infra-drift report under 36
+  hours old (can fail brain and change-manager), and the LaunchAgent and Claude hook wiring checks
+  (5 Mac entries across change-manager, security-standards, project-standards). In a container
+  each reads as unknown or violation, so every bump would be approved but never dispatched. How
+  should the container get them? (A) Weaker gate, nothing new: in the container only, skip all
+  three; a small orchestrator change. (B) Install the read-only App alobar-sds-lanes-read on
+  code-standards (contents read, widens D-8's installation by one repository) so that check runs
+  in full; skip the infra-drift and Mac-wiring checks in the container only. (C) Same as B for
+  code-standards, and the 03:30 Mac nightly also records the infra-drift result and the Mac
+  wiring facts (ids and statuses only) as an event in the factory-events chain; the bump driver
+  reads it and holds a bump when it is missing or over 36 hours old. New: the bump driver becomes
+  a second chain reader (a read-password grant you give, a lane secret row, the coolify network
+  join), plus one registry actor and one source value." The recorded answer is "C. Devon, in an
+  interactive session, chose C (install alobar-sds-lanes-read on code-standards; the 03:30 nightly
+  records the infra-drift result and the Mac wiring facts, ids and statuses only, in the
+  factory-events chain; the bump driver reads it and holds a bump when it is missing or over 36
+  hours old)." (2026-11-18T11:18:24.092443+00:00). D-62 isn't a standing answer: it's about the bump driver's
+  conformance claim only and states no general rule.
+- **Relates to:** decision 1 (the clone bullet, lines 306-325); increment 5, the bump driver
+  (line 1035), and its cut-over steps in `docs/operations/deploy.md` (lines 1012-1024 at the
+  base); Amendment 11 (the work carrier's Mac feed through the chain, the closest precedent);
+  Amendment 9 and D-41 (infra-drift stays on the Mac, decision item 1, lines 3004-3009); Q6 and Q9
+  (D-8 and D-14, the read-only App's installations, lines 1506-1570); Amendment 8 decision item 1
+  and ADR-0055 amendment 25 (D-44 B and D-47: the work carrier as the chain's only reader, which
+  this answer widens by one); and ADR-0021 amendment 1 ("every signal has a machine home").
+
+Line numbers in this amendment are this file's at orchestrator `ad721fc0`, before the amendment
+was appended. The amendment appends only: no passage before it is rewritten, so each line cited
+here still holds the text it names. Where this amendment and an earlier passage disagree, this
+amendment governs once it's accepted. Sources outside this repository are cited at these commits:
+project-standards `4673d726`, code-standards `37de9024`, security-standards `23854235` and
+infraops-mcp-server `c3359bf1`. HQ's research for D-62 is W-214's report
+(`docs/superpowers/reports/bump-driver-conformance-inputs-report.md` at `06e98f61`); each fact
+used here was re-read at those commits, and each member's `PROJECT.md` declarations at its
+`main` on 2026-11-18.
+
+### Context
+
+The bump driver runs `factory decompose --no-execute` for each bump (`src/bump_driver/decompose.py`).
+The generator derives the unit's conformance claim from project-standards' compliance matrix, and
+dispatch refuses a unit whose claim isn't green (`conformance_not_green`,
+`src/orchestrator/services/execution/dispatch.py` line 587). The orchestrator approves such a
+decomposition first, so only a person superseding it clears the unit (`deploy.md` lines
+1021-1023). The generator's environment is an allowlist: `PATH`, `HOME`, `PYTHONPATH` (from
+`FACTORY_PYTHONPATH`), the two Brain keys and the mirrors' git settings
+(`_generator_environment`, `src/bump_driver/cli.py` lines 837-849). So every path the matrix reads
+resolves to its default under the pass's `HOME`. Three cells read inputs only the Mac has:
+
+- **`code`.** `check_code` (`checkers.py` lines 94-115) runs `code-standards check` from
+  `config.code_standards_repo()`, `~/Developer/code-standards` (`config.py` lines 41-43): its
+  `.venv/bin/code-standards` if that file exists, else `uv run --project` (`_code_cmd`, lines
+  80-84). In the container neither exists, so the cell is `unknown`, which no exception can mask.
+  The eight members with a `PROJECT.md` all declare `code`. On a mirror's clean tree the check
+  lints nothing: it measures that `.code-standards.toml` exists and parses, and that its pin
+  matches code-standards' `STANDARD_VERSION` (`1.1` at `37de9024`). code-standards' one runtime
+  dependency is `tomlkit` (its `pyproject.toml`), which this repository's `uv.lock` doesn't hold.
+- **`infra`.** `check_infra` (`checkers.py` lines 182-248) reads the newest `YYYY-MM-DD.json` in
+  `~/infra-drift/reports` (`config.py` lines 46-48). It gives `unknown` for every member declaring
+  `infra` when no report exists, when the report is unreadable, when its `generated_at` is more
+  than 36 hours old (`INFRA_MAX_AGE_H`, `config.py` line 8), or when any instance's `ok` is false.
+  Otherwise a member is `violation` when a proposal's target UUID or name is in its
+  `coolify_resources`, and `pass` when none is. brain and change-manager declare `infra`.
+  infra-drift writes the report at 03:00 New York time (infraops-mcp-server
+  `scripts/com.devon.infra-drift.plist.template`); the 2026-11-18 report's `generated_at` is
+  `2026-11-18T08:00:39Z`. infra-drift stays on the Mac (Amendment 9 decision item 1, D-41).
+- **`checks`.** `check_required_checks` (`wiring.py` lines 18-31) verifies each declared
+  required check. A `launchagent:<label>` entry passes when `~/Library/LaunchAgents/<label>.plist`
+  is a file (lines 132-141); a `hook:<name>` entry passes when a hook command in
+  `~/.claude/settings.json` has a token with that basename (lines 110-129). A missing file gives
+  `checks.not-wired`, so the cell is `violation`, not `unknown`. Five entries are Mac facts:
+  change-manager's `launchagent:com.devon.change-window`, security-standards'
+  `hook:bws-scan-gate.sh`, `launchagent:com.devon.security-scan` and
+  `launchagent:com.devon.factory-events`, and project-standards' `launchagent:com.devon.portfolio-scan`.
+  `github-actions:` entries read the mirror, which the container has.
+
+The factory-events nightly runs at 03:30 New York time (security-standards
+`scripts/com.devon.factory-events.plist.template`), after infra-drift's report. It already appends
+one Mac-produced input for a lane: Amendment 11's `portfolio.scanned` event, through
+`factory_events adapt --source all` (`src/factory_events/cli.py` lines 85-116), whose
+`portfolio_scan` adapter copies statuses only.
+
+### Decision
+
+1. **The `code` cell runs in full from a clone (D-62 C, as B).** Devon installs the read-only App
+   `alobar-sds-lanes-read` on `AlobarQuest/code-standards`, for contents read (D-62's words): one
+   repository beyond the set Q6 and Q9 name (D-8 and D-14, lines 609-622). An installation carries
+   every read permission the App holds (decision 2, lines 627-631); what a pass reads there is
+   bounded by its mint, and the lane reads only the clone's contents (verify items). code-standards becomes a fourth
+   decision 1 clone for the bump driver only:
+   - It joins the repositories the lane's read mint names (`CLONED`, `src/bump_driver/cli.py`
+     lines 148-154, which `bump-driver repositories` prints).
+   - The launcher clones it shallow at `main`, through `scripts/sds-git.sh` with the lane's read
+     token, as it clones the other three (`scripts/run-bump-driver.sh` lines 192-207), but into
+     `$HOME/Developer/code-standards`, the one path the claim resolves under the generator's
+     allowlist. The pass discards it with `HOME`.
+   - The cell runs without a venv and without PyPI reach: the launcher writes a shim at
+     `$HOME/Developer/code-standards/.venv/bin/code-standards` that runs the image's interpreter
+     on the clone's `src`, as the `factory` shim does (lines 214-226), so `_code_cmd` takes its
+     first branch. `tomlkit` reaches the image's interpreter by an orchestrator dependency change;
+     the code step chooses how (verify items).
+   - The launcher's new-`HOME` guard (lines 122-128) also refuses a `HOME` that already holds
+     `Developer` or any other path the pass writes.
+
+   The `code` cell then measures the same three things in the container as on the Mac, against
+   code-standards' `main` rather than the Mac's working copy (verify items).
+2. **The `infra` and `checks` cells read the Mac's facts from the chain (D-62 C).** The 03:30
+   nightly records that morning's infra-drift result and the Mac's wiring facts as one event in
+   the factory-events chain, during its `adapt` stage, so the verify that follows covers it. The
+   bump driver's container reads the newest such event and holds a bump whose member's claim reads
+   it when the event is missing, unusable, or reports an infra-drift report more than 36 hours old
+   (decision item 4). On the Mac the gate is unchanged: the Mac bump driver reads the Mac's files
+   directly and reads no event.
+3. **What the event holds (D-62 C: ids and statuses only).** No free text enters the
+   append-only chain, as Amendment 11's event holds statuses only. The report's proposals carry
+   `description`, `reasoning` and `question` text; none of it is copied.
+   - **The infra-drift part.** The report's own `generated_at`; each instance's name and `ok`; and
+     for each proposal, its id and its target's UUID and name. A newest report the nightly can't
+     read or parse is recorded as unreadable, not skipped, so the container reads `unknown` for
+     the infra cell at once, as the Mac does, instead of the previous day's event. Such a record
+     has no `generated_at`, so the code step sets its time and proves the reader takes it over the
+     previous day's event (verify items). A day with no
+     new report appends no new infra-drift part, so the container uses the newest event until it
+     ages out, as the Mac uses the newest file.
+   - **The wiring part.** The `launchagent:` labels whose plist is present in the Mac's
+     `~/Library/LaunchAgents` and the hook names registered in the Mac's `~/.claude/settings.json`,
+     each as an id with a present or absent status. No path, command line or settings content is
+     copied. Which labels and hooks the nightly reports is the code step's (verify items).
+   - **Keys.** The event holds no per-member verdict. Wherever it names a member it names the
+     full `owner/repo`, lowercased, never a directory name, as Amendment 11 decision item 1 does.
+   - **Envelope.** `timestamp` is the report's own `generated_at` (for an unreadable report, the
+     time the code step sets), as Amendment 11 puts the
+     source's own time in `timestamp`; the chain stores no append time. `event_id` is
+     deterministic from `source.system` and `source.ref` (`envelope.deterministic_event_id`), so
+     a nightly that finds the same inputs again appends nothing. `target` is null. The code step
+     chooses `result`, `source.ref` and the `evidence` layout within the schema
+     (`schema/factory-event.v1.schema.json`).
+   - **The bound.** The 36-hour bound keys on the report's `generated_at`, never on the event's
+     append or the nightly's run time.
+4. **The reader and the hold (orchestrator).** The bump driver's container reads the newest event
+   by `timestamp`, not by `seq`, and only on a pass whose chain verify succeeded, as Amendment 11
+   decision item 3 does for the work carrier (`python -m orchestrator.factory_chain_read`, as in
+   the step 3f-2 paragraph, lines 2883-2886). Before the generator runs for a bump, the driver
+   holds that bump, proposing no decomposition, when its member's claim reads the event and any of
+   these is true:
+   - no event exists, or the pass's chain verify didn't succeed;
+   - the newest event records an unreadable report, or an instance whose `ok` is false (the Mac
+     reads both as `unknown`, `checkers.py` lines 191-205 and 213-219, so holding before the generator keeps
+     them from becoming a non-green claim);
+   - the event's report `generated_at` is more than 36 hours before the pass.
+
+   A member's claim reads the event when the member declares `infra`, or declares a
+   `launchagent:` or `hook:` required check. A member that declares neither doesn't read the event
+   and isn't held for it. Because the event is one unit with one bound, a stale infra-drift report
+   also holds bumps for security-standards and project-standards, whose `checks` cells read only
+   the wiring part; the Mac holds those only on a missing wiring fact. That follows D-62's words
+   ("holds a bump when it is missing or over 36 hours old").
+
+   A held bump is retried on the next pass, so a fresh event releases it, and nothing is proposed
+   that a person must supersede. When the event is usable, the lane writes the facts under the
+   pass's `HOME` at the paths the matrix reads (a report file under `$HOME/infra-drift/reports`,
+   an empty plist marker per present label under `$HOME/Library/LaunchAgents`, and a minimal
+   `$HOME/.claude/settings.json` registering the present hook names), so project-standards runs
+   unchanged. `_infra_proposal_message` falls back to the proposal's id when no text is present
+   (`checkers.py` lines 160-166).
+
+   The read password never reaches `factory`, git or the driver's generator: the generator's
+   environment is an allowlist (`_generator_environment`, see Context), and the launcher clears
+   any ambient copy and passes the password to the chain read alone, never exported, as
+   `run-work-carrier.sh` passes it to the carry and the verify alone (lines 240-242 and 471-473). Which process walks the
+   chain and how its result reaches the driver is the code step's.
+5. **The signal (ADR-0021 amendment 1).** A missing, unusable or stale event raises a keyed
+   signal with a machine home, not only a log line. The bump driver raises a keyed alert through
+   its existing alert-hub sync (`src/bump_driver/alerts.py`, sender `sds-bridge`), which fires
+   while bumps are held for it and resolves on the first pass that reads a usable event. The code
+   step names the key and decides the silent case: a stale event while no bump needs it holds
+   nothing (verify items).
+
+   The nightly's exit and ping don't change because of this step. A missing, unreadable or
+   malformed input to the step appends at most the unreadable record of decision item 3 and leaves
+   the nightly's exit as it was, as the `portfolio_scan` adapter's `FeedError` does (`cli.py`
+   lines 109-113). A chain error on the append is the chain's failure, not this step's, and fails
+   the nightly as the other adapters' chain errors do (lines 114-116).
+6. **Where each change lands.** This amendment decides no code. Each piece is a step of the bump
+   driver's conformance-inputs code step (step 3g-3-inputs, before the cut-over's acting pass):
+   - **security-standards:** the event's adapter in `factory_events` and its place in
+     `adapt --source all`; one new `source.system` value in `schema/factory-event.v1.schema.json`;
+     one new registry agent in `registry/agents/`. The nightly script itself needn't change, since
+     it already runs `adapt --source all`.
+   - **orchestrator:** `CLONED` and the read mint; the launcher's code-standards clone, shim,
+     `HOME` guard, chain read and materialized files; the driver's hold and alert key;
+     `tomlkit` for the image; the lane's compose (the `coolify` network and the three
+     `CHAIN_SETTINGS`, which `scripts/lane_run.py` line 69 already passes); the read password's
+     `lanes` row in `.bws-secrets.toml` and the lane's reach in `.cred-consumers.toml`; and the
+     guards the read changes.
+   - **project-standards:** no change, if the materialized files reproduce the Mac's cells. If the
+     code step finds the matrix reader must change instead, that change lands here, and the code
+     step states why.
+   - **code-standards and intent-packages:** no change.
+7. **Authority, exactly.** D-62 C approves these five, for the bump driver's conformance claim
+   and nothing wider. The merge authorizes exactly these; each takes effect only by the act named
+   for it:
+   - **The read-only App's installation on `AlobarQuest/code-standards`, `contents: read`.**
+     Devon's act, at the step 3g-3-inputs code step's merge or before the lane's first `--dry-run`
+     pass that mints for it.
+   - **A read grant on the chain's read password (`2f708d08-…`, BWS project `Factory Events`) to
+     the bump-driver lane's BWS machine account.** Devon's act. The bump-driver lane becomes the
+     chain's second reader, beside the work carrier (Amendment 8 decision items 1 and 2, ADR-0055
+     amendment 25 items 1 and 3).
+   - **A lane secret row for it.** HQ's configuration: the lane's row for the read password in
+     this repository's registry, in the code step.
+   - **The lane joining the external `coolify` network.** HQ's configuration, in the lane's
+     compose, as the work carrier's (`lanes/work-carrier/compose.yaml`).
+   - **One credential-less registry actor and one event `source.system` value.** D-62 names
+     neither. HQ's naming, proposed here: actor `mac-conformance-facts`, a registry agent of the
+     same kind as `registry/agents/portfolio-scan.yaml` (`authority_profile: none-v1`,
+     `capabilities: []`, `prohibited: []`); `source.system` `mac-conformance-facts`; and `action`
+     `mac_conformance.reported`, which matches the schema's `action` pattern.
+
+   No other account, BWS grant, GitHub scope or network path. The nightly appends with the append
+   password it already reads, through its own `factory-events-nightly` account (Amendment 8
+   decision item 2). The Mac bump driver gains nothing.
+
+   A consequence D-62's question doesn't mention: every append holder (interactive approvals
+   through `factory-events-session`, the HQ cycle, the bump proposer and the nightly) can write
+   such an event, and the chain can't tell holders apart, because the actor is self-declared. A
+   forged event could release a hold, the same reach those holders have for `portfolio.scanned`,
+   which D-56 accepted (Amendment 11 decision item 5).
+
+### Verify items
+
+Each item names the step that verifies it. Steps 3g-3-inputs and the bump driver's cut-over are
+increment 5's (line 1035); increment 8 is its own increment, and step 3k (`fork-chain-out`) is
+sds-hq's plan step for D-57 A (`state/goal.md` at `902da11b`, line 42). The step name 3g-3-inputs
+is HQ's naming, proposed here.
+
+- **The `code` cell matches the Mac's (step 3g-3-inputs, then the cut-over).** For each member,
+  the container's `code` cell equals the Mac's. The code step's plan records the difference
+  between the Mac's code-standards working copy (which the Mac's `.venv/bin/code-standards` runs)
+  and the clone's `main` at the time it checks, and the cut-over records it again. A Mac copy
+  behind `main` can give the two hosts different verdicts until it's current.
+- **`tomlkit` reaches the image's interpreter (step 3g-3-inputs).** The shim runs
+  `code-standards check` on a member's mirror in the container and exits 0 or 1, never 2, with no
+  PyPI fetch at pass time. The code step chooses between an orchestrator dependency and a lane
+  image addition, and keeps `uv lock --check` green.
+- **The mint covers code-standards with contents read (step 3g-3-inputs).** The lane's one read
+  mint names every target with `metadata`, `pull_requests` and `contents`, read
+  (`run-bump-driver.sh` lines 172-182). The code step states the mint's shape for code-standards
+  and shows the pass reads only the clone's contents there. If it needs more than D-62's contents
+  read, it goes to Devon first.
+- **An unreadable report wins over the previous day (step 3g-3-inputs).** A test proves the
+  reader takes an unreadable-report record over an older usable event, and holds.
+- **The wiring part covers every declared entry, and no more (step 3g-3-inputs).** The code step
+  states which labels and hooks the nightly reports, and from what source, and proves two bounds
+  against the members' declarations at their `main`: the set holds every `launchagent:` and
+  `hook:` entry any member declares (five at the base), and it names nothing no member declares.
+  It records ids and statuses only.
+- **A missing or over-36-hour event holds and signals (step 3g-3-inputs).** Tests prove that the
+  driver proposes no decomposition for a bump whose member reads the event when the event is
+  missing, records an unreadable report, is more than 36 hours past its report's `generated_at`,
+  or comes from a pass whose chain verify failed; that the keyed alert fires and resolves on the
+  first pass with a usable event; and that a member that reads nothing from the event isn't held.
+  The driver's bound is no looser than project-standards' (`INFRA_MAX_AGE_H`), so no bump reaches
+  the generator with a report the matrix would call stale.
+- **The silent case (step 3g-3-inputs).** The code step decides, and its plan states, whether the
+  driver reads the event on every pass and raises the signal when no bump needs it, or only when a
+  bump does.
+- **The nightly's exit and ping are unchanged with the new step failing (step 3g-3-inputs).** A
+  test runs `adapt --source all` with the step's inputs missing and malformed, and shows the
+  nightly's exit and its ping unchanged.
+- **Newest by report time (step 3g-3-inputs).** A late or out-of-order append never makes an older
+  report win: the reader takes the event with the newest `timestamp` whatever its `seq`.
+- **Increment 8 breaks change-manager's `checks` cell (increment 8).** When
+  `com.devon.change-window` moves off the Mac, its plist leaves `~/Library/LaunchAgents`, so
+  change-manager's `launchagent:com.devon.change-window` reads `violation` on the Mac and in the
+  event, under every D-62 option. `wiring.py` has no executor kind for a container lane. Increment
+  8's plan changes change-manager's declaration or adds an executor kind to project-standards.
+- **The five forks never get a green claim (step 3k).** rtk, claude-octopus, rea, n8n-as-code and
+  n8n-manager have no `PROJECT.md`, so every cell is `unknown` on both hosts, under every D-62
+  option. Step 3k (`fork-chain-out`, D-57 A) takes them out of membership.
+- **The paired pass and the deploy hold (the bump driver's cut-over).** A `--dry-run` pass never
+  runs the generator, so cut-over step 2's paired runs can't show the claim. The cut-over decides
+  how its paired pass proves the claim green in the container. It also decides the re-scope of the
+  P2 backlog item in which `deploy_orchestrator.py` holds the bump-driver launch agent during a
+  deploy (lines 269-271).
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `ad721fc0`:
+
+| Passage | Disposition |
+|---|---|
+| Decision 1, "These lanes are the bump driver (intent-packages, project-standards, security-standards)" and "Each clone is shallow, at `main`, into a directory the pass discards" (lines 306-311) | Extended by decision item 1: the bump driver also clones code-standards, shallow at `main`, into `$HOME/Developer/code-standards`, which the pass discards. |
+| Decision 1, "A clone carries no venv, so the bump driver's launcher builds intent-packages' venv in its clone with `uv sync` each pass" (lines 311-316) | Not extended to code-standards: its clone gets no venv and no `uv sync`; a shim runs it on the image's interpreter (decision item 1). |
+| Amendment 3, decision item 4, "Membership is unchanged. The five forks stay members" (line 2017) | Stands. This amendment changes no membership; D-57 A's step 3k removes the forks by its own amendment (verify items). |
+| Decision 2, the read-only App's installations, "on the members' repositories, the member record's repository and the standards repositories (Q6, HQ D-8 ...), on factory-runner and each fork (Q9, HQ D-14), and on intent-packages (Q9, HQ D-17)" (lines 614-617) | Extended by decision item 7 (D-62 C): also on `AlobarQuest/code-standards`, `contents: read`, by Devon's act. |
+| Decision 2, "The bump driver needs no GitHub write scope: its token only reads pull request state and makes shallow clones" (lines 651-654) | Stands. The code-standards clone is one more shallow clone with the same read token. |
+| Decision 5, the `bump-driver` row (line 773) | Stands. The lane's conformance inputs in the container are decided by decision items 1 to 4. |
+| Increment 5, "then the bump driver" (line 1035) | Extended by decision item 6: the bump driver's cut-over waits on step 3g-3-inputs and on Devon's two acts in decision item 7. |
+| "The week bar", the done-when paragraph, "nor any other moved lane's input may still live on the Mac by then (decision 5)" (lines 1299-1301) | Stands. The bump driver's `infra` and `checks` inputs reach it as an event in the VPS chain, as the work carrier's portfolio input does (Amendment 11's row on this passage). Their producers, infra-drift and the nightly, stay on the Mac (D-41, Amendment 7 decision item 2). |
+| "The week bar", "the one that feeds a moved lane is `portfolio-scan`, whose output the work carrier reads (decision 5)" (lines 1309-1310) | Extended: `infra-drift`, which Amendment 9 placed outside the phase, also feeds a moved lane, the bump driver, through the nightly's event. It stays a Mac job. |
+| Q6, "The App is installed on every repository those lanes read" (lines 1512-1513) | Stands, extended by decision item 7 to code-standards. |
+| Q9, the read-only App "installed on factory-runner and each fork as well as the repositories Q6 (D-8) named" (lines 1553-1556) | Extended by decision item 7 (D-62 C): code-standards is one repository beyond them. |
+| Amendment 7, decision item 1, "What comes into Phase 1, and only this" and "Nothing else of factory-events moves" (lines 2786-2795) | Extended by D-62 to the extent of decision items 3 and 7: the `mac_conformance.reported` event, its actor and its `source.system` value. Nothing else of factory-events changes. |
+| Amendment 7, decision item 2, "The nightly job stays on the Mac ... Only its target changes" (lines 2796-2801) | Extended by decision item 2: the nightly also appends one event per infra-drift report. It stays on the Mac and outside the phase bar, and its exit and ping are unchanged (decision item 5). |
+| Amendment 7, decision item 6, "No new authority beyond the four answers" (lines 2867-2872) | Extended by decision item 7: the read password gains one holder, the bump-driver lane account, by D-62 C. |
+| Amendment 7, the step 3f-2 paragraph, "the work carrier's container runs `python -m orchestrator.factory_chain_read` once on every pass" (lines 2883-2886) | Stands. The bump driver uses the event only on a pass whose chain verify succeeded (decision item 4). |
+| Amendment 8, decision item 1, "Only the work carrier reads the chain (D-44 B)" (lines 2924-2927) | Superseded in part by D-62 C: the work carrier and the bump-driver lane read the chain. Devon's hand paths still get no read password. |
+| Amendment 8, decision item 2, "the read DSN to the work-carrier lane account, and to `sds-operator` for the Mac carrier until it moves" (lines 2934-2935) | Extended by decision item 7: also to the bump-driver lane account, by Devon's act. |
+| Amendment 8, decision item 4, "and the read DSN for the work carrier only" (lines 2945-2948) | Extended by decision item 7: and for the bump-driver lane. |
+| Amendment 8, decision item 6, "No new authority beyond the answers" (lines 2952-2953) | Stands as to Amendment 8's answers; D-62 C adds decision item 7's grant. |
+| Amendment 9, decision item 1, "infra-drift stays on the Mac" (lines 3004-3009) | Stands. infra-drift doesn't move; only its report's ids and statuses reach the chain, through the nightly. |
+| Amendment 11, decision item 3, "with the chain read access it already has (Amendment 8 decision item 1)" (lines 3322-3325) | Stands for the work carrier. The carrier is no longer the chain's only reader (decision item 7). |
+| Amendment 11, decision item 5, the forged-event reach of `portfolio.scanned` (lines 3353-3357) | Extended as a consequence to the `mac_conformance.reported` event (decision item 7), which D-62's question doesn't mention. |
+| Amendment 11's row on Amendment 8 decision item 1, "The carrier is the event's one reader" (line 3424) | Stands for `portfolio.scanned`. The chain as a whole has a second reader. |
+| ADR-0055 amendment 24 item 9, "Who reads", as amendment 25 item 1 supersedes it (lines 3424-3430) | Governed: the read-only role's holders are the work carrier and the bump-driver lane (decision item 7). ADR-0055 isn't edited. |
+| ADR-0055 amendment 24 item 11, the read DSN's "Read by" entry (line 3457), and item 16, "No other identity gets either credential" (lines 3481-3486) | Governed: the bump-driver lane reads the read password too. ADR-0055 isn't edited. |
+| ADR-0055 amendment 25 item 1, "Only the work carrier reads the chain (D-44 B)" (lines 3616-3624) | Governed: D-62 C adds the bump-driver lane as a second reader. Hand paths stay without a read password. ADR-0055 isn't edited. |
+| ADR-0055 amendment 25 item 3, "These are the only machine accounts granted a read of either secret", the table (lines 3628-3642) | Governed: one more row, the bump-driver lane account reading the read password, in the bump driver's container. ADR-0055 isn't edited. |
+| ADR-0055 amendment 25 item 6, "the six grants in item 3 ... No other account reads either secret" (lines 3665-3668) | Governed: a seventh grant, the read password to the bump-driver lane account (decision item 7). ADR-0055 isn't edited. |
+| ADR-0055 amendment 26 decision item 1, "the same grants amendment 25 item 3 names ... Who holds each is unchanged" (lines 3768-3773) | Governed: the read password's holders gain the bump-driver lane account. ADR-0055 isn't edited. |

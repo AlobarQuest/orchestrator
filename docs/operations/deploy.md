@@ -1009,19 +1009,36 @@ intent-packages' lifecycle; no venv is built.
 Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
 its own change or act.
 
-1. **Blocker:** an ADR-0059 amendment that decides the conformance claim's three Mac-only inputs
-   in the container, before any acting container pass. `factory decompose` derives each bump
-   unit's claim from project-standards' compliance matrix, which reads, under `HOME`:
-   - code-standards and its venv (`~/Developer/code-standards`), or PyPI reach for `uv run`. It
-     isn't among decision 1's clones or the read App's installations.
+1. The conformance claim's three Mac-only inputs, which ADR-0059 Amendment 13 (D-62 C) decides,
+   before any acting container pass. `factory decompose` derives each bump unit's claim from
+   project-standards' compliance matrix, which reads, under `HOME`:
+   - code-standards (`~/Developer/code-standards`), through its venv's `code-standards`, else
+     `uv run`. Without it the `code` cell reads `unknown`.
    - The infra-drift report (`~/infra-drift/reports`), which the Mac's `com.devon.infra-drift`
-     writes until increment 9 moves it.
+     writes. infra-drift stays on the Mac (D-41, Amendment 9). Without it the `infra` cell reads
+     `unknown`.
    - The LaunchAgent plist a `launchagent:` required-check executor names
-     (`~/Library/LaunchAgents/<label>.plist`).
-   Without them the matching cells read `unknown`, and the claim is `violations`. The orchestrator
-   approves the decomposition, but dispatch refuses the unit (`conformance_not_green`), and only a
-   person superseding it clears it. A `--dry-run` pass never runs the generator, so the paired
-   reporting runs of cut-over step 2 can't show this.
+     (`~/Library/LaunchAgents/<label>.plist`), and the Claude settings a `hook:` executor names
+     (`~/.claude/settings.json`). Without them the `checks` cell reads `violation`
+     (`checks.not-wired`).
+
+   A claim that isn't green is `violations`. The orchestrator approves the decomposition, but
+   dispatch refuses the unit (`conformance_not_green`), and only a person superseding it clears
+   it. A `--dry-run` pass never runs the generator, so the paired reporting runs of cut-over step 2
+   can't show this. Amendment 13 needs these, as step 3g-3-inputs, before the acting pass:
+   - Devon's acts: the read-only App installed on `AlobarQuest/code-standards` (`contents: read`),
+     and a read grant on the factory-events read password (`2f708d08-…`) to the lane account.
+   - security-standards: the nightly's adapter for the new event in `adapt --source all`, its
+     `source.system` value in the event schema, and one credential-less registry agent. The names
+     are HQ's proposals in the amendment (`mac_conformance.reported`, `mac-conformance-facts`).
+   - This repository: code-standards in `CLONED` and the read mint; the launcher's clone into
+     `$HOME/Developer/code-standards`, its `code-standards` shim and `tomlkit` for the image's
+     interpreter, the wider new-`HOME` guard, the chain read and the files it writes under `HOME`;
+     the driver's hold, before the generator, with its keyed alert; the compose's `coolify`
+     network and three chain settings; and the read password's lane rows in `.bws-secrets.toml`
+     and `.cred-consumers.toml`. These change steps 5 and 8: the lane reads one more secret, and
+     its dry run clones four repositories.
+   - project-standards only if the materialized files can't reproduce the Mac's cells.
 2. The orchestrator serving this release; then HQ creates `sds-lane-bump-driver` from the compose
    without deploying it.
 3. The VM root's keeper commands for the lane token and `bump-driver-ping-url`.
