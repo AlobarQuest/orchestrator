@@ -154,6 +154,9 @@ the pin and `docs/superpowers/` it finds the following:
 - After adding this report I ran `tests/architecture/test_layer_manifest.py`: 3 passed. The
   report falls under `docs/superpowers/**` (`layers.toml:770`). The PR's `Quality` job runs the
   full check again.
+- PR CI, run `44353693533` on head `ded70e8a`: `Quality` success, `Runner consumer compatibility`
+  success, `Rollout transcription currency` success. That run builds the fixture image and runs
+  `make check`. The three earlier runs were cancelled because a later push superseded each one.
 
 ## Files changed
 
