@@ -147,6 +147,7 @@ The lane is an outcome alarm (`sds_outcome_begin`/`sds_outcome_end`, no `--told`
   (15,608 collected)** in 326 s. That run was before the two review fixes. After the fixes, I ran
   `test_run_follow_up_mint.py` and `test_deploy_lanes.py` (107 passed), ruff check and format clean,
   and a second full `make check` at the fixed head: exit 0, 15,607 passed, 1 skipped, in 355 s.
+- CI on PR #740: all three jobs passed. The Quality job's log shows **15,585 passed, 23 skipped (15,608 collected)**, the same count collected locally.
 - I ran the glob-based guards early: `test_deploy_lanes.py`, `test_sds_deadman.py`,
   `test_sds_bws.py`, `test_lane_image.py`, `test_lane_run.py` and `test_layer_manifest.py`. All
   passed, 314 in total. On the first run, `test_sds_bws.py` caught that the launcher must source
