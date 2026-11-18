@@ -111,7 +111,7 @@ resolves the named volume.
 3. **Tests:** no Mac-path launcher test existed for this lane. I found no test of
    `run-inert-landing.sh` beyond the edge table. So `test_run_inert_landing.py` adds Mac-path tests:
    the identities and `gh` as before, nothing minted, preset overrides honoured, and the exit code
-   passed through. `tests/inert_lander/` (144 tests) passes unedited.
+   passed through. The existing `tests/inert_lander/` tests (136, plus the 8 new ones beside them) pass unedited.
 
 ## Report, don't fix
 
@@ -138,12 +138,20 @@ resolves the named volume.
 
 ### Callers of the orchestrator SYSTEM credential the lane would join
 
-SYSTEM credential `221a48d5-…` is read by `run-work-carrier.sh` and `run-rotation-decomposer.sh`
-(both already hold it in their lane containers), and on the Mac by `run-bump-driver.sh`,
-`run-estate-landing.sh`, `run-inert-landing.sh`, `run-tool-installer.sh`, and
-`run-activation-sweep.sh`. It's also read by `scripts/exit_probe.py`, `scripts/deploy_orchestrator.py`,
-and, from `credentials.md`, infraops' `drift-audit.sh` and the operator-invoked
-`factory-validation-kit-restart-recovery`. The inert lane would be the third container holder.
+I reconciled the callers against the credential's registry entry, `orchestrator-system-bearer`
+in this repository's `.cred-consumers.toml`. In this repository, I verified each one by grep:
+
+- `run-work-carrier.sh` and `run-rotation-decomposer.sh`, which already hold it in their lane
+  containers.
+- `run-activation-sweep.sh`, `run-bump-driver.sh`, `run-estate-landing.sh`,
+  `run-inert-landing.sh`, and `run-tool-installer.sh`, on the Mac.
+- `scripts/exit_probe.py` and `scripts/deploy_orchestrator.py`.
+
+The registry also lists three callers in other repositories, which I cite from it without
+verifying: infraops' `scripts/drift-audit.sh` (`mint-follow-ups`, 03:00), intent-packages'
+operator-invoked `factory` CLI, and `factory-validation-kit-restart-recovery`'s `credentials.py`.
+The Coolify entry is a sha256 hash, not a reader. The inert lane would be the third container
+holder.
 
 **Does the lane need SYSTEM?** On today's routes, yes. These calls refuse anything but SYSTEM
 through `authorize_actor`:
