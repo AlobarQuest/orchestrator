@@ -3477,7 +3477,7 @@ The file is read and written through infraops's `security-drift-cli.js`:
 - The file has three writers, not the two D-61 names: `record-rotation`
   (`src/cli/security-drift-cli.ts` lines 113-126), which the rotation proposer's pass runs after
   the work watcher retires an approved revision's record (`docs/operations/rotation-proposer.md`,
-  lines 121-124), and which a person
+  lines 122-125), and which a person
   also runs (step 4 of the manual checklist, `src/security-drift/cred-rotation.ts` lines 318-350,
   and `rotation-proposer.md` lines 105-107 for a rotation that answers an exposure); and
   `resolve-exposure` (`security-drift-cli.ts` lines 87-108), which a person runs.
@@ -3492,7 +3492,7 @@ The file is read and written through infraops's `security-drift-cli.js`:
 The 03:00 scan raises the three state-dependent findings, `cred.exposure-rotate`,
 `cred.rotation-age` and `cred.rotation-requested` (`credFindings`, `cred-rotation.ts` lines
 220-294), for credentials not handed over to the SDS only: `scanFindings` withholds those three
-checks for every credential marked `rotated_by_sds` (lines 301-315), whose findings reach only the
+checks for every credential marked `rotated_by_sds` (lines 310-315), whose findings reach only the
 rotation proposer's pass through `cred-findings`. It raises them as change-manager `security`
 items with infra-drift's change-manager token, through `postSync`, a full-set reconcile
 (`security-drift-cli.ts` lines 220-223, 237-240 and 275-297). `buildCredClassifications` gives each
@@ -3517,19 +3517,28 @@ lines 8-9), so today its pass raises nothing for them.
 2. **Writers.** All three writes go to the volume's copy:
    - the rotation proposer's pass in the container runs `record-rotation` after a verified
      rotation, as it does on the Mac;
-   - a person runs `resolve-exposure`, and `record-rotation` for a credential not handed over,
-     inside the lane's container from an interactive session (D-61's words), with no new network
-     path. It needs no new credential: `resolve-exposure` reads only the state file, and `record-rotation` reads the
+   - a person runs `resolve-exposure` inside the lane's container from an interactive session,
+     with no new network path (D-61's words). A person's `record-rotation`, for a credential not
+     handed over, runs the same way and adds no credential, scope or network path. Neither needs a
+     new credential: `resolve-exposure` reads only the state file, and `record-rotation` reads the
      list and the state file; neither reads BWS, change-manager or alert-hub
      (`security-drift-cli.ts` lines 87-126). The command runs as the container's own user, so the
      file it writes stays owned by the uid the lane's pass reads with.
 3. **The Mac scan.** infra-drift's 03:00 credential scan (`credScan`, `security-drift-cli.ts`
    lines 130-157 and 275-279) stops reading the state file, through an infraops change in
    infraops-mcp-server, and stops raising `cred.exposure-rotate`, `cred.rotation-age` and
-   `cred.rotation-requested` for every credential. The scan's other credential findings don't read
-   the state file and stay with it: `cred.invalid-rotate-requested`, `cred.unknown-class` and
-   `cred.registry-error`, from the list it keeps reading (Amendment 9 decision item 1). infra-drift
-   itself stays on the Mac (D-41).
+   `cred.rotation-requested` for every credential. The scan's other credential findings stay with
+   it, from the list it keeps reading (Amendment 9 decision item 1):
+   `cred.invalid-rotate-requested`, `cred.unknown-class` and `cred.registry-error`. Today two of
+   them depend on the state file. `credScan` loads the state file inside the same `try` as the
+   list (`security-drift-cli.ts` lines 135-156, and the comment at lines 272-274), so a state file
+   that fails `loadValidated0600Json`'s check raises `cred.registry-error`. `credFindings` reaches
+   `cred.unknown-class` only after an open exposure's `continue` (`cred-rotation.ts` lines
+   237-262), so an open exposure suppresses it. After the infraops change, `cred.registry-error`
+   comes from reading the list and the registry files it names only. The state file's integrity
+   signal keeps a home: a volume copy that fails the check makes the proposer's pass exit 2
+   (decision item 1 and the copy verify item). What becomes of `cred.unknown-class` is a verify
+   item for the infraops change. infra-drift itself stays on the Mac (D-41).
 
    **Order.** The infraops change merges only after the rotation proposer's VPS pass reports those
    three findings for credentials not handed over (decision item 4), so no finding goes dark.
@@ -3549,7 +3558,7 @@ lines 8-9), so today its pass raises nothing for them.
      `rotation-proposer.md`, "Alerts", lines 153-170). It fires on the pass that reports the
      finding, stays while the finding holds, and resolves on the first pass that doesn't report it.
      alert-hub refuses status `resolved` on a notice ("a notice is never resolved", alert-hub
-     `src/ingest/validate.ts` line 98 at `2218702`), so today's `security-urgent:<date>` notice
+     `src/ingest/validate.ts` line 99 at `2218702`), so today's `security-urgent:<date>` notice
      (`notify.ts` lines 81-83) can't serve; `KeyedAlerts` sends `kind` `alert`
      (`src/alert_hub_client/__init__.py` line 178). The status names are the code step's to choose, within the key grammar.
    - **Severities as today.** An exposure is `critical` and stays firing until the exposure is
@@ -3573,9 +3582,11 @@ lines 8-9), so today its pass raises nothing for them.
    GitHub scope or network path. The `sds-bridge` sender token (`b415d03b-…`) is one the rotation
    proposer already reads. In the container its lane identity reads it because decision 2 grants
    each lane account the secrets its launcher fetches today (lines 486-490), so the proposer's
-   lane joins the token's `lanes` list at its cut-over, as the bump proposer's did; that is the
-   lane's move, not a grant this amendment makes. The lane volume is the one decision 1 gives the lane, and a person's
-   writes are D-61's interactive session. The rotation proposer gains no
+   lane joined the token's `lanes` list in its lane-files pull request, #734 (`9052f7f8`,
+   `.bws-secrets.toml` lines 287-290), as `bump-proposer` did in #733 (`a410af18`); that is the
+   lane's move, not a grant this amendment makes. The lane volume is the one decision 1 gives the lane. A person's
+   `resolve-exposure` is D-61's interactive session; a person's `record-rotation` runs the same way
+   and adds no credential, scope or network path. The rotation proposer gains no
    change-manager `security`-source write.
 
 ### Verify items
@@ -3601,9 +3612,19 @@ item 2), the infraops change, or the rotation proposer's cut-over (step 3f-5).
 - **An open exposure survives the move (the cut-over).** An exposure open in the registry before
   the copy is still reported after it: the first VPS pass raises its `critical` alert for a
   credential not handed over, or reports it to its rotation package for one handed over.
-- **`resolve-exposure` in the container clears it (the cut-over).** A person runs
-  `resolve-exposure` in the lane's container as its user; the next pass resolves the alert, and the
-  lane's following pass still reads the file (owner and mode unchanged).
+- **`resolve-exposure` and `record-rotation` in the container clear their findings (the
+  cut-over).** A person runs `resolve-exposure`, and `record-rotation` for a credential not handed
+  over, in the lane's container as its user; the next pass resolves each alert, and the lane's
+  following pass still reads the file (owner and mode unchanged). `record-rotation` also reads the
+  list and every registry file it names (`doRecordRotation`, `security-drift-cli.ts` line 119),
+  and both commands run infraops's `dist/` CLI. In the container that CLI is in the infraops
+  checkout, a per-pass clone under `/var/tmp/sds-rotation-proposer`. Each pass deletes that clone,
+  the packages clone and the registry mirrors' cache at its start, clones the two repositories
+  again, and deletes all three at its end (`scripts/run-rotation-proposer.sh` lines 230-251 and
+  284-287 at `9052f7f8`; a failed removal there is logged and left to the next pass), so between
+  passes the CLI is normally absent. The cut-over states
+  where the CLI and the listed registry files are when a person runs either command between
+  passes, and shows each command run there.
 - **The window between the copy and the infraops change (the cut-over and the infraops change).**
   After the copy, new writes land on the volume and the Mac copy goes stale. In that window the Mac
   scan still reports from the frozen copy for credentials not handed over: an exposure resolved or
@@ -3618,7 +3639,11 @@ item 2), the infraops change, or the rotation proposer's cut-over (step 3f-5).
 - **The Mac scan's read is off only after the VPS pass covers the findings (the infraops change).**
   The infraops pull request cites the VPS pass that raised the three findings for credentials not
   handed over, or showed none due, and its tests prove the scan reads no state file and still
-  raises `cred.invalid-rotate-requested`, `cred.unknown-class` and `cred.registry-error`.
+  raises `cred.invalid-rotate-requested`, `cred.unknown-class` and `cred.registry-error`. Its
+  tests also prove that `cred.unknown-class` doesn't change for a credential with an open
+  exposure, or the pull request states what changes and why: today an open exposure suppresses
+  that finding (decision item 3), and without the state file the scan can't tell an open exposure
+  from a resolved one.
 
 ### Passages this amendment changes
 
