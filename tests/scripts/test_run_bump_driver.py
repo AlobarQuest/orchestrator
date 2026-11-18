@@ -87,8 +87,10 @@ _GH = '#!/bin/sh\necho "gh $*" >> "$GH_LOG"\necho gh-token\n'
 _CURL = '#!/bin/sh\necho "curl $*" >> "$PING_LOG"\nexit 1\n'
 # git: logs its argv and the credential git's environment carries, refuses a URL naming
 # `$GIT_REFUSES`, and otherwise writes a stand-in intent-packages module into the destination.
+# Each stub but the chain walk's records whether the chain's read password is in its environment.
+_ENVSCAN = 'echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"\n'
 _GIT = """#!/bin/bash
-echo "git args=$* count=${GIT_CONFIG_COUNT:-} key0=${GIT_CONFIG_KEY_0:-} \\
+""" + _ENVSCAN + """echo "git args=$* count=${GIT_CONFIG_COUNT:-} key0=${GIT_CONFIG_KEY_0:-} \\
 value0=${GIT_CONFIG_VALUE_0:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$STUB_GIT_LOG"
 if [ -n "${GIT_REFUSES:-}" ]; then
   case "$*" in *"$GIT_REFUSES"*) echo "fatal: repository not found" >&2; exit 128 ;; esac
@@ -134,7 +136,7 @@ exec "__PYTHON__" "$@"
 # argv and every variable it was handed, one per line, and runs `factory` as the generator does
 # when asked to.
 _DRIVER = """#!/bin/bash
-if [ "$1" = repositories ]; then
+""" + _ENVSCAN + """if [ "$1" = repositories ]; then
   echo "derive args=$* lane_token=${BWS_ACCESS_TOKEN:+set} \\
 system=${ORCHESTRATOR_API_TOKEN:-} key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-}" >> "$LANE_LOG"
   if [ -n "${FAKE_DERIVE_RC:-}" ]; then
@@ -166,7 +168,7 @@ echo "a bump-driver report line"
 exit "${FAKE_DRIVER_RC:-0}"
 """
 _MINT = """#!/bin/bash
-key="$(cat)"
+""" + _ENVSCAN + """key="$(cat)"
 echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
 echo "%s"
@@ -606,6 +608,9 @@ def test_the_read_password_reaches_the_chain_walk_and_no_other_process(tmp_path:
     assert "FACTORY_EVENTS_READ_PASSWORD" not in env and "CHAIN_PASSWORD" not in env
     assert not [name for name in env if name.startswith(("FACTORY_EVENTS_", "CHAIN_"))]
     assert password not in run.output
+    scans = run.lines("envscan")
+    # derive, mint, four clones, the pass: none holds the password in its environment.
+    assert len(scans) == 7 and all(line.endswith(" 0") for line in scans), scans
 
 
 @pytest.mark.parametrize(
