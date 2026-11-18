@@ -148,6 +148,9 @@ concerns section.
   `tests/scripts/test_run_inert_landing.py` and `tests/architecture/test_layer_manifest.py`: 469
   passed and 1 failed. The failure was the layer-manifest test, because the new file was still
   untracked; its three tests passed after the commit.
+- CI on PR #738 at `be692c24`: `Quality`, `Rollout transcription currency` and `Runner consumer
+  compatibility` all passed. The `Quality` job's log shows 15462 passed and 23 skipped, so it ran
+  the full suite; CI skips more tests than the local run did.
 - Mutation check of the new guards (9 mutations, each restored, `__pycache__` cleared): 9 killed, 0
   survived. The mutations were:
   - dropping `contents` on `--submit`;
