@@ -574,6 +574,7 @@ paths = [
   "scripts/run-bump-driver.sh",
   "scripts/install-bump-driver-launchd.sh",
   "scripts/com.devon.bump-driver.plist",
+  "tests/scripts/test_run_bump_driver.py",
   "tests/inert_lander/**",
   "scripts/run-estate-landing.sh",
   "scripts/install-estate-landing-launchd.sh",

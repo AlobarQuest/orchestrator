@@ -36,6 +36,9 @@ EXIT CODES:
   3  a record, a unit or a pull request could not be read, or alert-hub could not be told, so the
      answer is missing rather than clean.
 3 outranks 2: an incomplete pass cannot claim it found everything there was to find.
+
+`bump-driver repositories` changes nothing and prints the repositories the lane's GitHub read
+token must name, which the lane's container mints it for (`repositories`, below).
 """
 
 from __future__ import annotations
@@ -141,6 +144,13 @@ VERSION_CONFLICT: Final = "version_conflict"
 GRANT_WITHDRAWN: Final = "target_repository_not_granted"
 FINDINGS: Final = frozenset(  # not-a-vocabulary: this lane's own report words
     {"refused", "failed", "unclaimed"}
+)
+# The repositories the lane's container clones each pass for `factory` and its conformance claim
+# (ADR-0059 decision 1), which its read token must name beside the granted members.
+CLONED: Final = (
+    "AlobarQuest/intent-packages",
+    "AlobarQuest/project-standards",
+    "AlobarQuest/security-standards",
 )
 
 
@@ -690,13 +700,51 @@ def exit_code(outcomes: Sequence[Outcome]) -> int:
     return FOUND if results & FINDINGS else 0
 
 
+def repositories(environ: Mapping[str, str]) -> int:
+    """Print the repositories the lane's GitHub read token must name, one per line, nothing else.
+
+    In the lane's container the launcher mints the pass's read token for exactly these (ADR-0059
+    decision 2: each pass's mint names only its lane's repositories). They are the three the
+    container clones (`CLONED`) and each repository the member record grants `dependency_updates`.
+    A pass reads GitHub only for a granted repository (its pull requests and its mirror), so the
+    list holds every one it reads. The member record is read as the pass reads it, with the SYSTEM
+    bearer. Repeats that differ only in case are printed once, because the mint casefolds.
+
+    FAILS CLOSED WITH NOTHING ON STDOUT, with the pass's own codes: a missing credential is the
+    tool failing (1), and an unreadable member record is a read that failed (3). So the launcher
+    mints nothing for a list it couldn't derive.
+    """
+    token = environ.get("ORCHESTRATOR_API_TOKEN", "")
+    key_id = environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "")
+    if not token or not key_id:
+        print("FATAL: ORCHESTRATOR_API_TOKEN and its key id are required", file=sys.stderr)
+        return 1
+    base_url = environ.get("ORCHESTRATOR_API_URL", ORCHESTRATOR_URL)
+    try:
+        members = read_members(token=token, credential_key_id=key_id, base_url=base_url)
+    except MembersUnreadable as error:
+        print(f"the member record could not be read: {error}", file=sys.stderr)
+        return INCOMPLETE
+    names = {repository.casefold(): repository for repository in CLONED}
+    for repository in granted_repositories(members, "dependency_updates"):
+        names.setdefault(repository.casefold(), repository)
+    print("\n".join(names[key] for key in sorted(names)))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else list(argv)
+    if arguments[:1] == ["repositories"]:
+        if len(arguments) > 1:
+            print("usage: bump-driver repositories", file=sys.stderr)
+            return 1
+        return repositories(os.environ)
     parser = argparse.ArgumentParser(
         prog="bump-driver",
         description="Decompose, dispatch and land standing dependency-update work.",
     )
     parser.add_argument("--dry-run", action="store_true", help="list what would be done")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     environ = os.environ
     required = (
         "ORCHESTRATOR_API_TOKEN",
