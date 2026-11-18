@@ -109,8 +109,9 @@ line 128). The notes say so. No Mac `runtime-fetch` entry changed.
      which isn't started.
    - The two token issues wait on a person's mint at the same time. `inbox.bind` refuses to bind
      from the inbox while `other_mints` is non-empty (`inbox.py`, line 151), so a pasted value
-     binds to neither. The way out is a hand-written staging secret (`rotation-worker stage`),
-     which `inbox.py`'s docstring accepts. Precedent: `revision-watcher` and `unit-verifier`
+     binds to neither. `docs/operations/rotation-executor.md` line 192 documents the procedure:
+     "with two waiting, nothing binds; `rotation-worker stage` … still works for either". I didn't
+     establish how the earlier same-day pairs cleared. Precedent: `revision-watcher` and `unit-verifier`
      tokens were both requested 2026-11-11, and `change-proposer` and `rotation-decomposer`
      tokens 2026-11-13. This is not a stop, but sitting 2 should expect it.
 6. **Fixtures and tests.**
@@ -120,26 +121,28 @@ line 128). The notes say so. No Mac `runtime-fetch` entry changed.
      `LANE_CHECKS` (lines 953 and 967).
    - `test_every_lanes_ping_url_secret_is_listed_for_that_lane`: both lanes stay in
      `placeholders`, and only the docstring changed.
-   - `test_work_carrier_rows.py` and `test_rotation_decomposer_rows.py` list fixed
-     `OTHER_LANE_TOKENS`, so the new rows don't affect them. They pass.
-   - The other tests that name the two classes (`test_lane_credentials.py`, `test_generate.py`,
-     `test_pass.py`, the `rotation_package_issue_*` fixtures, among others) read fixtures, not
-     this registry.
+   - The earlier per-lane rows tests list fixed `OTHER_LANE_TOKENS`, so the new rows don't
+     change what they assert. About 35 test files name `.cred-consumers.toml` or `REGISTRY_PATH`.
+     I didn't open each one; the full `make check` ran them all, and they pass.
    - Once this merges, `registered_lanes` (line 1256, reading `origin/main`) returns those twelve
-     lanes. `require_lanes_current` skips a registered lane with no passed `--add` (line 1269,
-     "holds nothing and is skipped"), and neither lane has one. So nothing treats either lane as
-     registered for release purposes before its token is issued and its `--add` passes.
+     lanes. It has two callers, both in `scripts/deploy_orchestrator.py`.
+     `require_lanes_current` (line 1283) checks a registered lane only through
+     `last_finished(load_runs(...))`, so a lane with no passed `--add` holds nothing (docstring
+     line 1269). `lanes_to_follow` (line 1299) keeps only lanes with a finished run. Neither lane
+     has a recorded run, so nothing treats either one as registered before its token is issued
+     and its `--add` passes. `lanes_in_registry` has no other caller in `scripts/` or `src/`.
 7. **How the rows go live.**
    - The rotation proposer's Mac pass reads registry rows through `RepoMirror` at each
      repository's `origin/main` (`rotation_proposer/cli.py`, lines 909 to 941). It reads the due
      findings from `cred-findings` over the Mac's `cred-consumers.list`, which names the main
      tree's working copy.
-   - The 03:00 scan reads that same working copy. The main tree moves to `origin/main` when a
-     lane launcher activates it: `activate_checkout "$REPO_ROOT"`, for example in
-     `run-change-proposer.sh` line 102 and `run-execution-watch.sh` line 58 (ADR-0031, "a merged
-     change is not activated until the consumer pulls").
-   - So the token rows are due on the first proposer pass after a sibling launcher
-     fast-forwards the main tree past the merge.
+   - The handoff states that the 03:00 scan reads that same working copy; I didn't read the Mac's
+     list itself. A Mac launcher moves the main tree to `origin/main` with
+     `activate_checkout "$REPO_ROOT"`. One example is `run-activation-sweep.sh` line 103, a job
+     that stays on the Mac (`STAYS_ON_THE_MAC` in `test_deploy_lanes.py`). The rule is ADR-0031,
+     "a merged change is not activated until the consumer pulls".
+   - So the token rows are due on the first proposer pass after a Mac launcher fast-forwards the
+     main tree past the merge.
 8. **Membership check.** `src/membership_check/consistency.py` reads `rotated_by_sds` registry
    rows by repository and compares them with the `credential_rotation` grant (lines 175 to 197).
    orchestrator already has `rotated_by_sds` rows and is in `REGISTRY_REPOSITORIES`, so the
@@ -184,8 +187,8 @@ line 128). The notes say so. No Mac `runtime-fetch` entry changed.
 2. `bws-bump-proposer-token`'s `provider_identity` still says the account "reads
    factory-events-append-password". That is stale since G-75, and I left it unchanged as the
    handoff directs. A later change can correct it when the Mac job retires.
-3. Both token issues wait on a mint at once, so the inbox binds neither until one is staged by
-   hand (check 5).
+3. Both token issues wait on a mint at once, so the inbox binds neither. `rotation-worker stage`
+   is the documented way through (check 5).
 4. The later change dates each ping URL's row once its token's `store` unit completes, then writes
    each id into its compose and removes the lane from `placeholders` (deploy.md items 7 and 8 for
    the bump proposer, items 7 and 8 for the rotation proposer).

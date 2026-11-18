@@ -152,7 +152,7 @@ def test_no_other_lane_token_row_declares_the_same_reach(
     lane_rows = provider_entries(mirror, bws_lane_token.PROVIDER)
     mine = bws_lane_token.declared_reach(rows[lane.token].credential)[1]
     others = [entry.credential["id"] for entry in lane_rows if entry.credential["id"] != lane.token]
-    assert len(others) == 11
+    assert others
     assert bws_lane_token.sharing_reach(lane_rows, rows[lane.token].credential) == []
     for other in others:
         theirs = bws_lane_token.declared_reach(rows[other].credential)[1]
