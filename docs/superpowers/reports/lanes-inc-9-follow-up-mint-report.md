@@ -13,7 +13,7 @@ change in infraops-mcp-server or `.cred-consumers.toml`.
 | `scripts/run-follow-up-mint.sh` | New. The container-only launcher. |
 | `lanes/follow-up-mint/compose.yaml` | New. One service; stateless, no volume, no network, no ports or labels; empty ping-URL placeholder. |
 | `lanes/follow-up-mint/crontab` | New. `43 6 * * * lane-run follow-up-mint`. |
-| `tests/scripts/test_run_follow_up_mint.py` | New. 18 tests (fakes only). |
+| `tests/scripts/test_run_follow_up_mint.py` | New. 17 tests (fakes only). |
 | `scripts/deploy_orchestrator.py` | One `LANE_CHECKS` row: `"follow-up-mint": "sds-follow-up-mint"`, in alphabetical order. |
 | `tests/scripts/test_deploy_lanes.py` | `follow-up-mint` added to the ping-URL test's `placeholders`. |
 | `.bws-secrets.toml` | `follow-up-mint` on the SYSTEM row's (`221a48d5-…`) `lanes`; readers comment extended. |
@@ -118,12 +118,19 @@ The lane is an outcome alarm (`sds_outcome_begin`/`sds_outcome_end`, no `--told`
    `/usr/bin/security find-generic-password -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w` and calls
    `get_secret_by_id` with `BWS_ORCHESTRATOR_SYSTEM_SECRET_ID` (default `221a48d5-…`). It also
    covers the `ORCHESTRATOR_MINT_CREDENTIAL_KEY_ID` export and the `node … mint-follow-ups` call
-   with its ok and WARN log lines. That Keychain read is the script's only use of
-   `BWS_ACCESS_TOKEN_SDS`, judging from the block's own comment ("fetched with a DIFFERENT BWS
-   identity from every other secret in this script"). The PR checks the whole file to confirm it.
-   The Node CLI's `mint-follow-ups` command (`doMintFollowUps`, `makeMintClient`,
-   `ORCHESTRATOR_MINT_*`) then has no caller in the audit. Whether to delete it is that PR's choice:
-   the handoff scope here is read-only.
+   with its ok and WARN log lines. `git grep` at `c3359bf` finds `BWS_ACCESS_TOKEN_SDS` in that
+   block only (lines 162 and 171), so removing it removes the script's only use of the narrow
+   identity. The same grep finds the step named in four other places, which the PR handles in the
+   same change or leaves on purpose:
+   - `.bws-secrets.toml` line 10's comment ("read there with the sds-operator identity
+     (scripts/drift-audit.sh mint-follow-ups)"), and the manifest row it annotates;
+   - the Node command: `src/cli/orchestrator-cli.ts` (`makeMintClient`, `ORCHESTRATOR_MINT_*`, the
+     `mint-follow-ups` branch at 168-171) and its built copy in `dist/cli/`;
+   - `tests/orchestrator-cli.test.ts`, the `mint-follow-ups` describe block (211 onward) and its
+     `ORCHESTRATOR_MINT_*` setup (19-20).
+
+   With the step gone, the Node command has no caller in the audit. Whether to delete it is that
+   PR's choice.
 4. **`sds_outcome_*` handles the empty placeholder the way `sds_deadman_arm` does.** Both call
    `sds_deadman_resolve`. For an empty `SDS_DEADMAN_PING_URL_UUID`, `-n` is false, so both fall to
    the name lookup. In the container there's no `BWS_ACCESS_TOKEN_BROAD` and no
@@ -210,6 +217,16 @@ I left three unchanged, each for the reason given:
 
 ## Concerns and follow-ups
 
+- No command creates the check for this lane. Each moved lane's check is created by its Mac
+  installer's `sds_upsert_check`, and this lane has no installer. So cut-over step 2 runs
+  `sds_upsert_check` by hand with the check's payload, as ADR-0059 decision 3 allows (Devon or an
+  interactive Mac session, through the broad account). The executor's ping-URL write needs that
+  check first. I didn't add an installer, because that would be a Mac job the lane doesn't have.
+- The launcher refusing any argument is my addition; the handoff didn't ask for it. Neither
+  `deploy_orchestrator.py` nor `lane_run.py` passes `--dry-run` or any other flag to a launcher
+  (grep), so nothing breaks. The refusal keeps `lane-run follow-up-mint --dry-run` from minting
+  while looking like a reporting run. If HQ wants a reporting mode, that's a CLI change in
+  `src/`, outside this fence.
 - `scripts/CLAUDE.md` lists the outcome-alarm launchers by name. The list doesn't include
   `run-follow-up-mint.sh`, and that file was outside my fence. The next change that touches it
   needs to add the launcher. No test keys on the list.
@@ -230,14 +247,16 @@ These are in `docs/operations/deploy.md`, the follow-up-mint paragraph, steps 1-
 
 1. The orchestrator serves this release, and then HQ creates `sds-lane-follow-up-mint` from the
    compose without deploying it.
-2. The identity gate:
+2. The check, `sds-follow-up-mint`, is created before anything reads its ping URL. Devon or an
+   interactive Mac session runs `sds_upsert_check` through the broad account (ADR-0059 decision 3).
+   The lane has no installer, so this runs by hand (see concerns).
+3. The identity gate:
    - The new `follow-up-mint` lane account gets **two read grants**: the SYSTEM bearer
      (`221a48d5-…`, `SDS Operator`) and its own `follow-up-mint-ping-url`.
    - The VM root's keeper commands run for the lane token and the ping URL.
    - The lane's two registry rows land (token, then ping URL).
-3. The token is minted and the executor writes it. Then the ping URL's row is made due, and the
-   executor writes it.
-4. `sds_upsert_check` creates `sds-follow-up-mint` at install.
+4. The token is minted and the executor writes it. Then the ping URL's row is made due, and the
+   executor writes it from step 2's check.
 5. A release ships whose compose names the ping-URL secret's id, with the lane out of
    `placeholders`.
 6. `--add`, the `lane-run --read` proof, the schedule turned on, and the first scheduled pass. This

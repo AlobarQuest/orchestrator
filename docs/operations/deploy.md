@@ -1082,14 +1082,17 @@ following, in this order, each in its own change or act.
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-follow-up-mint` from the
    compose without deploying it.
-2. The lane's identity gate: the new `follow-up-mint` lane account with exactly two read grants,
+2. The check, `sds-follow-up-mint`, created before anything reads its ping URL. It has no Mac
+   predecessor, and the executor reads the ping URL from the check listing. ADR-0059 decision 3
+   moves the name lookup to install time: Devon or an interactive session on the Mac runs
+   `sds_upsert_check` (`scripts/sds-install.sh`) through the broad account. The lane has no
+   `install-*-launchd.sh` to call it, so this step runs it by hand with the check's payload.
+3. The lane's identity gate: the new `follow-up-mint` lane account with exactly two read grants,
    the SYSTEM bearer (`221a48d5-…`, `SDS Operator`) and its own ping-URL secret. Then the VM
    root's keeper commands for the lane token and `follow-up-mint-ping-url`, and the lane's
    registry rows in this repository, in two changes: the token's row and the ping URL's row.
-3. The token's mint and the executor's write; then the ping URL's row made due and the executor's
-   write (ADR-0055 amendment 23).
-4. The check: `sds_upsert_check` creates `sds-follow-up-mint` at install time; it has no Mac
-   predecessor.
+4. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write, read from the check created in step 2 (ADR-0055 amendment 23).
 5. A served release whose compose names the ping-URL secret's id, with `follow-up-mint` removed
    from `test_deploy_lanes.py`'s `placeholders`.
 6. The lane's `--add`, the `lane-run --read` proof over both secrets, the schedule turned on, and
