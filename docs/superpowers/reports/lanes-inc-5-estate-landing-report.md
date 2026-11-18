@@ -155,7 +155,10 @@ concerns section.
   - allowing an empty deploying population;
   - printing the inert population too;
   - deriving the list with the lane's token.
-- `make check` on database `orchestrator_test_hq_w_210`: see "make check result" below.
+- `make check` on database `orchestrator_test_hq_w_210`: green, with 15484 passed and 1 skipped
+  (15485 collected). The first two runs failed, and I fixed each cause: one E501 line in the new
+  docstring, one unformatted test file, and the `estate_lander` import row in
+  `test_out_of_process_isolation.py` (see concern 7).
 
 ## Report-don't-fix findings
 
