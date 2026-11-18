@@ -392,3 +392,10 @@ These are in deploy.md, under "Registered lanes", `bump-driver`:
 | Infra rule 2 (no secrets or `.env` committed) | None committed. |
 | Infra rule 3 (no `:latest`) | The image is `ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}`. |
 | Infra rule 4 (no Coolify scheduled task beside the in-container scheduler) | The schedule is the lane's tracked crontab, run by the entrypoint only when `LANE_SCHEDULE_ENABLED` is `true`. |
+
+## CI
+
+PR #739, head `2ecc17dc`: `Quality` passed (15563 passed, 23 skipped, 15586 collected, in 9 minutes
+40 seconds), as did `Rollout transcription currency` and `Runner consumer compatibility`. The CI
+run collected the same 15586 tests as the local run. It skipped more because the Mac-only tests
+skip on CI's Linux runner. The PR is open and ready, not merged.
