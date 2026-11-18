@@ -160,6 +160,9 @@ line 128). The notes say so. No Mac `runtime-fetch` entry changed.
   which appears only in reports on `origin/main`) both predate this diff. The INFO is the
   judgment prompt on machine-account scope.
 - `/code-review` (low) on `origin/main...HEAD` returned no findings.
+- CI on PR head `48ff1d33` (run 44409817389) passed: `Quality` in 10m51s with 15,754 passed and 26
+  skipped, `Runner consumer compatibility`, and `Rollout transcription currency`. That head
+  carries all code. The only later commit is this report line.
 
 ## Files changed
 
