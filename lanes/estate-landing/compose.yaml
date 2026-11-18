@@ -1,0 +1,34 @@
+# sds-lane-estate-landing (ADR-0059 increment 5, step 3g-2): the estate-landing lane. HQ creates the
+# resource from this file. It serves nothing: no port, no domain, so no Traefik labels.
+# It joins no network beyond the resource's own, the `coolify` network included: it reaches no
+# separate Coolify database resource. Every service it calls (change-manager, the orchestrator,
+# alert-hub, GitHub, GHCR) is an HTTPS URL, and Coolify's API is the tailnet address
+# `estate_lander.image_repoint.DEFAULT_COOLIFY_URL`, which a container on its resource's default
+# network reaches (HQ G-73, probed from the revision watcher's container on 2026-11-18).
+# It lands nothing itself: the orchestrator lands through its own dispatch App.
+# Its state is the lander's `held-since.json`, `alerts.json` and `revert-alerts.json`, on a named
+# volume at `LANDER_STATE_DIR`; the Mac's `sds/estate-landing` files are copied in at cut-over,
+# before the first `--submit` pass, or every held pull request's clock restarts and the alerts the
+# Mac left firing never resolve.
+# The lane's token is the resource's own `ESTATE_LANDING_BWS_ACCESS_TOKEN` variable, which the VM
+# rotation executor writes; this file names it and never holds a value. With it the launcher reads
+# every secret the pass needs (`scripts/run-estate-landing.sh`, "TWO HOSTS, ONE LAUNCHER").
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
+# and not the ping URL, which a later change writes here. While it's empty the dead-man helper
+# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
+services:
+  estate-landing:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["estate-landing"]
+    environment:
+      BWS_ACCESS_TOKEN: ${ESTATE_LANDING_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      LANDER_STATE_DIR: /var/lib/sds/estate-landing
+      SDS_DEADMAN_PING_URL_UUID: ""
+    volumes:
+      - sds-lanes-estate-landing-state:/var/lib/sds/estate-landing
+    restart: unless-stopped
+
+volumes:
+  sds-lanes-estate-landing-state:

@@ -53,6 +53,9 @@ keeping the cadence they always had -- the orchestrator refuses outside its wind
 and only those passes sync the held-pull-request alerts, which would otherwise resolve every bump
 the other twenty hours do not look at. Without `--submit` nothing is asked for and nothing on the
 hosting platform or in the registry is read.
+
+`estate-landing repositories` changes nothing and prints the repositories the lane's GitHub read
+token must name, which the lane's container mints it for (`repositories`, below).
 """
 
 from __future__ import annotations
@@ -66,6 +69,7 @@ from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 from zoneinfo import ZoneInfo
 
+from bump_proposer.landing_policy import LandingPolicyError, read_landing_policy
 from change_proposer.cli import BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS
 from deploy_watcher.github import GitHubReader, ReadError
 from estate_lander.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
@@ -86,7 +90,7 @@ from estate_lander.orchestrator_client import (
 from estate_lander.revert_pass import Production, lane_rows, revert_pass
 from estate_lander.served import served_revision
 from lander import core
-from lander.core import EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
+from lander.core import EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
 from lander.held_alerts import sync_held_alerts, sync_revert_alerts
 from sds_members.client import Member, MembersUnreadable, read_members
 
@@ -512,8 +516,50 @@ def report(
     return core.report(outcomes, preamble or [], deferral_lines)
 
 
+def repositories() -> int:
+    """Print the repositories the lane's GitHub read token must name, one per line, nothing else.
+
+    In the lane's container the launcher mints the pass's read token for exactly these (ADR-0059
+    decision 2: each pass's mint names only its lane's repositories). They are the landing policy's
+    deploying population, the top-level `repositories` change-manager's policy approves this lane's
+    records in. A pass reads GitHub only for a repository its watch names (`_stranded`,
+    `_production`), and the watch holds this lane's landings, so a landing of a record the policy
+    approved is in the list. A record a person approved outside the policy is not: its row's
+    listing is held as unreadable, and its compare fails to "not at or after", which starts the
+    applications' deploy again on each `--submit` pass that restores it. Read with the same
+    READ-scoped change-manager credential and URL the pass reads its records with. The population
+    is lower-cased by the parse, and the mint casefolds, so each is printed once.
+
+    FAILS CLOSED WITH NOTHING ON STDOUT: a missing credential, a policy this can't read, or one
+    that declares no deploying population is unusable input (2), so the launcher mints nothing for
+    a list it couldn't derive. The parse reads an absent population as empty, so the empty case is
+    refused here rather than printed as a list of none.
+    """
+    cm_token = os.environ.get("ESTATE_LANDING_CHANGE_MANAGER_TOKEN", "")
+    if not cm_token:
+        print("[UNUSABLE] ESTATE_LANDING_CHANGE_MANAGER_TOKEN is unset", file=sys.stderr)
+        return EXIT_UNUSABLE
+    cm_url = os.environ.get("ESTATE_LANDING_CHANGE_MANAGER_URL", "")
+    try:
+        rule = read_landing_policy(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL)
+    except LandingPolicyError as error:
+        print(f"[UNUSABLE] the landing policy could not be read: {error}", file=sys.stderr)
+        return EXIT_UNUSABLE
+    if not rule.deploying:
+        print("[UNUSABLE] the landing policy declares no deploying population", file=sys.stderr)
+        return EXIT_UNUSABLE
+    print("\n".join(sorted(rule.deploying)), file=sys.stdout)
+    return EXIT_OK
+
+
 def main() -> None:
-    sys.exit(run())
+    argv = sys.argv[1:]
+    if argv[:1] == ["repositories"]:
+        if len(argv) > 1:
+            print("usage: estate-landing repositories", file=sys.stderr)
+            sys.exit(EXIT_UNUSABLE)
+        sys.exit(repositories())
+    sys.exit(run(argv))
 
 
 if __name__ == "__main__":

@@ -212,6 +212,10 @@ TABLE: dict[str, Row] = {
     "estate_lander": _row(
         "__future__",
         "argparse",
+        # ADR-0059 step 3g-2: the landing policy's deploying population, which
+        # `estate-landing repositories` prints for the lane container's read mint -- the inert
+        # lander's own reader of the same document.
+        "bump_proposer",
         "change_proposer",
         "collections",
         "dataclasses",

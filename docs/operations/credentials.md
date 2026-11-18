@@ -410,6 +410,13 @@ step 3g-1's cut-over, the `inert-landing` lane account alone reads those three a
 App's key (`314a966c-…`), with the lane's own token in its container (no Keychain item), and the
 lane mints its GitHub token from that App each pass.
 
+`scripts/run-estate-landing.sh` holds no chain password either. On the Mac it reads the orchestrator
+SYSTEM bearer, the `sds-bridge` alert sender and its Coolify token (`f9f59233-…`) as `sds-operator`,
+the change-manager READ bearer (`314f276d-…`) as the broad account, and takes its GitHub token from
+`gh auth token`. After ADR-0059 step 3g-2's cut-over, the `estate-landing` lane account alone reads
+those four and the read-only App's key (`314a966c-…`), with the lane's own token in its container
+(no Keychain item), and the lane mints its GitHub token from that App each pass.
+
 Devon mints both new Keychain items at act step 0. Neither item has an environment override: a
 launcher reads it from the Keychain directly, so a caller's environment can't put the token in
 the children's environment. `sds_bws_value` passes a token to `bws` as an assignment prefix, so it

@@ -886,6 +886,89 @@ its own change or act:
    - The schedule, and the Mac job's retirement. The container's schedule is off until the Mac job
      is booted out and disabled, so the two never submit in the same hour.
 
+`estate-landing`'s tracked files (`lanes/estate-landing/compose.yaml` and `crontab`) don't
+register it either. Its state is the lander's `held-since.json`, `alerts.json` and
+`revert-alerts.json` (the estate lane syncs revert alerts too, `lander.held_alerts`), so its compose
+mounts the named volume `sds-lanes-estate-landing-state` at `LANDER_STATE_DIR`
+(`/var/lib/sds/estate-landing`); the launcher refuses a pass with it unset. It joins no external
+network, the `coolify` network included: it reaches no separate Coolify database resource, every
+service it calls but one (change-manager, the orchestrator, alert-hub, GitHub, GHCR) is an HTTPS
+URL, and the one, Coolify's API, is the tailnet address `estate_lander.image_repoint`'s
+`DEFAULT_COOLIFY_URL`, which a container on its resource's default network reaches (HQ G-73). It
+lands nothing itself: the orchestrator lands through its own dispatch App. Its crontab runs
+`lane-run estate-landing --submit` hourly at minute 16 New York time. The Mac job runs at minute 15,
+but minute 15 is execution-watch's (`*/15`), so the lane takes 16, which no other lane starts on.
+The flag is in the crontab line, so a scheduled pass asks for landings. The bare
+`lane-run estate-landing` is the reporting run, which asks for nothing and reads neither Coolify
+nor GHCR, but this lane arms the dead-man switch, so a bare run pings its check (ADR-0059, "It
+pings the real check").
+
+Its `.bws-secrets.toml` secrets are the following five, all read with the lane's one token. Its
+ping-URL secret joins them when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
+empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+
+- On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer, and the read-only
+  App's key.
+- On `--submit` only: the `sds-bridge` alert sender, whose failed read fails the pass, and the
+  estate lander's Coolify token (`f9f59233-…`), whose failed read is logged and leaves every
+  re-point and restore refused by name.
+
+Each pass mints `ESTATE_LANDING_GITHUB_TOKEN` from the read-only App for the repositories
+`estate-landing repositories` prints: the landing policy's deploying population, where this lane's
+landings are. A bare pass's token carries `metadata` and `pull_requests`, read (the open pull
+requests a revert is in); a `--submit` pass's adds `contents`, read (the compare of a served commit
+with the revert's). The same token is the registry client's credential on `--submit`. The read-only
+App must be installed on each repository, and they must share one owner, or the mint refuses and
+the pass fails (exit 1). A policy the list can't be read from, or one declaring no deploying
+population, fails the pass with exit 2 before anything is minted.
+
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act. It moves outside the 02:00 to 06:00 New York landing window.
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-estate-landing` from the
+   compose without deploying it.
+2. The VM root's keeper commands for the lane token and `estate-landing-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, a `runtime-fetch` reader for `scripts/run-estate-landing.sh` on the read
+   App key's row.
+4. The lane account's grants on its five secrets and its ping-URL secret. The change-manager READ
+   bearer (`314f276d-…`) is read by the broad identity on the Mac and becomes a direct grant to the
+   lane account (Devon's act at the lane's identity gate). The SYSTEM bearer (`221a48d5-…`), the
+   alert sender (`b415d03b-…`) and the Coolify token (`f9f59233-…`) are in `SDS Operator`, read on
+   the Mac as `sds-operator`. The read App key (`314a966c-…`) is in `SDS / Lane Apps`.
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `estate-landing` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof over all six secrets and a bare
+   `lane-run estate-landing` in the container. That bare run is the first read mint over the
+   deploying population, so it proves the read App's installation covers each repository. It
+   doesn't prove `contents`, Coolify or GHCR: a bare pass uses none of them, and with no
+   `revert_opened` row in the watch it lists no pull requests either. It reads the alert sender and
+   the Coolify token only on `--submit`, so the `--read` proof is those secrets' only read before
+   the first acting pass. Before the schedule turns on, prove what a bare pass can't, read-only,
+   from the lane's container:
+   - Coolify reach: `curl -fsS http://100.92.138.19:8000/api/health` (no token), as G-73 did from
+     the revision watcher's container.
+   - GHCR reach and each estate image's visibility: the anonymous exchange,
+     `curl -s -o /dev/null -w '%{http_code}' 'https://ghcr.io/token?scope=repository:alobarquest/<image>:pull&service=ghcr.io'`,
+     followed by a manifest `HEAD` with the token it returns, for each deploying repository's
+     image. Run it first on the two images whose visibility is recorded (D-23): `sds-lanes`, which
+     is public, and `orchestrator`, which is private. An estate image's result means public or
+     private only if those two controls answer differently.
+   Neither proves the minted token's pull or the Coolify token's authority; only a `--submit` pass
+   with a bad landing in the watch uses them.
+8. Cut-over steps 2 onward:
+   - The copy of the Mac's `sds/estate-landing/` files (`held-since.json`, `alerts.json` and, if
+     present, `revert-alerts.json`) into the volume, before the first `--submit` pass in the
+     container, or every held pull request's clock restarts and alerts never resolve.
+   - The paired bare reporting runs on both hosts in the same minute, which ask for nothing and
+     each ping the real check. The Mac's hourly `--submit` job still runs at minute 15, so run the
+     pair away from it and outside 02:00 to 06:00 New York; a bare run asks for nothing, so
+     neither run lands beside it.
+   - The schedule, and the Mac job's retirement. The container's schedule is off until the Mac job
+     is booted out and disabled, so the two never submit in the same hour.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
