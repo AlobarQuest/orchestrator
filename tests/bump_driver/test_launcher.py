@@ -118,6 +118,6 @@ def test_a_failed_alert_sync_exits_three_not_two(
         "BUMP_DRIVER_GITHUB_TOKEN": "x",
         cli.TOKEN_ENV: "x",
     }
-    args = (environ, tmp_path, tmp_path)
+    args = (environ, tmp_path, tmp_path, None)
     assert cli._pass(*args, dry_run=False) == cli.FOUND
     assert cli._pass(*args, dry_run=False) == cli.INCOMPLETE == 3

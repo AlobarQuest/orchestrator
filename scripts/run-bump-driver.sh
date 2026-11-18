@@ -13,7 +13,7 @@
 #   0  every bump moved, or waits on something that clears by itself.
 #   1  the tool itself failed (a missing credential, an unusable URL).
 #   2  a person decides something: a refused decomposition, dispatch or merge, a unit in
-#      revision_required, or a run nobody claimed. Every such finding is delivered as a keyed alert
+#      revision_required, a run nobody claimed, or a bump held for the Mac's conformance facts. Every such finding is delivered as a keyed alert
 #      before the exit, so the check pings success with the report (`--told 2`). A proposal a
 #      person declined isn't a finding.
 #   3  a record, a unit or a pull request could not be read, or alert-hub could not be told: a
@@ -46,16 +46,28 @@
 # grant), with `metadata`, `pull_requests` and `contents`, read: a granted pull request's state
 # (`GitHub.pull_state`), and the shallow clones of the mirrors and of decision 1. It clones
 # intent-packages, project-standards and security-standards, shallow at `main`, through
-# `scripts/sds-git.sh` into `$HOME/Projects/`, the paths the Mac reads, under the new `HOME` that
-# `lane-run` gives the pass and removes after it. `factory` is a shim running the image's
-# interpreter on the intent-packages clone's `src`, as the bump proposer runs intent-packages'
-# lifecycle; no venv is built and nothing is fetched beyond the clones. The conformance claim's
-# Mac-only inputs (code-standards, the infra-drift report, LaunchAgent plists) are not in the
-# container, so no acting pass runs there until an ADR-0059 amendment decides them
-# (`docs/operations/deploy.md`, the bump driver's cut-over). It unsets `BWS_ACCESS_TOKEN` before the
-# clones and the driver run, and git's credential before the driver runs. A missing
-# `BUMP_DRIVER_STATE_DIR` fails the pass: the lock, the alerts and the mirrors must be on the
-# lane's volume. The container block runs the whole pass and exits, so everything after it is the
+# `scripts/sds-git.sh` into `$HOME/Projects/`, and code-standards into `$HOME/Developer/`, the paths
+# the Mac reads, under the new `HOME` that `lane-run` gives the pass and removes after it.
+# `factory` and `code-standards` are shims running the image's interpreter on their clones' `src`,
+# as the bump proposer runs intent-packages' lifecycle; no venv is built and nothing is fetched
+# beyond the clones.
+#
+# THE MAC'S CONFORMANCE FACTS (ADR-0059 Amendment 13, D-62 C). The claim's other two Mac-only
+# inputs, the infra-drift report and the LaunchAgent and hook wiring, come from the newest
+# `mac_conformance.reported` event in the factory-events chain. Every container pass walks the
+# chain with `orchestrator.factory_chain_read`, under the read role, from the image's pinned
+# security-standards, as the work carrier does: the chain's three settings come from the compose
+# (a missing one fails the pass), and the read password (BWS `2f708d08-…`) is read with the lane's
+# token and passed to that walk alone, as an assignment prefix, never exported, never to `factory`,
+# git, the mint or the driver. The walk's verdict, its summary and its newest event (or the reason
+# there is none) go to a file this pass owns, which the driver reads as `--conformance-facts`. The
+# driver judges it, holds a bump whose member reads it when it is unusable, and otherwise writes
+# the facts under `HOME` where project-standards' matrix reads them (`bump_driver/conformance.py`).
+# A walk that didn't verify is a hold with a keyed alert in the driver, not a failed pass: the
+# dispatches and merges of bumps already decomposed don't wait on the chain. It unsets
+# `BWS_ACCESS_TOKEN` before the clones and the driver run, and git's credential before the driver
+# runs. A missing `BUMP_DRIVER_STATE_DIR` fails the pass: the lock, the alerts and the mirrors must
+# be on the lane's volume. The container block runs the whole pass and exits, so everything after it is the
 # Mac's launchd job, unchanged until increment 6. Exit 1 there also covers a failed mint or clone;
 # a member record the repository list couldn't be read from exits 3.
 #
@@ -75,6 +87,9 @@ INFRA_BRAIN_KEY_UUID="da8134b0-565f-45c8-8965-b48200ea1c40"       # INFRA_BRAIN_
 # in `SDS / Lane Apps`. Read in the container only, piped straight into `sds-github-mint`.
 READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
 READ_APP_ID="5684758"
+# The factory-events chain's read-role password (ADR-0055 amendment 26), in `Factory Events`. Read
+# in the container only, for the chain walk alone (ADR-0059 Amendment 13 decision items 4 and 7).
+FACTORY_EVENTS_READ_UUID="2f708d08-ea5d-4d11-bde0-b50200c9a60b"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION: these launchers run the working copy, so a merged change is live here only once it
@@ -119,13 +134,29 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   [ -n "${BUMP_DRIVER_STATE_DIR:-}" ] || sds_outcome_fail \
     "FATAL: BUMP_DRIVER_STATE_DIR is not set in the lane's container"
   export BUMP_DRIVER_STATE_DIR
-  # The clones and the `factory` shim go under `HOME`, so it must be the new, empty directory
-  # `lane-run` gives each pass. A run under a real `HOME` (a hand run with a BWS token exported)
-  # refuses here, before it reads a secret or writes over a checkout or a real `factory`.
-  if [ -e "$HOME/Projects" ] || [ -e "$HOME/.local" ]; then
-    sds_outcome_fail \
-      "FATAL: HOME ($HOME) is not a new directory: the container's clones and shim would write over it"
-  fi
+  # The clones, the shims and the Mac's conformance facts go under `HOME`, so it must be the new,
+  # empty directory `lane-run` gives each pass. A run under a real `HOME` (a hand run with a BWS
+  # token exported) refuses here, before it reads a secret or writes over a checkout, a real
+  # `factory`, an infra-drift report, a LaunchAgent or a Claude settings file.
+  for _written in Projects Developer .local infra-drift Library .claude; do
+    if [ -e "$HOME/$_written" ]; then
+      sds_outcome_fail \
+        "FATAL: HOME ($HOME) is not a new directory: it holds $_written, which the pass would write over"
+    fi
+  done
+
+  # THE CHAIN'S SETTINGS COME FROM THE COMPOSE, and a missing one fails the pass before anything is
+  # read, as in the work carrier's container. Kept in this script's own variables and passed to the
+  # chain walk alone; an ambient chain password is never used.
+  for _setting in FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME; do
+    [ -n "${!_setting:-}" ] || sds_outcome_fail \
+      "FATAL: $_setting is not set in the lane's container: the factory-events chain can't be read"
+  done
+  CHAIN_DB_HOST="$FACTORY_EVENTS_DB_HOST"
+  CHAIN_DB_PORT="$FACTORY_EVENTS_DB_PORT"
+  CHAIN_DB_NAME="$FACTORY_EVENTS_DB_NAME"
+  unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
+    FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
 
   # The five the Mac reads, in its order, each fatal as there, on every pass.
   ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")"
@@ -146,9 +177,14 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-system"
   export ORCHESTRATOR_API_TOKEN ORCHESTRATOR_API_CREDENTIAL_KEY_ID SDS_BRIDGE_ALERT_TOKEN \
     CHANGE_MANAGER_TOKEN CODE_BRAIN_KEY INFRA_BRAIN_KEY
+  # The chain's read password, fatal like the five. It stays in this unexported variable until the
+  # chain walk, which alone is given it.
+  CHAIN_PASSWORD="$(sds_bws_value "$FACTORY_EVENTS_READ_UUID")"
+  [ -n "$CHAIN_PASSWORD" ] || sds_outcome_fail \
+    "FATAL: could not read the factory-events read password from BWS$FROM"
 
   # THE REPOSITORIES ARE THE PROGRAM'S, NOT LISTED HERE: `bump-driver repositories` prints the
-  # three clones and each `dependency_updates` grant, read from the member record with the SYSTEM
+  # four clones and each `dependency_updates` grant, read from the member record with the SYSTEM
   # bearer (ADR-0059 decision 2: the mint names only the lane's repositories). AN UNDERIVABLE LIST
   # MINTS NOTHING: the subcommand exits 3 for an unreadable member record, as the pass would, and
   # its code is the pass's; its reason, its last stderr line, is in the failure's message.
@@ -175,8 +211,10 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # an argument or a file, and the mint runs without the lane's token. Its permissions are what the
   # pass's GitHub reads use: `metadata`, which every installation token carries; `pull_requests`,
   # a granted pull request's state (`bump_driver/client.py`, `GitHub.pull_state`); and `contents`,
-  # the mirrors' clones and fetches (`bump_driver/mirror.py`) and decision 1's three clones. The
-  # driver writes nothing to GitHub: it dispatches and lands through the orchestrator as SYSTEM.
+  # the mirrors' clones and fetches (`bump_driver/mirror.py`) and decision 1's four clones. On the
+  # four cloned repositories the pass reads only `contents`, by the clone: no pull request read
+  # names one, since `GitHub.pull_state` asks only of a granted member's bump unit. The driver
+  # writes nothing to GitHub: it dispatches and lands through the orchestrator as SYSTEM.
   BUMP_DRIVER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
     | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
@@ -191,20 +229,25 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   unset BWS_ACCESS_TOKEN
 
   # DECISION 1'S CLONES, shallow, at `main`, with the read token through git's environment, into
-  # `$HOME/Projects/`: the Mac's paths, so `FACTORY_PYTHONPATH` is the Mac's string and
-  # project-standards' checkers find security-standards where they look for it. `HOME` is the new
-  # directory `lane-run` gives this pass and removes after it, so the pass discards the clones.
-  # git's own message is kept for the report; it never holds the header (no trace is on).
+  # `$HOME/Projects/` and `$HOME/Developer/`: the Mac's paths, so `FACTORY_PYTHONPATH` is the Mac's
+  # string and project-standards' checkers find security-standards and code-standards where they
+  # look for them (Amendment 13 decision item 1 for code-standards). `HOME` is the new directory
+  # `lane-run` gives this pass and removes after it, so the pass discards the clones. git's own
+  # message is kept for the report; it never holds the header (no trace is on).
   # shellcheck disable=SC1091
   source "$REPO_ROOT/scripts/sds-git.sh"
   sds_git_credential BUMP_DRIVER_GITHUB_TOKEN || sds_outcome_fail \
     "FATAL: could not give git the bump driver's GitHub read credential"
   _CLONES="$HOME/Projects"
-  mkdir -p "$_CLONES" || sds_outcome_fail "FATAL: could not create the clone directory $_CLONES"
-  for _clone in intent-packages project-standards security-standards; do
+  _CODE_STANDARDS="$HOME/Developer/code-standards"
+  mkdir -p "$_CLONES" "$HOME/Developer" || sds_outcome_fail \
+    "FATAL: could not create the clone directories $_CLONES and $HOME/Developer"
+  for _clone in intent-packages project-standards security-standards code-standards; do
+    _dest="$_CLONES/$_clone"
+    [ "$_clone" = code-standards ] && _dest="$_CODE_STANDARDS"
     _clone_out="$(git clone --quiet --depth 1 --single-branch --branch main \
-      "https://github.com/AlobarQuest/$_clone.git" "$_CLONES/$_clone" 2>&1)" || sds_outcome_fail \
-      "FATAL: could not clone AlobarQuest/$_clone into $_CLONES/$_clone: $_clone_out"
+      "https://github.com/AlobarQuest/$_clone.git" "$_dest" 2>&1)" || sds_outcome_fail \
+      "FATAL: could not clone AlobarQuest/$_clone into $_dest: $_clone_out"
   done
   # The driver's own git commands build their environment from the token (`Mirrors.environment`),
   # and `factory`'s is an allowlist, so git's credential goes now, as the Mac's pass has none.
@@ -224,17 +267,74 @@ PYTHONPATH='$_CLONES/intent-packages/src'\${PYTHONPATH:+:\$PYTHONPATH} exec '$RE
 SHIM
   chmod 0755 "$_SHIMS/factory" || sds_outcome_fail \
     "FATAL: could not make the factory shim at $_SHIMS/factory executable"
+  # `code-standards`, as a shim at the path the matrix tries first (`checkers._code_cmd`: the
+  # clone's `.venv/bin/code-standards`, else `uv run`, which would reach PyPI): the image's
+  # interpreter, which carries code-standards' one dependency, `tomlkit` (this repository's
+  # `pyproject.toml`), on the clone's `src`. The matrix runs it from the member's mirror, so `-P`
+  # keeps that directory off `sys.path`.
+  _CODE_SHIM="$_CODE_STANDARDS/.venv/bin/code-standards"
+  mkdir -p "$(dirname "$_CODE_SHIM")" || sds_outcome_fail \
+    "FATAL: could not create the code-standards shim's directory"
+  cat > "$_CODE_SHIM" <<SHIM || sds_outcome_fail "FATAL: could not write the code-standards shim at $_CODE_SHIM"
+#!/bin/sh
+PYTHONPATH='$_CODE_STANDARDS/src'\${PYTHONPATH:+:\$PYTHONPATH} exec '$REPO_ROOT/.venv/bin/python' -P -m code_standards.cli "\$@"
+SHIM
+  chmod 0755 "$_CODE_SHIM" || sds_outcome_fail \
+    "FATAL: could not make the code-standards shim at $_CODE_SHIM executable"
 
   PATH="$_SHIMS:$REPO_ROOT/.venv/bin:$PATH"
   FACTORY_PYTHONPATH="$HOME/Projects/project-standards/src:$HOME/Projects/security-standards/src"
   export PATH FACTORY_PYTHONPATH
 
-  "$REPO_ROOT/.venv/bin/bump-driver" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
+  # THE CHAIN WALK, EVERY CONTAINER PASS, dry or acting (Amendment 13 decision item 4). The image's
+  # pinned security-standards (`$REPO_ROOT/security-standards`, which the work carrier's walk uses
+  # too), never the clone at `main`, so both readers verify with one walker and one schema. The
+  # password reaches this one child, by assignment prefix. Its stderr is discarded deliberately,
+  # as the work carrier discards it: a driver's text can repeat connection details (ADR-0055
+  # amendment 24 item 13), and nothing is lost, because anything but a verified record is written
+  # as an unverified walk, which the driver holds and alerts on. The record is the last line; only
+  # its summary fields reach the report.
+  _FACTS_FILE="$(mktemp "${TMPDIR:-/tmp}/sds-bump-driver-facts.XXXXXX")" \
+    || sds_outcome_fail "FATAL: could not create the pass's conformance facts file"
+  _walk_out="$(FACTORY_EVENTS_READ_PASSWORD="$CHAIN_PASSWORD" \
+    FACTORY_EVENTS_DB_HOST="$CHAIN_DB_HOST" \
+    FACTORY_EVENTS_DB_PORT="$CHAIN_DB_PORT" \
+    FACTORY_EVENTS_DB_NAME="$CHAIN_DB_NAME" \
+    PYTHONPATH="$REPO_ROOT/security-standards/src" \
+    "$REPO_ROOT/.venv/bin/python" -m orchestrator.factory_chain_read 2>/dev/null)"
+  _walk_rc=$?
+  unset CHAIN_PASSWORD
+  _walk_summary="$(printf '%s\n' "$_walk_out" | tail -n 1 | "$REPO_ROOT/.venv/bin/python" -c '
+import json, sys
+try:
+    record = json.loads(sys.stdin.read())
+except ValueError:
+    record = None
+if not isinstance(record, dict):
+    record = {"outcome": "unreadable"}
+fields = ("outcome", "seq", "head", "events", "error", "error_type")
+summary = " ".join(f"{name}={record[name]}" for name in fields if name in record)
+verified = record.get("outcome") == "verified" and sys.argv[2] == "0"
+facts = {"verified": verified, "summary": f"{summary} exit={sys.argv[2]}"}
+if verified:
+    facts["mac_conformance"] = record.get("mac_conformance")
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(facts, handle)
+print(summary)
+' "$_FACTS_FILE" "$_walk_rc")" || sds_outcome_fail \
+    "FATAL: could not write the pass's conformance facts file"
+  echo "[chain] ${_walk_summary} (exit $_walk_rc)" > "$SDS_OUTCOME_REPORT"
+
+  "$REPO_ROOT/.venv/bin/bump-driver" "$@" --conformance-facts "$_FACTS_FILE" \
+    >> "$SDS_OUTCOME_REPORT" 2>&1
   rc=$?
   case "$rc" in
     0|1|2|3) ;;
     *) echo "FATAL: bump-driver exited $rc" >> "$SDS_OUTCOME_REPORT"; rc=1 ;;
   esac
+  rm -f -- "$_FACTS_FILE" \
+    || echo "[chain] could not remove $_FACTS_FILE; it holds ids and statuses only" \
+      >> "$SDS_OUTCOME_REPORT"
   sds_outcome_end "$rc" --told 2
 fi
 

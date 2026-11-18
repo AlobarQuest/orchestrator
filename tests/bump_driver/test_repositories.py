@@ -50,6 +50,7 @@ def test_it_prints_the_clones_and_each_dependency_updates_grant_sorted_once(
     assert cli.repositories(ENVIRON) == 0
     assert capsys.readouterr().out.splitlines() == [
         "AlobarQuest/change-manager",
+        "AlobarQuest/code-standards",
         "AlobarQuest/intent-packages",
         "AlobarQuest/project-standards",
         "AlobarQuest/security-standards",

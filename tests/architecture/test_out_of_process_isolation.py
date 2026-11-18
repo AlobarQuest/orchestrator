@@ -293,6 +293,8 @@ TABLE: dict[str, Row] = {
     # Landing Part 4: moves standing dependency-update work as SYSTEM. It reads the member record
     # and the bump matcher's tooling map from `sds_members`, a library its siblings share, tells
     # alert-hub through the shared client, and runs only git and the generator as subprocesses.
+    # In the lane's container it reads a mirror's `PROJECT.md` frontmatter with `yaml`, as
+    # project-standards' contract reads it, to know whose claim reads the Mac's conformance facts.
     "bump_driver": _row(
         "__future__",
         "alert_hub_client",
@@ -314,6 +316,7 @@ TABLE: dict[str, Row] = {
         "sys",
         "tempfile",
         "typing",
+        "yaml",
     ),
     # Execution Part 1: the execution alert lane. `decide.py` is pure and imports the shared alert
     # client's `Alert` and `alert_key`; `client.py` is its one orchestrator read through

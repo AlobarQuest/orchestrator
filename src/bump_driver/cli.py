@@ -19,6 +19,13 @@ The acts, in order, each on a fresh read of the unit:
    its pull request's state and whatever else the answer refuses, because only that request settles
    its row. A call that leaves a row unknown waits; a replay that leaves it unknown is refused.
 
+In the lane's container a bump whose member's conformance claim reads the Mac's facts from the
+factory-events chain is **held** before its decomposition, proposing nothing, while those facts
+are missing, unusable or stale (`conformance`, ADR-0059 Amendment 13); it raises
+`bump-conformance-facts`, or `bump-conformance-wiring` for a wiring entry the facts don't list,
+and the next pass with usable facts proposes it. On the Mac the launcher passes no facts, and
+nothing is held for them.
+
 A unit in `revision_required` raises `bump-unit-failed` and is left there, and a `failed` one is
 left to `work_watcher`'s alert. Requeueing is a SYSTEM act this lane doesn't hold, so a person
 decides. A dispatch the orchestrator couldn't start is asked again on the next pass, under a new
@@ -31,7 +38,8 @@ EXIT CODES:
   0  every bump moved, or waits on something that clears by itself.
   1  the tool itself failed (a missing credential, an unusable URL).
   2  something was found that a person decides: a refused decomposition, dispatch or merge, a
-     unit in `revision_required`, or a run nobody claimed. Each has its own keyed alert. A proposal
+     unit in `revision_required`, a run nobody claimed, or a bump held for the Mac's conformance
+     facts. Each has its own keyed alert. A proposal
      a person declined or superseded is reported and isn't a finding: they decided.
   3  a record, a unit or a pull request could not be read, or alert-hub could not be told, so the
      answer is missing rather than clean.
@@ -53,12 +61,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
+from bump_driver import conformance
 from bump_driver.alerts import (
+    CONFORMANCE_FACTS_KEY,
     TOKEN_ENV,
     UNREAD,
     Outcome,
     act_refused_key,
     bump_failed_key,
+    conformance_wiring_key,
     decompose_refused_key,
     run_unclaimed_key,
     sync_alerts,
@@ -143,11 +154,13 @@ VERSION_CONFLICT: Final = "version_conflict"
 # The orchestrator's refusal of a proposal for a repository the member record doesn't grant.
 GRANT_WITHDRAWN: Final = "target_repository_not_granted"
 FINDINGS: Final = frozenset(  # not-a-vocabulary: this lane's own report words
-    {"refused", "failed", "unclaimed"}
+    {"refused", "failed", "unclaimed", "held"}
 )
 # The repositories the lane's container clones each pass for `factory` and its conformance claim
-# (ADR-0059 decision 1), which its read token must name beside the granted members.
+# (ADR-0059 decision 1; code-standards by Amendment 13 decision item 1), which its read token must
+# name beside the granted members. Only their contents are read: a shallow clone at `main`.
 CLONED: Final = (
+    "AlobarQuest/code-standards",
     "AlobarQuest/intent-packages",
     "AlobarQuest/project-standards",
     "AlobarQuest/security-standards",
@@ -183,7 +196,9 @@ def run_pass(
     *,
     dry_run: bool = False,
     now: datetime | None = None,
+    facts: conformance.Facts | None = None,
 ) -> list[Outcome]:
+    """`facts` is the container's reading of the Mac's conformance facts, `None` on the Mac."""
     outcomes: list[Outcome] = []
     bumps = _bumps(records, orchestrator, granted, outcomes)
     # A record that can't be read may hold the run that is live, so its repository starts nothing.
@@ -193,7 +208,7 @@ def run_pass(
             _isolated(
                 bump,
                 outcomes,
-                lambda b: _decompose(b, orchestrator, mirror, generate, dry_run),
+                lambda b: _decompose(b, orchestrator, mirror, generate, dry_run, facts),
             )
     # Read after decomposing, so a unit policy just approved is dispatched in this pass.
     units = _units(bumps, orchestrator, outcomes, held)
@@ -304,6 +319,7 @@ def _decompose(
     mirror: Mirror,
     generate: Generate,
     dry_run: bool,
+    facts: conformance.Facts | None,
 ) -> Outcome | None:
     work = orchestrator.work(bump.record_id)
     if any(str(u.get("revision_id")) == bump.revision_id for u in work.get("units") or []):
@@ -314,7 +330,11 @@ def _decompose(
     if dry_run:
         return Outcome(bump.subject, "would-propose", repository=bump.repository)
     try:
-        body = generate(bump.intake, bump.repository, mirror(bump.repository))
+        checkout = mirror(bump.repository)
+        held = _held_for_facts(bump, checkout, facts)
+        if held is not None:
+            return held
+        body = generate(bump.intake, bump.repository, checkout)
     except (DecomposeRefused, MirrorRefused) as error:
         return _refused(bump, str(error))
     try:
@@ -338,6 +358,39 @@ def _decompose(
             bump.repository,
         )
     return _refused(bump, _not_applied(answer))
+
+
+def _held_for_facts(bump: _Bump, checkout: Path, facts: conformance.Facts | None) -> Outcome | None:
+    """Hold a bump whose member's claim reads the Mac's conformance facts while they can't give
+    the cells the Mac would, so no decomposition is proposed that a person must supersede. Judged
+    now, just before the generator, against the mirror the generator reads."""
+    if facts is None:
+        return None
+    declared = conformance.declared(checkout)
+    if not declared.reads_event:
+        return None
+    problem = facts.unusable()
+    if problem is not None:
+        return Outcome(
+            bump.subject,
+            "held",
+            f"{problem}; every bump that reads the Mac's conformance facts waits for the next "
+            "03:30 nightly's event (the Mac's infra-drift and factory-events jobs)",
+            bump.repository,
+            CONFORMANCE_FACTS_KEY,
+        )
+    unlisted = facts.unlisted(declared.wiring)
+    if unlisted:
+        return Outcome(
+            bump.subject,
+            "held",
+            f"it declares {', '.join(unlisted)}, which the Mac's conformance event doesn't list, "
+            "so the container would read it as not wired; add it to security-standards' WIRING "
+            "set (factory_events.adapters.mac_conformance)",
+            bump.repository,
+            conformance_wiring_key(bump.repository),
+        )
+    return None
 
 
 def _existing(bump: _Bump, proposals: Sequence[dict[str, Any]]) -> Outcome | None:
@@ -744,6 +797,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Decompose, dispatch and land standing dependency-update work.",
     )
     parser.add_argument("--dry-run", action="store_true", help="list what would be done")
+    parser.add_argument(
+        "--conformance-facts",
+        type=Path,
+        help="the lane container's reading of the Mac's conformance facts from the chain",
+    )
     args = parser.parse_args(arguments)
     environ = os.environ
     required = (
@@ -764,8 +822,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     home = Path(environ.get("HOME", str(Path.home())))
     state = Path(environ.get("BUMP_DRIVER_STATE_DIR", str(state_directory(home))))
+    facts = None
+    if args.conformance_facts is not None:
+        facts = conformance.load(args.conformance_facts, lambda: datetime.now(UTC))
     if args.dry_run:
-        return _pass(environ, state, home, dry_run=True)
+        return _pass(environ, state, home, facts, dry_run=True)
     try:
         state.mkdir(parents=True, exist_ok=True)
         lock = (state / LOCK_FILE).open("w")
@@ -779,10 +840,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             # Not a finding: that pass reports for itself, and this one touched nothing.
             print("another bump-driver pass is running; this one did nothing")
             return 0
-        return _pass(environ, state, home, dry_run=False)
+        return _pass(environ, state, home, facts, dry_run=False)
 
 
-def _pass(environ: Mapping[str, str], state: Path, home: Path, *, dry_run: bool) -> int:
+def _pass(
+    environ: Mapping[str, str],
+    state: Path,
+    home: Path,
+    facts: conformance.Facts | None,
+    *,
+    dry_run: bool,
+) -> int:
     token = environ["ORCHESTRATOR_API_TOKEN"]
     key_id = environ["ORCHESTRATOR_API_CREDENTIAL_KEY_ID"]
     github_token = environ["BUMP_DRIVER_GITHUB_TOKEN"]
@@ -797,6 +865,18 @@ def _pass(environ: Mapping[str, str], state: Path, home: Path, *, dry_run: bool)
     except UnusableEndpointError as error:
         print(f"FATAL: {error}", file=sys.stderr)
         return 1
+    if facts is not None:
+        print(f"conformance facts: {facts.summary()}")
+        if not dry_run and facts.event is not None and facts.unusable() is None:
+            try:
+                conformance.materialize(facts.event, home)
+            except OSError as error:
+                print(
+                    f"FATAL: the conformance facts could not be written under HOME: "
+                    f"{type(error).__name__}",
+                    file=sys.stderr,
+                )
+                return 1
     try:
         members = read_members(token=token, credential_key_id=key_id, base_url=base_url)
         granted = {
@@ -812,6 +892,7 @@ def _pass(environ: Mapping[str, str], state: Path, home: Path, *, dry_run: bool)
             mirrors.fresh,
             Generator(factory_binary(home), _generator_environment(environ, mirrors)),
             dry_run=dry_run,
+            facts=facts,
         )
     except (CallError, MembersUnreadable) as error:
         # No alert is touched: a pass that read nothing says nothing about what it remembers.
@@ -827,7 +908,9 @@ def _pass(environ: Mapping[str, str], state: Path, home: Path, *, dry_run: bool)
     code = exit_code(outcomes)
     if dry_run:
         return code
-    problem = sync_alerts(outcomes, token=environ[TOKEN_ENV], state_dir=state)
+    # The facts' key resolves only on a pass whose facts are usable (`alerts`).
+    kept = frozenset({CONFORMANCE_FACTS_KEY}) if facts and facts.unusable() else frozenset()
+    problem = sync_alerts(outcomes, token=environ[TOKEN_ENV], state_dir=state, kept=kept)
     if problem is not None:
         print(f"alert-hub could not be told: {problem}", file=sys.stderr)
         return INCOMPLETE

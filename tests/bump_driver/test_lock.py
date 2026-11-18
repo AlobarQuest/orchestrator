@@ -25,7 +25,7 @@ def passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     monkeypatch.setenv("BUMP_DRIVER_STATE_DIR", str(tmp_path / "state"))
     ran: list[bool] = []
 
-    def run(environ: Any, state: Path, home: Path, *, dry_run: bool) -> int:
+    def run(environ: Any, state: Path, home: Path, facts: Any, *, dry_run: bool) -> int:
         ran.append(dry_run)
         # Held exclusively for the whole pass: even a shared request is refused while it runs.
         if not dry_run:
