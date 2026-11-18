@@ -329,8 +329,7 @@ def test_no_token_reaches_an_argument(tmp_path: Path, args: tuple[str, ...]) -> 
         # the program reads as "not at or after" and deploys again, so it is pinned here.
         (
             ("--submit",),
-            "--permission metadata=read --permission pull_requests=read"
-            " --permission contents=read",
+            "--permission metadata=read --permission pull_requests=read --permission contents=read",
         ),
     ],
     ids=["bare", "submit"],
