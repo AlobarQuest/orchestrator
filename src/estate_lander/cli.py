@@ -526,9 +526,9 @@ def repositories() -> int:
     `_production`), and the watch holds this lane's landings, so a landing of a record the policy
     approved is in the list. A record a person approved outside the policy is not: its row's
     listing is held as unreadable, and its compare fails to "not at or after", which starts the
-    applications' deploy again on each `--submit` pass that restores it. Read with the same READ-scoped change-manager
-    credential and URL the pass reads its records with. The population is lower-cased by the
-    parse, and the mint casefolds, so each is printed once.
+    applications' deploy again on each `--submit` pass that restores it. Read with the same
+    READ-scoped change-manager credential and URL the pass reads its records with. The population
+    is lower-cased by the parse, and the mint casefolds, so each is printed once.
 
     FAILS CLOSED WITH NOTHING ON STDOUT: a missing credential, a policy this can't read, or one
     that declares no deploying population is unusable input (2), so the launcher mints nothing for
