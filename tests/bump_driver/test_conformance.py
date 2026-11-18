@@ -19,7 +19,7 @@ import json
 import os
 import plistlib
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -171,9 +171,10 @@ def test_the_drivers_bound_is_inside_the_matrixs() -> None:
     """The matrix measures again when the generator runs, later than the driver's check, so the
     driver's bound must be strictly inside it: a report the driver passes is never stale there."""
     assert MAX_REPORT_AGE_HOURS < MATRIX_MAX_AGE_HOURS == 36
-    portfolio = _project_standards()
-    if portfolio is not None:
-        assert portfolio["config"].INFRA_MAX_AGE_H == MATRIX_MAX_AGE_HOURS
+
+
+def test_the_matrixs_bound_is_project_standards_own(portfolio: dict[str, ModuleType]) -> None:
+    assert portfolio["config"].INFRA_MAX_AGE_H == MATRIX_MAX_AGE_HOURS
 
 
 @pytest.mark.parametrize(
@@ -447,26 +448,26 @@ def test_a_file_already_under_home_is_never_overwritten(tmp_path: Path) -> None:
     assert (tmp_path / ".claude" / "settings.json").read_text() == "the real one"
 
 
-def _project_standards() -> dict[str, ModuleType] | None:
+@pytest.fixture
+def portfolio(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, ModuleType]]:
+    """project-standards' readers, loaded for one test and unloaded after it: a `portfolio` left
+    importable would change what other tests see (`test_conformance_claim.py` skips without it)."""
     root = Path(
         os.environ.get("PROJECT_STANDARDS_SRC", Path.home() / "Projects/project-standards/src")
     )
     if not (root / "portfolio" / "checkers.py").is_file():
-        return None
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-    return {
-        name: importlib.import_module(f"portfolio.{name}")
-        for name in ("config", "checkers", "wiring", "contract", "manifest")
-    }
-
-
-@pytest.fixture
-def portfolio() -> dict[str, ModuleType]:
-    modules = _project_standards()
-    if modules is None:
         pytest.skip("project-standards isn't checked out here (it isn't in CI)")
-    return modules
+    if any(name == "portfolio" or name.startswith("portfolio.") for name in sys.modules):
+        pytest.skip("a `portfolio` is already loaded in this process; it can't be swapped")
+    monkeypatch.syspath_prepend(str(root))
+    try:
+        yield {
+            name: importlib.import_module(f"portfolio.{name}")
+            for name in ("config", "checkers", "wiring", "contract", "manifest")
+        }
+    finally:
+        for name in [n for n in sys.modules if n == "portfolio" or n.startswith("portfolio.")]:
+            del sys.modules[name]
 
 
 def _mac_inputs(home: Path, *, ok: bool = True) -> None:
