@@ -35,6 +35,11 @@ GitHub App, GHCR, Coolify, change-manager, orchestrator, alert-hub or Healthchec
     `GET /api/landing-policy`, its predicate is the union of its two change-manager clients, and
     its bearers gain the read App key.
   - `tests/scripts/test_deploy_lanes.py`: `estate-landing` added to `placeholders`.
+  - `tests/architecture/test_out_of_process_isolation.py`: `bump_proposer` added to the
+    `estate_lander` import row, as the inert lander's row already has it, for
+    `bump_proposer.landing_policy`. **This file isn't in the handoff's file list.** I edited it as
+    one of `src/estate_lander`'s tests, because it guards that package's imports, and the parallel
+    worker's fence doesn't include it. See concern 7.
 - `layers.toml`: the new launcher test file.
 - Docs: `docs/operations/deploy.md` gains the estate lander's lane paragraph and its remaining
   cut-over steps, after the inert lander's. `docs/operations/credentials.md` gains the holder
@@ -323,6 +328,25 @@ different: the lander takes them itself, and only after the orchestrator records
 - `main()` now calls `run(sys.argv[1:])` instead of `run()`. Argparse reads `sys.argv[1:]` when
   given `None`, so the behaviour is the same, and a test pins both forms.
 
+## Code review
+
+I ran `/code-review` (medium) on `origin/main...HEAD`. It raised seven findings, and I changed no
+code for any of them:
+
+- GHCR without `packages: read`, and the deploying population being narrower than a
+  person-approved record: both are concerns 1 and 3. The handoff forbids changing the registry
+  client and adding a permission.
+- The Coolify read being non-fatal: the handoff requires it, and it's logged.
+- The state copy being a manual cut-over step: it is ADR-0059's design.
+- The Coolify token's `.cred-consumers.toml` note: see cut-over step 3. That file is out of scope
+  here.
+- `--submit` matched by `case " $* "`, so argparse would take `--sub` as a prefix abbreviation and
+  the launcher wouldn't fetch the submit-only secrets: the Mac path and #736 use the same match, and
+  the crontab and plist pass `--submit` exactly. A follow-up could set `allow_abbrev=False` in
+  `run()`'s parser for both landers.
+- `exit "$derive_rc"` forwards an unexpected code from a crashed subcommand: the same as #736, and
+  the code still reaches the dead-man's finding mapping as a non-zero exit.
+
 ## Concerns and follow-ups
 
 1. **GHCR pull with the minted token is unsupported per GitHub's documentation for private images,
@@ -348,6 +372,10 @@ different: the lander takes them itself, and only after the orchestrator records
    step name all three. The ADR row needs an amendment, which is outside my fence.
 5. **Standards gap:** the quoted Code Brain rule 3 doesn't say whether shell launchers' stderr lines
    must be JSON. I followed the existing launchers.
+7. **The file fence:** `tests/architecture/test_out_of_process_isolation.py` is outside the
+   handoff's listed files. The new import needed a one-entry row change there (see "What
+   changed"). If HQ reads the fence strictly, the alternative is to move the deploying-population
+   read out of `estate_lander`, which I judged worse.
 6. The handoff's fact "the change-manager READ credential … every pass" and the other facts
    matched the source.
 
@@ -359,7 +387,11 @@ These are in deploy.md under the estate lander's paragraph:
    compose without deploying it.
 2. The VM root's keeper commands for the lane token and `estate-landing-ping-url`.
 3. The lane's registry rows in two changes (the token's, then the ping URL's), plus a
-   `runtime-fetch` reader for `scripts/run-estate-landing.sh` on the read App key's row.
+   `runtime-fetch` reader for `scripts/run-estate-landing.sh` on the read App key's row. In the
+   same work, the Coolify token's existing `runtime-fetch` note (`.cred-consumers.toml` ~680) says
+   "the narrow sds-operator identity" only. It needs the container's reader too, so a rotation of
+   `f9f59233-…` knows the lane account reads it. The handoff keeps `.cred-consumers.toml` out of
+   this change.
 4. **The lane account's grants on the five rows and its ping-URL secret:**
    - `314f276d-…` change-manager READ, today read by the broad identity; a direct grant is Devon's
      act at the identity gate.
