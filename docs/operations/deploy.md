@@ -763,13 +763,30 @@ runs before the bump proposer's 06:55 and the carry's 07:05. The bare `lane-run 
 is the dry run, which writes nothing, but this lane arms the dead-man switch, so a bare run pings
 its check (ADR-0059, "It pings the real check").
 
-The compose sets `INFRADRIFT_CONFIG_DIR` and `SECURITY_DRIFT_STATE_DIR` to empty placeholders.
-infraops' `cred-findings` reads `cred-consumers.list` from the first and `cred-rotation-state.json`
-from the second (infraops `src/security-drift/paths.ts`). The launcher refuses every pass, a dry
-run included, with exit 2 while either is empty or names a directory without its file, before it
-reads any of its four secrets or clones anything. Where the state file lives is decided outside this lane's code
-(ADR-0059 decision 5, "Verify in increment 4"), and so is how infra-drift's 03:00 credential scan
-on the Mac reads it.
+infraops' `cred-findings` reads `cred-consumers.list` from `INFRADRIFT_CONFIG_DIR` and
+`cred-rotation-state.json` from `SECURITY_DRIFT_STATE_DIR` (infraops `src/security-drift/paths.ts`).
+The compose sets both, and the launcher refuses every pass, a dry run included, with exit 2 while
+either is unset or empty, before it clones anything or reads any of its four secrets:
+
+- `SECURITY_DRIFT_STATE_DIR` is `/var/lib/sds/rotation-proposer/security-drift`, a directory in the
+  lane's volume (ADR-0059 Amendment 12 decision 1). It's a directory of its own, apart from the
+  proposer's `alerts.json` and `approval-since.json`, because infraops writes the file there by
+  a temporary file and a rename, and the name says whose file it holds. A pass also exits 2 when
+  the directory has no `cred-rotation-state.json`, so every pass before the cut-over copy refuses.
+- `INFRADRIFT_CONFIG_DIR` is `/var/tmp/sds-rotation-proposer/infra-drift`, beside the pass's clones
+  and off the volume. The launcher writes `cred-consumers.list` there each pass, after its clones,
+  and discards it with them. A list left by an earlier pass is removed before the clones, so no
+  list names a clone the pass didn't make.
+
+The list names four registries, the Mac list's four (ADR-0059 decision 5): the
+`.cred-consumers.toml` of infraops-mcp-server, change-manager, factory-runner and orchestrator, each
+in its clone at `main`. infraops' exposure scan (Infra Brain rule 1032) reads exposures from the
+registries the list names, so a clone without its registry file exits 2 and the launcher never
+writes a shorter list. `scripts/sds-cred-registries.sh` holds the clones and the list, for the pass
+and for a person's command (described after the cut-over list). An exposure open on the Mac stays
+open in the container (Amendment 12's verify item "an open exposure survives the move"): the
+exposure is declared in a registry the list names, and the cut-over copy carries the state that
+shows it unresolved.
 
 Its `.bws-secrets.toml` secrets are the following four, all read with the lane's one token on
 `--submit` only; a dry run reads none. Its ping-URL secret joins them when it exists; until then the
@@ -781,11 +798,14 @@ compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane is in `test_deploy_l
 - The `sds-bridge` alert sender.
 - The "SDS lanes" App's key (`lanes-push-app-private-key`).
 
-Each pass clones intent-packages and infraops-mcp-server anonymously (both are public), shallow at
-`main`, into `/var/tmp/sds-rotation-proposer`, with git given no credential, and discards both when
-it's done. Its registry mirrors (`RepoMirror`) live in that directory too. On `--submit` it mints the
-"SDS lanes" App's token for intent-packages alone (`contents: write`) after both clones, and hands
-it to git with the App's `[bot]` identity, so `standing.publish`'s `git push origin main` pushes as
+Each pass clones five public repositories anonymously, shallow at `main`, into
+`/var/tmp/sds-rotation-proposer`, with git given no credential and without the lane's token in its
+environment, and discards them when it's done: intent-packages and the four registries' repositories.
+The infraops-mcp-server clone is also the checkout `cred-findings` runs from (its `dist/` is
+tracked). Its registry mirrors (`RepoMirror`) live in that directory too. The pass gathers these
+inputs before it reads any secret, so a pass that can't use them reads none. On `--submit` it mints
+the "SDS lanes" App's token for intent-packages alone (`contents: write`) after the clones, and
+hands it to git with the App's `[bot]` identity, so `standing.publish`'s `git push origin main` pushes as
 the App. No program variable holds the push token; only git's extraheader does. intent-packages'
 lifecycle runs under the image's interpreter with the clone's `src` on `PYTHONPATH`
 (`BUMP_PROPOSER_PACKAGES_PYTHON`), as the bump proposer's does.
@@ -793,11 +813,10 @@ lifecycle runs under the image's interpreter with the clone's `src` on `PYTHONPA
 Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
 its own change or act:
 
-1. The decision on where `cred-rotation-state.json` lives and how infra-drift's Mac scan reads it,
-   with the way `cred-consumers.list` reaches the container: the Mac's list names four working
-   copies by `/Users/...` path. A change then writes both directory settings into the compose with
-   the volume or mount that carries the files. Until then every pass exits 2, so this precedes the
-   lane's `--add` proof run.
+1. Done (the change that set both directory settings): the compose names the state file's
+   directory on the volume and the list's directory beside the clones, and the launcher writes the
+   list each pass. ADR-0059 Amendment 12 decided the state file's home. Every pass still exits 2
+   until the state file is copied in (step 10).
 2. The orchestrator serving this release; then HQ creates `sds-lane-rotation-proposer` from the
    compose without deploying it.
 3. The VM root's keeper commands for the lane token and `rotation-proposer-ping-url`.
@@ -817,16 +836,58 @@ its own change or act:
 8. A served release whose compose names the ping-URL secret's id, with `rotation-proposer` removed
    from `test_deploy_lanes.py`'s `placeholders`.
 9. The lane's `--add`, then the `lane-run --read` proof over all five secrets and a bare
-   `lane-run rotation-proposer` in the container. That bare run is the first anonymous clone of
-   both repositories and the first `cred-findings` in the container. It reads no secret, so the
+   `lane-run rotation-proposer` in the container, after the state file's copy (step 10's first
+   item), without which the bare run exits 2. That bare run is the first anonymous clone of the
+   five repositories and the first `cred-findings` in the container. It reads no secret, so the
    proof is the only read of the four before the first acting pass.
 10. Cut-over steps 2 onward:
+    - The copy of the Mac's `~/.config/infra-drift/cred-rotation-state.json` into the volume
+      (`rotation-state-copy`), before step 9's bare run. It must produce
+      `/var/lib/sds/rotation-proposer/security-drift/cred-rotation-state.json` as a regular file
+      (not a link), mode 0600, owned by the container's `orchestrator` user, in a directory that
+      user owns at mode 0700. infraops refuses a file another uid owns (`loadValidated0600Json`),
+      so a plain `docker cp` or a root `docker exec` leaves a file every pass refuses. Write it as
+      `orchestrator`, reading the Mac file on stdin:
+
+      ```sh
+      docker exec -i -u orchestrator <container> sh -c 'umask 077 &&
+        mkdir -p /var/lib/sds/rotation-proposer/security-drift &&
+        cat > /var/lib/sds/rotation-proposer/security-drift/cred-rotation-state.json'
+      ```
+
+      Then compare its SHA-256 with the Mac copy's. From then on nothing writes the Mac copy.
     - The copy of the Mac's `sds/rotation-proposer/` files into the volume, before the first
       `--submit` pass in the container, or alerts never resolve and approval-wait clocks restart.
     - The paired dry runs on both hosts in the same minute, which write nothing and each ping the
       real check. Fast-forward the Mac's `~/Projects/intent-packages` and
       `~/Projects/infraops-mcp-server` to `origin/main` first, because the container clones `main`.
     - The schedule, and the Mac job's retirement.
+
+A person's infraops command for this lane, `resolve-exposure` or `record-rotation` (ADR-0059
+Amendment 12), runs inside the lane's container from an interactive session, as the lane's user:
+
+```sh
+docker exec -i -u orchestrator <container> bash -c \
+  'source /app/scripts/sds-cred-registries.sh && sds_infraops_session "$@"' _ \
+  resolve-exposure --cred <credential-id> --exposure <exposure-id>
+```
+
+The pass's clones under `/var/tmp/sds-rotation-proposer` are deleted at each pass's start and end,
+so between passes they're absent, or partial while a pass runs. `sds_infraops_session` never reads
+them: it unsets the lane's token, makes its own anonymous clones of the four registries' repositories
+in a fresh directory under `/var/tmp`, writes their list there, and discards both when infraops
+exits. The command and its two variables come from the following places:
+
+- The infraops CLI is the session's own infraops-mcp-server clone at `main`,
+  `dist/cli/security-drift-cli.js`, run with the image's `node`.
+- `INFRADRIFT_CONFIG_DIR` is the session's directory holding that list. `record-rotation` reads
+  the list; `resolve-exposure` reads only the state file.
+- `SECURITY_DRIFT_STATE_DIR` is the compose's, which `docker exec` inherits.
+
+The session refuses root (a root write leaves the state file owned by root, and every later pass
+refuses it), an unset or empty `SECURITY_DRIFT_STATE_DIR` and a missing state file (exit 2), and it
+fails as a pass does on a failed clone (1) or a clone without its registry file (2). Otherwise it
+exits with infraops' code. It needs no mount, volume or credential beyond the lane's own.
 
 `inert-landing`'s tracked files (`lanes/inert-landing/compose.yaml` and `crontab`) don't register
 it either. Its state is the lander's `held-since.json`, `alerts.json` and `revert-alerts.json`, so

@@ -6,10 +6,11 @@
 #
 # WHAT IS DUE IS infraops' ANSWER, NOT THIS PROGRAM'S. The pass runs
 # `node $ROTATION_PROPOSER_INFRAOPS_CHECKOUT/dist/cli/security-drift-cli.js cred-findings`, which
-# reads the registries listed in ~/.config/infra-drift/cred-consumers.list and the rotation state
-# beside them and prints JSON. Neither file is opened by this program, and the subcommand writes
-# nothing. An infraops checkout that predates the subcommand answers "unknown command" and the
-# pass exits 2: land the infraops change and pull that checkout before scheduling this.
+# reads the registries listed in `cred-consumers.list` and the rotation state and prints JSON: on
+# the Mac, both in ~/.config/infra-drift; in the lane's container, where the compose's two settings
+# name. Neither file is opened by this program, and the subcommand writes nothing. An infraops
+# checkout that predates the subcommand answers "unknown command" and the pass exits 2: land the
+# infraops change and pull that checkout before scheduling this.
 #
 # WHAT A WRITING PASS DOES, IN TWO PASSES. For a due credential whose standing package
 # `rotation-<credential_id>` does not yet carry the rotation, it files the observation, revises
@@ -50,16 +51,20 @@
 # TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 4, step 3f-5). A set `BWS_ACCESS_TOKEN` means the
 # lane's container, and the block after the `--submit` test runs that pass and exits. There:
 #   - `INFRADRIFT_CONFIG_DIR` and `SECURITY_DRIFT_STATE_DIR` come from the compose alone; either
-#     unset or empty, or its file (`cred-consumers.list`, `cred-rotation-state.json`) missing,
-#     exits 2 before the pass's secrets, clones or program. Where those files live is decided
-#     outside this launcher (ADR-0059 decision 5).
+#     unset or empty, or `cred-rotation-state.json` missing from the second, exits 2 before the
+#     pass's clones, secrets or program. The state file lives on the lane's volume (ADR-0059
+#     Amendment 12). `cred-consumers.list` is this launcher's to write, each pass, into the first.
+#   - It gathers its inputs before it reads any secret: it clones intent-packages and the four
+#     credential registries (`scripts/sds-cred-registries.sh`), writes the list naming the four
+#     clones' `.cred-consumers.toml`, and exits 2 when a clone lacks its registry file.
 #   - `--submit` only, it reads the change-manager PROPOSE bearer (`acccb346-…`), the orchestrator
 #     OBSERVER bearer (`f793576f-…`), the `sds-bridge` alert sender (`b415d03b-…`) and the "SDS
 #     lanes" App's key (`b8f547b9-…`, piped straight into its mint), each with the lane's one token.
 #     A dry run reads no secret.
-#   - It clones intent-packages and infraops-mcp-server anonymously, shallow at `main`, into a
-#     directory the pass discards, and on `--submit` hands git the App's push token with its `[bot]`
-#     identity. No program variable holds the push token; only git's extraheader does.
+#   - Its clones are anonymous, shallow at `main`, in a directory the pass discards, and the
+#     infraops-mcp-server clone is both a registry and the checkout `cred-findings` runs from. On
+#     `--submit` it hands git the App's push token with its `[bot]` identity after the clones. No
+#     program variable holds the push token; only git's extraheader does.
 #   - The lifecycle runs under the image's interpreter with the clone's `src` on `PYTHONPATH`. No
 #     chain setting reaches the program: this lane holds no chain credential (D-43 B).
 #   - It unsets `BWS_ACCESS_TOKEN` before git or any program runs, and reads no Keychain item.
@@ -67,7 +72,8 @@
 #     the pass then reports a due credential not handed over as a finding and alerts on it
 #     (ADR-0059 Amendment 12 decision item 4). The Mac's branch unsets it, because there the
 #     03:00 infra-drift scan still files those as change-manager items.
-# Exit 1 there also covers a failed mint or clone; exit 2 also covers the fence.
+# Exit 1 there also covers a failed mint, clone or list write; exit 2 also covers the fence and a
+# clone without its registry file.
 #
 # Usage:
 #   scripts/run-rotation-proposer.sh              # dry run: reports, writes nothing
@@ -139,25 +145,24 @@ esac
 # checkouts fresh each pass), reads no Keychain item, and reads every secret with that one token in
 # the environment, never as a process argument.
 if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-  # THE FENCE: WHERE infraops' TWO FILES LIVE IS NOT THIS LAUNCHER'S TO CHOOSE (ADR-0059 decision 5,
-  # "Verify in increment 4"). `cred-findings` reads `cred-consumers.list` from
-  # `INFRADRIFT_CONFIG_DIR` and `cred-rotation-state.json` from `SECURITY_DRIFT_STATE_DIR`
-  # (infraops `src/security-drift/paths.ts`), and falls back to `~/.config/infra-drift` when either is
-  # unset. Both come from the compose alone; there is no default and no home-directory fallback.
-  # An empty value is refused too: infraops' `??` keeps an empty string, which would resolve both
-  # files against the working directory. Checked before the pass's secrets, clones and program, so
-  # a pass the fence stops reads none of them and exits 2 (could not use its inputs), saying why.
-  # (The dead-man switch armed earlier, and reads the lane's ping-URL secret once one is named.)
+  # THE FENCE: WHERE infraops' TWO FILES LIVE IS THE COMPOSE'S (ADR-0059 decision 5; Amendment 12
+  # decision 1). `cred-findings` reads `cred-consumers.list` from `INFRADRIFT_CONFIG_DIR` and
+  # `cred-rotation-state.json` from `SECURITY_DRIFT_STATE_DIR` (infraops
+  # `src/security-drift/paths.ts`), and falls back to `~/.config/infra-drift` when either is unset.
+  # Both come from the compose alone; there is no default and no home-directory fallback. An empty
+  # value is refused too: infraops' `??` keeps an empty string, which would resolve both files
+  # against the working directory. The state file is mutable state on the lane's volume, copied in
+  # once at cut-over, so its absence is checked here. The list isn't: this launcher writes it each
+  # pass, after the clones it names (THE INPUTS, below). Checked before the pass's clones, secrets
+  # and program, so a pass the fence stops reads none of them and exits 2 (could not use its
+  # inputs), saying why. (The dead-man switch armed earlier, and reads the lane's ping-URL secret
+  # once one is named.)
   for _setting in INFRADRIFT_CONFIG_DIR SECURITY_DRIFT_STATE_DIR; do
     if [ -z "${!_setting:-}" ]; then
       echo "FATAL: $_setting is not set in the lane's container: infraops can't be asked what is due" >&2
       exit 2
     fi
   done
-  if [ ! -f "$INFRADRIFT_CONFIG_DIR/cred-consumers.list" ]; then
-    echo "FATAL: no cred-consumers.list in INFRADRIFT_CONFIG_DIR ($INFRADRIFT_CONFIG_DIR): infraops can't be asked what is due" >&2
-    exit 2
-  fi
   if [ ! -f "$SECURITY_DRIFT_STATE_DIR/cred-rotation-state.json" ]; then
     echo "FATAL: no cred-rotation-state.json in SECURITY_DRIFT_STATE_DIR ($SECURITY_DRIFT_STATE_DIR): infraops can't be asked what is due" >&2
     exit 2
@@ -186,6 +191,44 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     echo "FATAL: could not create the alert state directory $ROTATION_PROPOSER_STATE_DIR" >&2
     exit 1
   fi
+
+  # THE INPUTS, gathered before any secret is read, so a pass that can't use them reads none:
+  # intent-packages and the four credential registries, shallow, at `main`, anonymous, into a
+  # directory the pass discards (decision 1), then the list naming the four registry files.
+  # `sds_anonymous_clone` runs each git with no credential and without the lane's token, which is
+  # still set here; the push credential doesn't exist until after the clones, so its header never
+  # rides a fetch. `ROTATION_PROPOSER_CLONE_ROOT` is a test seam: `lane-run` never passes it. The
+  # git settings exported here are for the program's own git, `standing.publish`'s push.
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/scripts/sds-cred-registries.sh"
+  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
+  unset GIT_TRACE GIT_TRACE_CURL GIT_TRACE_PACKET GIT_CURL_VERBOSE GIT_CONFIG_COUNT
+  _CLONE_ROOT="${ROTATION_PROPOSER_CLONE_ROOT:-/var/tmp/sds-rotation-proposer}"
+  PACKAGES_CLONE="$_CLONE_ROOT/intent-packages"
+  INFRAOPS_CLONE="$_CLONE_ROOT/infraops-mcp-server"
+  REGISTRY_CLONES=()
+  for _remote in "${SDS_CRED_REGISTRIES[@]}"; do
+    REGISTRY_CLONES+=("$_CLONE_ROOT/$_remote")
+  done
+  CONSUMERS_LIST="$INFRADRIFT_CONFIG_DIR/cred-consumers.list"
+  # The registry mirrors (`RepoMirror`, `rotation_worker/git_mirror.py`) live under
+  # `$XDG_CACHE_HOME/rotation-proposer/mirrors`; pointing it here makes them the pass's too.
+  MIRROR_CACHE="$_CLONE_ROOT/cache"
+  if ! { mkdir -p "$_CLONE_ROOT" && chmod 0700 "$_CLONE_ROOT"; }; then
+    echo "FATAL: could not create the clone directory $_CLONE_ROOT" >&2
+    exit 1
+  fi
+  # The previous pass's list goes with its clones, so no list names a clone this pass didn't make.
+  if ! rm -rf -- "$PACKAGES_CLONE" "${REGISTRY_CLONES[@]}" "$MIRROR_CACHE" "$CONSUMERS_LIST"; then
+    echo "FATAL: could not discard the previous pass's clones under $_CLONE_ROOT" >&2
+    exit 1
+  fi
+  sds_anonymous_clone intent-packages "$PACKAGES_CLONE" || exit 1
+  sds_cred_registries "$_CLONE_ROOT" "$INFRADRIFT_CONFIG_DIR"
+  registries_rc=$?
+  [ "$registries_rc" -eq 0 ] || exit "$registries_rc"
+  export BUMP_PROPOSER_PACKAGES_CHECKOUT="$PACKAGES_CLONE"
+  export ROTATION_PROPOSER_INFRAOPS_CHECKOUT="$INFRAOPS_CLONE"
 
   # THE SECRETS, `--submit` only, as on the Mac: a dry run reads infraops and the checkout, writes
   # nothing and sends nothing, so it needs none. Each is read with the lane's one token.
@@ -216,7 +259,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     # `metadata`. The "SDS lanes" App's key goes from the BWS read straight to the mint's stdin in
     # its stored form, base64 of the PEM; it is never in a variable, an argument or a file, and the
     # mint runs without the lane's token. The token is held in this script's own unexported
-    # variable until git's credential takes it, after the clones.
+    # variable until git's credential takes it, below.
     _PUSH_TOKEN="$(sds_bws_value "$PUSH_APP_KEY_UUID" \
       | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
           --app-id "$PUSH_APP_ID" --repository AlobarQuest/intent-packages \
@@ -231,37 +274,6 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # EVERY BWS READ IS DONE (the dead-man switch read its ping URL when it armed), and nothing after
   # this needs a BWS identity, git and the programs included, so the lane's token reaches none.
   unset BWS_ACCESS_TOKEN
-
-  # THE TWO CLONES, shallow, at `main`, anonymous, into a directory the pass discards (decision 1).
-  # Both repositories are public, so git gets no credential for them: no global or system config,
-  # no prompt, no trace, and they are made BEFORE the push credential exists, so its header never
-  # rides either fetch. `ROTATION_PROPOSER_CLONE_ROOT` is a test seam: `lane-run` never passes it.
-  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0
-  unset GIT_TRACE GIT_TRACE_CURL GIT_TRACE_PACKET GIT_CURL_VERBOSE GIT_CONFIG_COUNT
-  _CLONE_ROOT="${ROTATION_PROPOSER_CLONE_ROOT:-/var/tmp/sds-rotation-proposer}"
-  PACKAGES_CLONE="$_CLONE_ROOT/intent-packages"
-  INFRAOPS_CLONE="$_CLONE_ROOT/infraops-mcp-server"
-  # The registry mirrors (`RepoMirror`, `rotation_worker/git_mirror.py`) live under
-  # `$XDG_CACHE_HOME/rotation-proposer/mirrors`; pointing it here makes them the pass's too.
-  MIRROR_CACHE="$_CLONE_ROOT/cache"
-  if ! { mkdir -p "$_CLONE_ROOT" && chmod 0700 "$_CLONE_ROOT"; }; then
-    echo "FATAL: could not create the clone directory $_CLONE_ROOT" >&2
-    exit 1
-  fi
-  if ! rm -rf -- "$PACKAGES_CLONE" "$INFRAOPS_CLONE" "$MIRROR_CACHE"; then
-    echo "FATAL: could not discard the previous pass's clones under $_CLONE_ROOT" >&2
-    exit 1
-  fi
-  for _remote in intent-packages infraops-mcp-server; do
-    # git's own message is kept for the log; it holds no credential (none is configured).
-    if ! _clone_out="$(git clone --quiet --depth 1 --single-branch --branch main \
-        "https://github.com/AlobarQuest/$_remote.git" "$_CLONE_ROOT/$_remote" 2>&1)"; then
-      echo "FATAL: could not clone https://github.com/AlobarQuest/$_remote.git into $_CLONE_ROOT/$_remote: $_clone_out" >&2
-      exit 1
-    fi
-  done
-  export BUMP_PROPOSER_PACKAGES_CHECKOUT="$PACKAGES_CLONE"
-  export ROTATION_PROPOSER_INFRAOPS_CHECKOUT="$INFRAOPS_CLONE"
 
   # ON `--submit`, GIT PUSHES AS THE "SDS LANES" APP, and its commits are the App's: the push
   # token's header and the identity pairs author and commit each revision. `standing._run` passes
@@ -292,9 +304,10 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     XDG_CACHE_HOME="$MIRROR_CACHE" \
     "$REPO_ROOT/.venv/bin/rotation-proposer" "$@"
   rc=$?
-  # The clones hold no credential (the header lives only in the environment), so a failed removal
-  # is logged and doesn't change the pass's code; the next pass removes them before it clones.
-  rm -rf -- "$PACKAGES_CLONE" "$INFRAOPS_CLONE" "$MIRROR_CACHE" \
+  # The clones and the list hold no credential (the header lives only in the environment), so a
+  # failed removal is logged and doesn't change the pass's code; the next pass removes them before
+  # it clones.
+  rm -rf -- "$PACKAGES_CLONE" "${REGISTRY_CLONES[@]}" "$MIRROR_CACHE" "$CONSUMERS_LIST" \
     || echo "[clone] could not discard the clones under $_CLONE_ROOT; the next pass removes them" >&2
   exit "$rc"
 fi
