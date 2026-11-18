@@ -93,6 +93,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `factory-validation-kit-restart-recovery/credentials.py` hardcodes the same SYSTEM UUID but is
   operator-invoked, on no schedule. A grep of `src/` in one repo would have found neither: when
   moving a secret, grep the whole portfolio for the UUID, not the repos you expect to own it.
+  The `follow-up-mint` lane account becomes one more SYSTEM holder at ADR-0059 increment 9's
+  identity gate (Amendment 10, decision item 3): `scripts/run-follow-up-mint.sh` reads the bearer
+  with the lane's own token in its container, and the account reads nothing else but its own
+  ping-URL secret. The `drift-audit.sh` read leaves when infraops-mcp-server drops its minting
+  step (`docs/operations/deploy.md`, the follow-up-mint lane's cut-over).
 
 ### #47
 

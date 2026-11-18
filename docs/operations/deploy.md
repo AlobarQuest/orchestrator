@@ -1054,6 +1054,57 @@ its own change or act.
    - The schedule, and the Mac job's retirement. The container's schedule is off until the Mac job
      is booted out, so the two never act in the same hour.
 
+`follow-up-mint`'s tracked files (`lanes/follow-up-mint/compose.yaml` and `crontab`) don't
+register it either. It's ADR-0059 increment 9's lane (Amendment 10): a new lane with no Mac job,
+so it has no Mac check to keep, no state to copy and no agent to boot out. It keeps no state, so
+its compose mounts no volume, and it joins no external network: the one service it calls, the
+orchestrator, is an HTTPS URL at the launcher's default. Its crontab runs
+`lane-run follow-up-mint` daily at 06:43 New York time: after infra-drift's 03:00 audit, outside
+02:00 to 06:00, on minute 43, which no other lane starts on. The line has no flag: the launcher
+takes none, and every pass mints.
+
+Each pass reads one secret, the orchestrator SYSTEM bearer (`221a48d5-…`), with the lane's one
+token, and runs `orchestrator mint-follow-ups --idempotency-key follow-up-mint:<UTC timestamp>
+--json` with `ORCHESTRATOR_API_URL`, `ORCHESTRATOR_API_TOKEN` and
+`ORCHESTRATOR_API_CREDENTIAL_KEY_ID` (`orchestrator-system`). An unreadable or empty bearer fails
+the pass before the call, and the CLI's exit 1 fails it after; either pings the check's `/fail`.
+The launcher sends no alert-hub message: the lane holds no sender token. Without
+`BWS_ACCESS_TOKEN` it refuses with one line and reads nothing. Its ping-URL secret joins its
+secrets when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane
+is in `test_deploy_lanes.py`'s `placeholders`.
+
+Until the infraops-mcp-server change in step 7 lands, infra-drift's 03:00 step also mints. Two
+passes a day mint nothing twice: a follow-up unit's id derives from its revision
+(`follow_up_unit_id`), so the later pass reports each one `already_minted`.
+
+Its cut-over (ADR-0059, "Cut-over for one lane", and Amendment 10 decision item 4) still needs the
+following, in this order, each in its own change or act.
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-follow-up-mint` from the
+   compose without deploying it.
+2. The check, `sds-follow-up-mint`, created before anything reads its ping URL. It has no Mac
+   predecessor, and the executor reads the ping URL from the check listing. ADR-0059 decision 3
+   moves the name lookup to install time: Devon or an interactive session on the Mac runs
+   `sds_upsert_check` (`scripts/sds-install.sh`) through the broad account. The lane has no
+   `install-*-launchd.sh` to call it, so this step runs it by hand with the check's payload.
+3. The lane's identity gate: the new `follow-up-mint` lane account with exactly two read grants,
+   the SYSTEM bearer (`221a48d5-…`, `SDS Operator`) and its own ping-URL secret. Then the VM
+   root's keeper commands for the lane token and `follow-up-mint-ping-url`, and the lane's
+   registry rows in this repository, in two changes: the token's row and the ping URL's row.
+4. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write, read from the check created in step 2 (ADR-0055 amendment 23).
+5. A served release whose compose names the ping-URL secret's id, with `follow-up-mint` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+6. The lane's `--add`, the `lane-run --read` proof over both secrets, the schedule turned on, and
+   the first scheduled pass, which mints the due follow-up units or finds none due and pings the
+   check.
+7. The infraops-mcp-server pull request removing `drift-audit.sh`'s minting step, with its
+   `BWS_ACCESS_TOKEN_SDS` Keychain read for the bearer.
+8. In this repository, after step 7 merges: the SYSTEM row's consumers in `.cred-consumers.toml`
+   (the infraops `drift-audit.sh mint-follow-ups` reader leaves; `run-follow-up-mint.sh` joins
+   the orchestrator reader's list) and the keeper's note; ADR-0007's "Scheduled trigger";
+   `follow-up-scheduling.md`, "Running a pass"; and `credentials.md`'s SDS consumer paragraph.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the

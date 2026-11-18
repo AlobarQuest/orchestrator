@@ -212,6 +212,8 @@ paths = [
   "tests/fixtures/reach_census.json",
   "scripts/check_profile_budget_agreement.py",
   "docs/operations/follow-up-scheduling.md",
+  "scripts/run-follow-up-mint.sh",
+  "tests/scripts/test_run_follow_up_mint.py",
   "docs/operations/governed-promotion.md",
   "docs/operations/package-intake.md",
   "docs/decisions/0007-*.md",
