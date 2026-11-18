@@ -72,7 +72,8 @@ checks these, in order:
   across a restart. A run dispatched and never claimed keeps its unit refusing until it is claimed
   or retired. The run's `factory-runner-pilot.yml` lives in the target repository, so a
   `gh run list` against `AlobarQuest/factory-runner` does not see it. The `bump-driver` lane starts
-  runs hourly at :50, so deploy away from :50.
+  runs hourly at :50 (the Mac job), so deploy away from :50. After the lane's cut-over its
+  container starts them at :51 instead.
 - **The pre-swap revision.** It reads `/health/live` once and records the result as
   `previous_commit`. It refuses if the outgoing image states no revision, and stops (exit 2) if
   production already serves the commit. It refuses a `previous_commit` the checkout does not hold
@@ -968,6 +969,90 @@ its own change or act. It moves outside the 02:00 to 06:00 New York landing wind
      neither run lands beside it.
    - The schedule, and the Mac job's retirement. The container's schedule is off until the Mac job
      is booted out and disabled, so the two never submit in the same hour.
+
+`bump-driver`'s tracked files (`lanes/bump-driver/compose.yaml` and `crontab`) don't register it
+either. Its state is the driver's `alerts.json`, `pass.lock` and `mirrors/`, so its compose mounts
+the named volume `sds-lanes-bump-driver-state` at `BUMP_DRIVER_STATE_DIR`
+(`/var/lib/sds/bump-driver`). The launcher refuses a pass with it unset, because the pass lock
+must be on the volume to exclude two passes. It joins no external network, the `coolify` network
+included: every service it calls (change-manager, the orchestrator, alert-hub, GitHub, the Brains)
+is an HTTPS URL at the program's default. Its crontab runs `lane-run bump-driver` hourly at minute
+51 New York time. The Mac job runs at minute 50, but minute 50 is the rotation decomposer's, so
+the lane takes 51, which no other lane starts on. The line has no flag, as the plist has none: the
+driver acts unless `--dry-run` is given. So the bare `lane-run bump-driver` is an acting pass, and
+once the lane is in `.claude/hq-gate-pass.json` an HQ cycle may run it out of schedule. The
+reporting run is `lane-run bump-driver --dry-run`, which acts on nothing and pings nothing.
+
+Its `.bws-secrets.toml` secrets are the following six, all read with the lane's one token on every
+pass, each fatal if unreadable, as on the Mac. Its ping-URL secret joins them when it exists; until
+then the compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane is in `test_deploy_lanes.py`'s
+`placeholders`.
+
+- The orchestrator SYSTEM bearer and the `sds-bridge` alert sender (read on a `--dry-run` pass
+  too, which sends nothing).
+- The change-manager READ bearer.
+- The Code Brain and Infra Brain contributor keys, handed to `factory` alone.
+- The read-only App's key.
+
+Each pass mints `BUMP_DRIVER_GITHUB_TOKEN` from the read-only App for the repositories
+`bump-driver repositories` prints: intent-packages, project-standards and security-standards, and
+each repository the member record grants `dependency_updates`, read as SYSTEM. The token carries
+`metadata`, `pull_requests` and `contents`, read: a granted pull request's state, the mirrors'
+clones and fetches, and decision 1's three clones. The driver writes nothing to GitHub; it
+dispatches and lands through the orchestrator as SYSTEM. A member record the list can't be read
+from fails the pass with exit 3 before anything is minted. The launcher clones the three
+repositories shallow at `main` into `$HOME/Projects/`, the Mac's paths, under the new `HOME`
+`lane-run` gives each pass and removes after it, so the pass discards them. `factory` is a shim
+that runs the image's interpreter on the intent-packages clone's `src`, as the bump proposer runs
+intent-packages' lifecycle; no venv is built.
+
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act.
+
+1. **Blocker:** an ADR-0059 amendment that decides the conformance claim's three Mac-only inputs
+   in the container, before any acting container pass. `factory decompose` derives each bump
+   unit's claim from project-standards' compliance matrix, which reads, under `HOME`:
+   - code-standards and its venv (`~/Developer/code-standards`), or PyPI reach for `uv run`. It
+     isn't among decision 1's clones or the read App's installations.
+   - The infra-drift report (`~/infra-drift/reports`), which the Mac's `com.devon.infra-drift`
+     writes until increment 9 moves it.
+   - The LaunchAgent plist a `launchagent:` required-check executor names
+     (`~/Library/LaunchAgents/<label>.plist`).
+   Without them the matching cells read `unknown`, and the claim is `violations`. The orchestrator
+   approves the decomposition, but dispatch refuses the unit (`conformance_not_green`), and only a
+   person superseding it clears it. A `--dry-run` pass never runs the generator, so the paired
+   reporting runs of cut-over step 2 can't show this.
+2. The orchestrator serving this release; then HQ creates `sds-lane-bump-driver` from the compose
+   without deploying it.
+3. The VM root's keeper commands for the lane token and `bump-driver-ping-url`.
+4. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, a `runtime-fetch` reader for `scripts/run-bump-driver.sh` on the read App
+   key's row.
+5. The lane account's grants on its six secrets and its ping-URL secret. The SYSTEM bearer
+   (`221a48d5-…`) and the alert sender (`b415d03b-…`) are in `SDS Operator`, read on the Mac as
+   `sds-operator`. The change-manager READ bearer (`314f276d-…`, `Rotation / Keepers`) and the two
+   Brain keys (`750f737f-…`, `da8134b0-…`, `Brains - Contributor`) are read by the broad identity
+   on the Mac and become direct grants to the lane account (Devon's act at the lane's identity
+   gate). The read App key (`314a966c-…`) is in `SDS / Lane Apps`.
+6. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+7. A served release whose compose names the ping-URL secret's id, with `bump-driver` removed from
+   `test_deploy_lanes.py`'s `placeholders`.
+8. The lane's `--add`, then the `lane-run --read` proof over all seven secrets and a
+   `lane-run bump-driver --dry-run` in the container. That run is the first read mint over the
+   granted members and the three clones, so it proves the read App's installation covers each
+   repository, and it proves the clones. It doesn't run `factory`: a dry run proposes nothing.
+9. Cut-over steps 2 onward:
+   - The copy of the Mac's `sds/bump-driver/alerts.json` into the volume, before the first acting
+     pass in the container, or the alerts the Mac left firing never resolve. `pass.lock` and
+     `mirrors/` aren't copied.
+   - The paired `--dry-run` reporting runs on both hosts in the same minute, which act on nothing
+     and ping nothing. Run the pair away from minute 50, when the Mac's acting job runs.
+   - Before the Mac agent's bootout, no process holds the Mac's `pass.lock`; before a rollback's
+     bootstrap, none holds the volume's (`flock -n` in the lane's container). The lock never spans
+     the two hosts, so this order is what keeps them from acting at once.
+   - The schedule, and the Mac job's retirement. The container's schedule is off until the Mac job
+     is booted out, so the two never act in the same hour.
 
 ### A lane's GitHub token (ADR-0059 increment 3)
 

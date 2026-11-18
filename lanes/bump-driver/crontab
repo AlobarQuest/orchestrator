@@ -1,0 +1,14 @@
+# sds-lane-bump-driver's schedule: one pass an hour at minute 51, in the image's America/New_York
+# time. The Mac job runs at minute 50 (`scripts/com.devon.bump-driver.plist`,
+# `StartCalendarInterval` Minute 50, no arguments), but minute 50 is the rotation decomposer's, so
+# the lane takes 51, a minute no other lane starts on, as the moved lanes before it took the minute
+# after theirs: the unit verifier runs on 2-52/10, execution-watch on */15, the estate lander on
+# 16, the deploy watcher on 20, the change proposer on 35, the inert lander on 37, the revision
+# watcher on 40 and the rotation decomposer on 50, and the daily lanes on 06:31, 06:55, 07:05,
+# 07:25, 07:30 and 07:47. Hourly, as the Mac job: a bump takes a run and a verification, so an hour
+# between acts is soon enough. The line carries no flag, as the plist passes none, because the
+# driver acts unless `--dry-run` is given: `lane-run bump-driver --dry-run` is the reporting run,
+# which acts on nothing and pings nothing. So the bare `lane-run bump-driver` acts, and once the lane
+# is in `.claude/hq-gate-pass.json` an HQ cycle may run that acting line out of schedule.
+# The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+51 * * * * lane-run bump-driver

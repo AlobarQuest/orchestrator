@@ -417,6 +417,14 @@ the change-manager READ bearer (`314f276d-…`) as the broad account, and takes 
 those four and the read-only App's key (`314a966c-…`), with the lane's own token in its container
 (no Keychain item), and the lane mints its GitHub token from that App each pass.
 
+`scripts/run-bump-driver.sh` holds no chain password either. On the Mac it reads the orchestrator
+SYSTEM bearer and the `sds-bridge` alert sender as `sds-operator`, the change-manager READ bearer
+(`314f276d-…`) and the Code Brain and Infra Brain contributor keys (`750f737f-…`, `da8134b0-…`,
+`Brains - Contributor`) as the broad account, and takes its GitHub token from `gh auth token`.
+After ADR-0059 step 3g-3's cut-over, the `bump-driver` lane account alone reads those five and the
+read-only App's key (`314a966c-…`), with the lane's own token in its container (no Keychain item),
+and the lane mints its GitHub token from that App each pass.
+
 Devon mints both new Keychain items at act step 0. Neither item has an environment override: a
 launcher reads it from the Keychain directly, so a caller's environment can't put the token in
 the children's environment. `sds_bws_value` passes a token to `bws` as an assignment prefix, so it
