@@ -222,7 +222,15 @@ def test_two_events_sharing_the_newest_time_are_ambiguous() -> None:
                 {"type": "infra-drift-report", "generated_at": "2026-11-18T08:00:39Z"},
                 {"type": "infra-drift-proposal", "instance": "prod", "id": 3, "target": {}},
             ],
-            "a proposal item is not an instance, an id and a target's uuid and name",
+            "a proposal item is not a listed instance, an id and a target's uuid and name",
+        ),
+        (
+            [
+                {"type": "infra-drift-report", "generated_at": "2026-11-18T08:00:39Z"},
+                {"type": "infra-drift-instance", "name": "prod", "ok": True},
+                {"type": "infra-drift-proposal", "instance": "ghost", "id": "p", "target": {}},
+            ],
+            "a proposal item is not a listed instance, an id and a target's uuid and name",
         ),
         (
             [

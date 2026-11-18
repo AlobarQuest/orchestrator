@@ -70,8 +70,9 @@ def declared(checkout: Path) -> Declared:
         match = _FRONTMATTER.match((checkout / "PROJECT.md").read_text(encoding="utf-8"))
         front = yaml.safe_load(match.group(1)) if match else None
     except OSError, UnicodeDecodeError, yaml.YAMLError:
-        # Not swallowed: an unreadable manifest is a claim the matrix reads as `unknown`, so the
-        # bump isn't green on either host, and holding it here would hide that refusal.
+        # Deliberate: the matrix reads such a member's every cell as `unknown`, on the Mac as
+        # here, whatever the event says, so holding it for the event would change nothing. The
+        # generator refuses or proposes it as it would on the Mac.
         return Declared(False, ())
     if not isinstance(front, dict):
         return Declared(False, ())
@@ -161,7 +162,7 @@ def materialize(event: dict[str, Any], home: Path) -> None:
     there means it isn't, which raises `FileExistsError`."""
     by_instance: dict[str, list[dict[str, Any]]] = {name: [] for name in event["instances"]}
     for proposal in event["proposals"]:
-        by_instance.setdefault(proposal["instance"], []).append(
+        by_instance[proposal["instance"]].append(
             {"id": proposal["id"], "target": proposal["target"]}
         )
     report = {

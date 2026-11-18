@@ -13,9 +13,9 @@
 #   0  every bump moved, or waits on something that clears by itself.
 #   1  the tool itself failed (a missing credential, an unusable URL).
 #   2  a person decides something: a refused decomposition, dispatch or merge, a unit in
-#      revision_required, a run nobody claimed, or a bump held for the Mac's conformance facts. Every such finding is delivered as a keyed alert
-#      before the exit, so the check pings success with the report (`--told 2`). A proposal a
-#      person declined isn't a finding.
+#      revision_required, a run nobody claimed, or a bump held for the Mac's conformance facts.
+#      Every such finding is delivered as a keyed alert before the exit, so the check pings
+#      success with the report (`--told 2`). A proposal a person declined isn't a finding.
 #   3  a record, a unit or a pull request could not be read, or alert-hub could not be told: a
 #      failed delivery is 3, never 2, so it still pings /fail.
 #
@@ -67,9 +67,9 @@
 # dispatches and merges of bumps already decomposed don't wait on the chain. It unsets
 # `BWS_ACCESS_TOKEN` before the clones and the driver run, and git's credential before the driver
 # runs. A missing `BUMP_DRIVER_STATE_DIR` fails the pass: the lock, the alerts and the mirrors must
-# be on the lane's volume. The container block runs the whole pass and exits, so everything after it is the
-# Mac's launchd job, unchanged until increment 6. Exit 1 there also covers a failed mint or clone;
-# a member record the repository list couldn't be read from exits 3.
+# be on the lane's volume. The container block runs the whole pass and exits, so everything after
+# it is the Mac's launchd job, unchanged until increment 6. Exit 1 there also covers a failed mint
+# or clone; a member record the repository list couldn't be read from exits 3.
 #
 # Usage:
 #   scripts/run-bump-driver.sh [--dry-run]
@@ -140,8 +140,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # `factory`, an infra-drift report, a LaunchAgent or a Claude settings file.
   for _written in Projects Developer .local infra-drift Library .claude; do
     if [ -e "$HOME/$_written" ]; then
-      sds_outcome_fail \
-        "FATAL: HOME ($HOME) is not a new directory: it holds $_written, which the pass would write over"
+      _why="it holds $_written, which the pass would write over"
+      sds_outcome_fail "FATAL: HOME ($HOME) is not a new directory: $_why"
     fi
   done
 
@@ -294,7 +294,8 @@ SHIM
   # amendment 24 item 13), and nothing is lost, because anything but a verified record is written
   # as an unverified walk, which the driver holds and alerts on. The record is the last line; only
   # its summary fields reach the report.
-  _FACTS_FILE="$(mktemp "${TMPDIR:-/tmp}/sds-bump-driver-facts.XXXXXX")" \
+  # Under the pass's `HOME`, so `lane-run` discards it with the clones on every exit path.
+  _FACTS_FILE="$(mktemp "$HOME/conformance-facts.XXXXXX")" \
     || sds_outcome_fail "FATAL: could not create the pass's conformance facts file"
   _walk_out="$(FACTORY_EVENTS_READ_PASSWORD="$CHAIN_PASSWORD" \
     FACTORY_EVENTS_DB_HOST="$CHAIN_DB_HOST" \
@@ -332,9 +333,6 @@ print(summary)
     0|1|2|3) ;;
     *) echo "FATAL: bump-driver exited $rc" >> "$SDS_OUTCOME_REPORT"; rc=1 ;;
   esac
-  rm -f -- "$_FACTS_FILE" \
-    || echo "[chain] could not remove $_FACTS_FILE; it holds ids and statuses only" \
-      >> "$SDS_OUTCOME_REPORT"
   sds_outcome_end "$rc" --told 2
 fi
 

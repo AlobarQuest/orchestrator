@@ -291,13 +291,13 @@ def _instance(item: dict[str, Any], facts: dict[str, Any]) -> str:
 def _proposal(item: dict[str, Any], facts: dict[str, Any]) -> str:
     target = item.get("target")
     if (
-        not isinstance(item.get("instance"), str)
+        item.get("instance") not in facts["instances"]
         or not _optional_text(item.get("id"))
         or not isinstance(target, dict)
         or not _optional_text(target.get("uuid"))
         or not _optional_text(target.get("name"))
     ):
-        return "a proposal item is not an instance, an id and a target's uuid and name"
+        return "a proposal item is not a listed instance, an id and a target's uuid and name"
     facts["proposals"].append(
         {
             "instance": item["instance"],

@@ -87,10 +87,10 @@ _GH = '#!/bin/sh\necho "gh $*" >> "$GH_LOG"\necho gh-token\n'
 _CURL = '#!/bin/sh\necho "curl $*" >> "$PING_LOG"\nexit 1\n'
 # git: logs its argv and the credential git's environment carries, refuses a URL naming
 # `$GIT_REFUSES`, and otherwise writes a stand-in intent-packages module into the destination.
-# Each stub but the chain walk's records whether the chain's read password is in its environment.
-_ENVSCAN = 'echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"\n'
 _GIT = """#!/bin/bash
-""" + _ENVSCAN + """echo "git args=$* count=${GIT_CONFIG_COUNT:-} key0=${GIT_CONFIG_KEY_0:-} \\
+# Records whether the chain's read password is in its environment.
+echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
+echo "git args=$* count=${GIT_CONFIG_COUNT:-} key0=${GIT_CONFIG_KEY_0:-} \\
 value0=${GIT_CONFIG_VALUE_0:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$STUB_GIT_LOG"
 if [ -n "${GIT_REFUSES:-}" ]; then
   case "$*" in *"$GIT_REFUSES"*) echo "fatal: repository not found" >&2; exit 128 ;; esac
@@ -136,7 +136,9 @@ exec "__PYTHON__" "$@"
 # argv and every variable it was handed, one per line, and runs `factory` as the generator does
 # when asked to.
 _DRIVER = """#!/bin/bash
-""" + _ENVSCAN + """if [ "$1" = repositories ]; then
+# Records whether the chain's read password is in its environment.
+echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
+if [ "$1" = repositories ]; then
   echo "derive args=$* lane_token=${BWS_ACCESS_TOKEN:+set} \\
 system=${ORCHESTRATOR_API_TOKEN:-} key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-}" >> "$LANE_LOG"
   if [ -n "${FAKE_DERIVE_RC:-}" ]; then
@@ -168,7 +170,9 @@ echo "a bump-driver report line"
 exit "${FAKE_DRIVER_RC:-0}"
 """
 _MINT = """#!/bin/bash
-""" + _ENVSCAN + """key="$(cat)"
+# Records whether the chain's read password is in its environment.
+echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
+key="$(cat)"
 echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
 echo "%s"
@@ -563,8 +567,8 @@ def test_the_driver_runs_with_the_launchers_arguments_and_its_report_is_kept(
         "= ", "=", 1
     )
     assert "a bump-driver report line" in run.result.stdout
-    # The pass owns the file and removes it.
-    assert not Path(path).exists()
+    # The file is under the pass's `HOME`, which `lane-run` discards on every exit path.
+    assert Path(path).parent == run.home
 
 
 # ---- the chain walk (ADR-0059 Amendment 13 decision item 4) ------------------------------------
