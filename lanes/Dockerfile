@@ -57,7 +57,7 @@ COPY --from=tools /out/bin/ /usr/local/bin/
 COPY --from=tools /out/node /usr/local/lib/node
 RUN for tool in node npm npx; do ln -s "../lib/node/bin/$tool" "/usr/local/bin/$tool"; done
 
-# The launchers, the five helpers they source, and the two programs they and the scheduler run.
+# The launchers, the six helpers they source, and the two programs they and the scheduler run.
 # Root-owned, so a lane process can't rewrite its own launcher. Each launcher sets REPO_ROOT to its
 # directory's parent, so here REPO_ROOT is /app and `$REPO_ROOT/.venv/bin/<lane>` is the
 # orchestrator image's own entry point.

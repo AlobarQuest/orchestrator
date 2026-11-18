@@ -135,6 +135,7 @@ paths = [
   "tests/scripts/test_launchd_installers.py",
   "tests/scripts/test_sds_bws.py",
   "tests/scripts/test_sds_git.py",
+  "tests/scripts/test_sds_cred_registries.py",
   "tests/scripts/test_sds_deadman.py",
   "tests/scripts/test_shape_registry_context.py",
   "docs/operations/credentials.md",
