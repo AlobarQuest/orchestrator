@@ -37,8 +37,9 @@
 # It is a dedicated token a person mints in Coolify; until the UUID below names it (or
 # `ESTATE_LANDING_COOLIFY_UUID` does), nothing is fetched. It is sent only over the tailnet.
 #
-# THE GITHUB TOKEN is the operator's own `gh` login, as the inert lander's: it reads the open pull
-# requests a revert is in and the registry's digests of this estate's images.
+# THE GITHUB TOKEN is the operator's own `gh` login on the Mac, as the inert lander's: it reads the
+# open pull requests a revert is in and the registry's digests of this estate's images. The lane's
+# container mints a read token instead ("TWO HOSTS, ONE LAUNCHER").
 #
 # EXPECT A FIRST PASS TO LAND NOTHING, and read that as the conditions working rather than as the
 # lane failing. A held pull request that names its condition is the whole point of the report.
@@ -51,6 +52,29 @@
 #
 # NOTHING HERE DECIDES ANYTHING. Every term is evaluated by the orchestrator, inside the
 # transaction that records the act. This script asks it two questions and relays the answers.
+#
+# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-2). A set `BWS_ACCESS_TOKEN` means the
+# lane's container: `lane-run` passes the lane's own token as its one secret, and the Mac's launchd
+# job never sets it. There the launcher skips activation (the container runs the image's own code),
+# reads no Keychain item and calls no `gh`, and reads every secret with that one token, in the
+# environment, never as a process argument:
+#   - every pass: the change-manager READ bearer (`314f276d-…`), the read-only App's key
+#     (`314a966c-…`, piped straight into the mint) and the orchestrator SYSTEM bearer
+#     (`221a48d5-…`);
+#   - `--submit` only: the `sds-bridge` alert sender (`b415d03b-…`), fatal if unreadable, and the
+#     Coolify token (`f9f59233-…`), not fatal, as on the Mac.
+# It mints `ESTATE_LANDING_GITHUB_TOKEN` from the read-only App, in place of `gh auth token`, for
+# exactly the repositories `estate-landing repositories` prints: the landing policy's deploying
+# population, where this lane's landings are. The token carries what the pass's GitHub reads use
+# and nothing else: `metadata` and `pull_requests`, read, on every pass (the open pull requests a
+# revert is in), and `contents`, read, on `--submit` only (whether production serves a commit at
+# or after the revert's, a compare only a submitting pass makes). The same token is the registry's
+# credential on `--submit`. This lane lands through the orchestrator's dispatch App, never with
+# it. It unsets `BWS_ACCESS_TOKEN` before the lander runs. The bare run, the exit codes and the
+# dead-man switch are the Mac's. The container block runs the whole pass and exits, so everything
+# after it is the Mac's launchd job, unchanged until increment 6.
+# Exit 1 there also covers a failed mint; exit 2 also covers a landing policy the repository list
+# couldn't be read from.
 #
 # Usage:
 #   scripts/run-estate-landing.sh              # reports; asks for nothing
@@ -80,6 +104,10 @@ SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"
 # to one repository's applications (`estate_lander.image_repoint`). BWS
 # `COOLIFY_TOKEN_SDS_ESTATE_LANDER`; `ESTATE_LANDING_COOLIFY_UUID` overrides it.
 COOLIFY_TOKEN_UUID="${ESTATE_LANDING_COOLIFY_UUID:-f9f59233-0794-4ea8-9806-b4f3011e6147}"
+# The read-only lane App's private key and id (ADR-0059 increment 3, Q9), `alobar-sds-lanes-read`,
+# in `SDS / Lane Apps`. Read in the container only, piped straight into `sds-github-mint`.
+READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
+READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -89,17 +117,20 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # and returns 0 whatever it finds, so this job is never gated on being able to update itself. It
 # re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
 # and the file it just rewrote is this one.
-_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-if [ -r "$_SDS_ACTIVATE" ]; then
-    # shellcheck source=/dev/null
-    . "$_SDS_ACTIVATE"
-else
-    activate_checkout() {
-        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-             "this run is not activated"
-    }
+# Skipped in the container, which runs the image's own code and has no `activate-checkout.sh`.
+if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+  _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+  if [ -r "$_SDS_ACTIVATE" ]; then
+      # shellcheck source=/dev/null
+      . "$_SDS_ACTIVATE"
+  else
+      activate_checkout() {
+          echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+               "this run is not activated"
+      }
+  fi
+  activate_checkout "$REPO_ROOT" "$0" "$@"
 fi
-activate_checkout "$REPO_ROOT" "$0" "$@"
 
 # THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
 # reach nobody: a pass that stops running, or that fails every night, is silent. Armed AFTER
@@ -117,6 +148,107 @@ sds_deadman_arm sds-estate-landing --finding 3 "$@"
 # which breaks the parse below.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# ---- THE LANE'S CONTAINER (ADR-0059 increment 5, step 3g-2) -----------------------------------
+# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read takes the lane's one token from the
+# environment (`sds_bws_value` with one argument), so it never appears in a process argument, and
+# each secret is always read, never taken from the environment. Every failure names itself and
+# exits with the code the header gives it; the dead-man switch, armed above, pings on the way out.
+if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+  FROM=" (the lane's token)"
+  unset ESTATE_LANDING_CHANGE_MANAGER_TOKEN ESTATE_LANDING_ORCHESTRATOR_TOKEN \
+    ESTATE_LANDING_GITHUB_TOKEN ESTATE_LANDING_COOLIFY_TOKEN SDS_BRIDGE_ALERT_TOKEN
+
+  # The compose sets it to the lane's volume (decision 1, "Lane state"). Without it the held and
+  # revert alerts' state would go to this run's `HOME`, which `lane-run` discards.
+  if [ -z "${LANDER_STATE_DIR:-}" ]; then
+    echo "FATAL: LANDER_STATE_DIR is not set in the lane's container" >&2
+    exit 1
+  fi
+  export LANDER_STATE_DIR
+
+  ESTATE_LANDING_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID")"
+  if [ -z "$ESTATE_LANDING_CHANGE_MANAGER_TOKEN" ]; then
+    echo "FATAL: could not read the change-manager credential from BWS$FROM" >&2
+    exit 1
+  fi
+  export ESTATE_LANDING_CHANGE_MANAGER_TOKEN
+
+  # THE REPOSITORIES ARE THE PROGRAM'S, NOT LISTED HERE: `estate-landing repositories` prints the
+  # landing policy's deploying population, read with the change-manager credential alone (ADR-0059
+  # decision 2: the mint names only the lane's repositories). AN UNDERIVABLE LIST MINTS NOTHING:
+  # the subcommand exits 2 with its reason on stderr for a policy it can't read or one declaring no
+  # deploying population, and its code is the pass's.
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/estate-landing" repositories)"
+  derive_rc=$?
+  if [ "$derive_rc" -ne 0 ]; then
+    echo "FATAL: the estate lane's repositories could not be derived (estate-landing repositories exited $derive_rc); nothing was minted or asked" >&2
+    exit "$derive_rc"
+  fi
+  TARGETS=()
+  while IFS= read -r repository; do
+    [ -n "$repository" ] && TARGETS+=(--repository "$repository")
+  done <<< "$REPOSITORIES"
+  if [ "${#TARGETS[@]}" -eq 0 ]; then
+    echo "FATAL: the estate lane's repositories could not be derived (an empty list); nothing was minted or asked" >&2
+    exit 2
+  fi
+
+  # THE READ TOKEN IS MINTED EACH PASS, bare or submitting. The App's key goes from the BWS read
+  # straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a variable,
+  # an argument or a file, and the mint runs without the lane's token. Its permissions are what the
+  # pass's GitHub reads use: `metadata`, which every installation token carries, and each watched
+  # repository's open pull requests (`GitHubReader.open_pull_requests`, `pull_requests`) on every
+  # pass; and on `--submit` alone, the compare of a served commit with the revert's
+  # (`GitHubReader.compare_status`, `contents`), which a bare pass never makes.
+  PERMISSIONS=(--permission metadata=read --permission pull_requests=read)
+  case " $* " in
+    *" --submit "*) PERMISSIONS+=(--permission contents=read) ;;
+  esac
+  ESTATE_LANDING_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
+    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+        --app-id "$READ_APP_ID" "${TARGETS[@]}" "${PERMISSIONS[@]}")"
+  mint_rc=$?
+  if [ "$mint_rc" -ne 0 ] || [ -z "$ESTATE_LANDING_GITHUB_TOKEN" ]; then
+    echo "FATAL: could not mint the estate lane's GitHub read token from the read-only App (the key's BWS read or sds-github-mint exited $mint_rc)" >&2
+    exit 1
+  fi
+  export ESTATE_LANDING_GITHUB_TOKEN
+
+  ESTATE_LANDING_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")"
+  if [ -z "$ESTATE_LANDING_ORCHESTRATOR_TOKEN" ]; then
+    echo "FATAL: could not read the orchestrator system credential from BWS$FROM" >&2
+    exit 1
+  fi
+  export ESTATE_LANDING_ORCHESTRATOR_TOKEN
+
+  # THE ALERT AND COOLIFY TOKENS ARE READ ONLY FOR A SUBMITTING RUN, as on the Mac: only it sends,
+  # and only it reaches production. The Coolify token's absence is not fatal, as on the Mac: the
+  # program refuses every re-point and restore by name and alerts `landing-not-pointed-back`. Its
+  # failed read logs this line and `sds_bws_value`'s own on stderr; nothing hides it.
+  case " $* " in
+    *" --submit "*)
+      SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
+      if [ -z "$SDS_BRIDGE_ALERT_TOKEN" ]; then
+        echo "FATAL: could not read the sds-bridge alert sender token from BWS$FROM" >&2
+        exit 1
+      fi
+      export SDS_BRIDGE_ALERT_TOKEN
+      ESTATE_LANDING_COOLIFY_TOKEN="$(sds_bws_value "$COOLIFY_TOKEN_UUID")"
+      if [ -z "$ESTATE_LANDING_COOLIFY_TOKEN" ]; then
+        echo "[estate-landing] the Coolify token could not be read$FROM: re-points are refused" >&2
+      else
+        export ESTATE_LANDING_COOLIFY_TOKEN
+      fi
+      ;;
+  esac
+
+  # EVERY BWS READ IS DONE, so the lane's token reaches no program.
+  unset BWS_ACCESS_TOKEN
+  "$REPO_ROOT/.venv/bin/estate-landing" "$@"
+  rc=$?
+  exit "$rc"
+fi
 
 # SOURCED, not executed. `sds-token.sh` EXPORTS the value and prints nothing -- its own header says
 # so -- so command-substituting it yields the empty string and every fetch below fails with a

@@ -48,8 +48,8 @@ from tests.architecture.test_bridge_edges import _landing_policy_permits
 
 # Landing Part 3b. The estate lander's Coolify token (BWS `COOLIFY_TOKEN_SDS_ESTATE_LANDER`).
 COOLIFY_TOKEN = "f9f59233-0794-4ea8-9806-b4f3011e6147"
-# The read-only lane App `alobar-sds-lanes-read`'s key, which the inert lander's container mints
-# its GitHub read token from (ADR-0059 increment 5, step 3g-1). The Mac keeps `gh auth token`.
+# The read-only lane App `alobar-sds-lanes-read`'s key, which each lander's container mints its
+# GitHub read token from (ADR-0059 increment 5, steps 3g-1 and 3g-2). The Mac keeps `gh auth token`.
 READ_APP_KEY = "314a966c-5654-4e3c-8358-b4fd01268775"
 
 _HELD_CLOSE = ("POST", "/api/v1/held-pr-close")
@@ -57,7 +57,9 @@ _ALERTS = frozenset({("POST", "/v1/alerts")})
 
 EDGES: dict[str, Edge] = {
     "estate_lander": Edge(
-        change_manager=frozenset({("GET", "/api/items")}),
+        # The records, and the landing policy, whose deploying population is the repositories the
+        # lane's container mints its read token for (`estate-landing repositories`).
+        change_manager=frozenset({("GET", "/api/items"), ("GET", "/api/landing-policy")}),
         orchestrator=frozenset(
             {
                 ("GET", "/api/v1/estate-pr-merge-admission"),
@@ -76,7 +78,14 @@ EDGES: dict[str, Edge] = {
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=_ALERTS,  # through lander.held_alerts
         bearers=DEADMAN
-        | {SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN, COOLIFY_TOKEN},
+        | {
+            SYSTEM_BEARER,
+            READ_BEARER,
+            SDS_BRIDGE_ALERT_BEARER,
+            GH_AUTH_TOKEN,
+            COOLIFY_TOKEN,
+            READ_APP_KEY,
+        },
     ),
     "inert_lander": Edge(
         change_manager=frozenset({("GET", "/api/landing-policy")}),
@@ -208,7 +217,10 @@ PROBES = frozenset(
 # module's function reaches it. `None` is a service the lander has no client for.
 PERMITS: dict[str, dict[str, Permits | None]] = {
     "estate_lander": {
-        "change_manager": lambda m, p: estate_change_manager._permits(m, p),
+        # Two clients of the one service: the records' and the landing policy's.
+        "change_manager": lambda m, p: (
+            estate_change_manager._permits(m, p) or _landing_policy_permits(m, p)
+        ),
         "orchestrator": lambda m, p: estate_orchestrator._permits(m, p),
         "github": None,
         "alert_hub": ALERT_HUB_PERMITS,

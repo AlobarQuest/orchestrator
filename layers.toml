@@ -582,6 +582,7 @@ paths = [
   "scripts/install-inert-landing-launchd.sh",
   "scripts/com.devon.inert-landing.plist",
   "tests/scripts/test_run_inert_landing.py",
+  "tests/scripts/test_run_estate_landing.py",
   "src/orchestrator/services/landing/**",
   "src/orchestrator/api/routes/landing.py",
   "src/orchestrator/api/schemas/landing.py",

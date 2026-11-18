@@ -1,0 +1,14 @@
+# sds-lane-estate-landing's schedule: one landing pass an hour at minute 16, in the image's
+# America/New_York time. The Mac job runs at minute 15 (`scripts/com.devon.estate-landing.plist`,
+# `StartCalendarInterval` Minute 15, `--submit`), but minute 15 is execution-watch's (`*/15`), so
+# the lane takes 16, a minute no other lane starts on and the later of the two nearest free ones,
+# as the moved lanes before it took the minute after theirs: the unit verifier runs on 2-52/10,
+# the deploy watcher on 20, the change proposer on 35, the inert lander on 37, the revision watcher
+# on 40 and the rotation decomposer on 50, and the daily lanes on 06:31, 06:55, 07:05, 07:25,
+# 07:30 and 07:47. Hourly, as the Mac job: the program itself lands ordinary bumps only in passes
+# inside 02:00-06:00 New York, and every pass steps this lane's bad landings on (the launcher's
+# header says why). `--submit` is passed here, where it is visible, as the plist passes it: the
+# bare `lane-run estate-landing` is the reporting run, which asks for nothing but pings the lane's
+# real check (ADR-0059, "It pings the real check").
+# The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+16 * * * * lane-run estate-landing --submit
