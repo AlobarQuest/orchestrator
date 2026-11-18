@@ -13,7 +13,15 @@ approval wait, so its remembered keys and its clock are held, never resolved or 
 code cannot tell that failure from a genuine error on one credential, so any `error` holds.
 A clock file that can't be saved says nothing that pass, so every approval wait's key is held too.
 
-Two files live in the state directory: `alerts.json`, `KeyedAlerts`' memory of what it fired, and
+Every alert is `warning` except `manual-exposure` (an exposure on a credential a person rotates),
+which is `critical` and holds until infraops stops reporting the exposure (Infra Brain rule 1032).
+`KeyedAlerts` sends one severity, so the critical one has its own instance and its own state
+file: a state file has one `sync` caller (`alert_hub_client/CLAUDE.md`). The same holds apply to
+both. That instance runs only when it has an alert to fire or one to remember, so a pass that
+never reports the status (the Mac's) creates no file and opens no second client.
+
+Three files live in the state directory: `alerts.json`, `KeyedAlerts`' memory of the `warning`
+alerts it fired, `alerts-critical.json`, the same for the `critical` ones, and
 `approval-since.json`, when each approval wait was first seen. The sightings are written before
 alert-hub is asked, and kept when it refuses, so an outage never restarts a credential's clock.
 """
@@ -41,6 +49,8 @@ USER_AGENT: Final = "rotation-proposer/1 (+AlobarQuest/orchestrator)"
 TOKEN_ENV: Final = "SDS_BRIDGE_ALERT_TOKEN"
 STATE_DIR_ENV: Final = "ROTATION_PROPOSER_STATE_DIR"
 ALERTS_FILE: Final = "alerts.json"
+CRITICAL_ALERTS_FILE: Final = "alerts-critical.json"
+CRITICAL_STATUSES: Final = frozenset({"manual-exposure"})
 APPROVAL_SINCE_FILE: Final = "approval-since.json"
 APPROVAL_ALERT_HOURS: Final = 48
 APPROVAL_STATUSES: Final = frozenset({"awaiting-approval", "declined"})
@@ -106,7 +116,7 @@ def sync_alerts(
     except StateUnwritable as error:
         reasons.append(str(error))
         unsaved = set(waiting)
-    firing = _findings(outcomes)
+    firing = _findings(o for o in outcomes if o.status not in CRITICAL_STATUSES)
     for key, first in since.items():
         waited = now - first
         if waited >= timedelta(hours=APPROVAL_ALERT_HOURS):
@@ -116,15 +126,30 @@ def sync_alerts(
                 f"{outcome.status} for {int(waited.total_seconds() // 3600)} hours: "
                 f"{outcome.detail}",
             )
-    hub = KeyedAlerts(
-        lambda: token,
-        state_dir / ALERTS_FILE,
-        user_agent=USER_AGENT,
-        resolved_title="Rotation no longer needs a person",
-        transport=transport,
-    )
+    hub = _hub(token, state_dir / ALERTS_FILE, "warning", transport)
     try:
         hub.sync(firing, _held(hub.remembered(), unread) | unsaved)
     except AlertHubError as error:
         reasons.append(str(error))
+    critical = _findings(o for o in outcomes if o.status in CRITICAL_STATUSES)
+    urgent = _hub(token, state_dir / CRITICAL_ALERTS_FILE, "critical", transport)
+    remembered = urgent.remembered()
+    if critical or remembered:
+        try:
+            urgent.sync(critical, _held(remembered, unread))
+        except AlertHubError as error:
+            reasons.append(f"critical: {error}")
     return "; ".join(reasons) or None
+
+
+def _hub(
+    token: str, state_path: Path, severity: str, transport: httpx.BaseTransport | None
+) -> KeyedAlerts:
+    return KeyedAlerts(
+        lambda: token,
+        state_path,
+        user_agent=USER_AGENT,
+        severity=severity,
+        resolved_title="Rotation no longer needs a person",
+        transport=transport,
+    )

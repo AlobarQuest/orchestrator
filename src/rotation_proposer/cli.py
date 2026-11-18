@@ -102,7 +102,7 @@ from rotation_proposer.findings import (
 )
 from rotation_proposer.generate import GenerateError, StatedPlanError, reissue_body, render
 from rotation_proposer.observation import ObservationUncomposable, rotation_observation
-from rotation_proposer.outcome import FINDING_STATUSES, Outcome
+from rotation_proposer.outcome import FINDING_STATUSES, NOT_HANDED_OVER_STATUSES, Outcome
 from rotation_proposer.standing import (
     APPROVED,
     DRAFT,
@@ -146,6 +146,11 @@ RISK: Final = "caution"
 CHANGE_CLASS: Final = "credential-rotation"
 USER_AGENT: Final = "rotation-proposer/1 (+AlobarQuest/orchestrator)"
 OBSERVER_KEY_ID: Final = "orchestrator-observer"
+# Set to `1` by the launcher's container branch, unconditionally, and never on the Mac: a due
+# credential not handed over is then a `manual-*` finding (ADR-0059 Amendment 12 decision item 4).
+# On the Mac infra-drift's 03:00 scan still raises those as change-manager items, so there it stays
+# `legacy`. Unset, the pass behaves as it did before the switch existed.
+NOT_HANDED_OVER_ENV: Final = "ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER"
 # The actor the work watcher retires a record as (`work_watcher.change_manager`), duplicated
 # because this program imports only its own row; a test holds the two equal.
 RETIREMENT_ACTOR: Final = "work-watcher"
@@ -479,17 +484,60 @@ def _generate(
     )
 
 
-def _not_handed_over(item: Due, package: RotationPackage | None) -> Outcome:
-    """infraops still rotates it. A package for it is a misconfiguration: acting would put two
-    executors on one credential (ADR-0054), so it is reported and never acted on."""
-    if package is None:
-        return Outcome(item.credential_id, "legacy", f"{item.occurrence}: a person rotates it")
-    return Outcome(
-        item.credential_id,
-        "not-handed-over",
-        f"{package.package_id} exists but the registry does not mark "
-        f"{item.credential_id} rotated_by_sds; a person still owns it",
+def _not_handed_over(item: Due, package: RotationPackage | None, *, report: bool) -> list[Outcome]:
+    """A person rotates it. A package for it is a misconfiguration: acting would put two
+    executors on one credential (ADR-0054), so it is reported and never acted on. With `report`
+    (the lane's container), the trigger itself is a finding too, package or not, because nothing
+    else tells a person it is due."""
+    outcomes = [_person_rotates(item)] if report else []
+    if package is not None:
+        outcomes.append(
+            Outcome(
+                item.credential_id,
+                "not-handed-over",
+                f"{package.package_id} exists but the registry does not mark "
+                f"{item.credential_id} rotated_by_sds; a person still owns it",
+            )
+        )
+    elif not report:
+        outcomes.append(
+            Outcome(item.credential_id, "legacy", f"{item.occurrence}: a person rotates it")
+        )
+    return outcomes
+
+
+def _person_rotates(item: Due) -> Outcome:
+    """The finding for a due credential a person rotates, carrying the manual checklist infraops'
+    change-manager item carried (`rotationClassification`, `cred-rotation.ts`). Names and dates
+    only: the registry rows hold no secret, and nothing here reads one."""
+    credential = item.credential_id
+    if item.trigger == "exposure":
+        why = f"exposure {item.basis}, dated {item.dated}: rotate now, whatever its age"
+        close = f"; then close the exposure with resolve-exposure for exposure {item.basis}"
+    elif item.trigger == "requested":
+        why = (
+            f"a rotation requested {item.dated} and none recorded since (an age finding, if "
+            "infraops reports one too, is answered by the same rotation)"
+        )
+        close = ""
+    else:
+        why = f"last rotated {item.dated}, past its class's maximum age"
+        close = ""
+    detail = (
+        f"{credential} ({item.credential_class}) is due: {why}. The registry doesn't mark it "
+        "rotated_by_sds, so a person rotates it. First read its .cred-consumers.toml row: its "
+        "class's landmines, open preconditions, provider, replacement scope, keeper and "
+        "consumers. Then: "
+        "1. CREATE: mint the replacement at the provider and name it distinctly. "
+        "2. STORE and DEPLOY: update the keeper in BWS in place, then every mapped consumer. "
+        "3. REVOKE: revoke the old credential at the provider once the consumers verify. "
+        f"4. RECORD: run infraops' security-drift-cli record-rotation for {credential}{close}. "
+        "A row whose disposition is revoke-no-replacement has no replacement: revoke it, retire "
+        "the BWS copy, close any exposure with resolve-exposure and delete the row "
+        "(record-rotation refuses it). Where to run the commands: "
+        'docs/operations/rotation-proposer.md, "Credentials not handed over".'
     )
+    return Outcome(credential, NOT_HANDED_OVER_STATUSES[item.trigger], detail)
 
 
 def _entry(registry: Callable[[], dict[str, RegistryEntry]], credential_id: str) -> RegistryEntry:
@@ -709,12 +757,13 @@ def _pass(
     *,
     granted: Callable[[], set[str]] | None,
     last_rotated: dict[str, str | None] | None,
+    report_not_handed_over: bool,
 ) -> list[Outcome]:
     outcomes: list[Outcome] = []
     for item in due:
         package = packages.get(item.credential_id)
         if not item.handed_over:
-            outcomes.append(_not_handed_over(item, package))
+            outcomes.extend(_not_handed_over(item, package, report=report_not_handed_over))
             continue
         try:
             entry = _entry(registry, item.credential_id)
@@ -852,6 +901,8 @@ def _walks(
     client: ChangeManagerClient | None,
     observer: OrchestratorClient | None,
     reader: Orchestrator | None,
+    *,
+    report_not_handed_over: bool,
 ) -> list[Outcome]:
     """The due walk, then a writing pass's record walk. `reader` is None on a dry run."""
     mirror = _mirror()
@@ -870,6 +921,7 @@ def _walks(
         registry,
         granted=granted,
         last_rotated=inputs.last_rotated,
+        report_not_handed_over=report_not_handed_over,
     )
     if reader is None:
         return outcomes
@@ -1016,7 +1068,16 @@ def run(argv: list[str] | None = None) -> int:
                 credential_key_id=OBSERVER_KEY_ID,
                 token=credentials.orchestrator_token,
             )
-        outcomes.extend(_walks(inputs, credentials, client, observer, reader))
+        outcomes.extend(
+            _walks(
+                inputs,
+                credentials,
+                client,
+                observer,
+                reader,
+                report_not_handed_over=os.environ.get(NOT_HANDED_OVER_ENV) == "1",
+            )
+        )
     except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
         # "This pass could not use its inputs", not "this pass found something": a refused
         # identity or an unreachable service is every credential at once.
