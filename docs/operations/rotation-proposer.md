@@ -16,7 +16,8 @@ installed is read from `launchctl list` and the Healthchecks listing, not from t
   `SECURITY_DRIFT_STATE_DIR`). On the Mac both default to `~/.config/infra-drift`. In the lane's
   container the compose names both, and the state file lives on the lane's volume (ADR-0059
   Amendment 12 decision item 1); the launcher refuses a pass with exit 2 when either is unset or
-  its file is missing. This program opens neither file. The JSON shape is pinned by `tests/fixtures/rotation_findings.json`, a
+  the state file is missing, and writes the list each pass from its clones of the four registries
+  (`docs/operations/deploy.md`). This program opens neither file. The JSON shape is pinned by `tests/fixtures/rotation_findings.json`, a
   byte-identical copy of infraops' file. A change to either side starts there.
 - **Each handed-over credential's anchor: the same answer.** `last_rotated` serves the date
   infraops measures that credential's age from (its recorded rotation, else the registry's

@@ -352,6 +352,19 @@ def test_a_clone_without_its_registry_file_exits_2_and_reads_no_secret(
     assert run.lane_reads() == [] and run.lines("mint") == [] and run.lines("proposer") == []
 
 
+def test_a_list_that_cant_be_written_fails_the_pass_before_its_secrets(tmp_path: Path) -> None:
+    blocked = tmp_path / "read-only"
+    blocked.mkdir()
+    blocked.chmod(0o500)
+    try:
+        run = _run(tmp_path, "--submit", INFRADRIFT_CONFIG_DIR=str(blocked / "infra-drift"))
+    finally:
+        blocked.chmod(0o700)
+    assert run.code == 1, run.output
+    assert f"FATAL: could not write cred-consumers.list in {blocked}/infra-drift" in run.output
+    assert run.lane_reads() == [] and run.lines("mint") == [] and run.lines("proposer") == []
+
+
 def test_a_list_left_by_an_earlier_pass_is_never_read(tmp_path: Path) -> None:
     """A stale list could name clones this pass didn't make; the pass removes it first."""
     config = tmp_path / "infra-drift-config"

@@ -846,10 +846,16 @@ its own change or act:
       `/var/lib/sds/rotation-proposer/security-drift/cred-rotation-state.json` as a regular file
       (not a link), mode 0600, owned by the container's `orchestrator` user, in a directory that
       user owns at mode 0700. infraops refuses a file another uid owns (`loadValidated0600Json`),
-      so a plain `docker cp` or a root `docker exec` leaves a file every pass refuses: write it as
-      `orchestrator` (`docker exec -i -u orchestrator <container> sh -c 'umask 077 && mkdir -p
-      /var/lib/sds/rotation-proposer/security-drift && cat > <path>'` reading the file on stdin),
-      then compare its SHA-256 with the Mac copy's. From then on nothing writes the Mac copy.
+      so a plain `docker cp` or a root `docker exec` leaves a file every pass refuses. Write it as
+      `orchestrator`, reading the Mac file on stdin:
+
+      ```sh
+      docker exec -i -u orchestrator <container> sh -c 'umask 077 &&
+        mkdir -p /var/lib/sds/rotation-proposer/security-drift &&
+        cat > /var/lib/sds/rotation-proposer/security-drift/cred-rotation-state.json'
+      ```
+
+      Then compare its SHA-256 with the Mac copy's. From then on nothing writes the Mac copy.
     - The copy of the Mac's `sds/rotation-proposer/` files into the volume, before the first
       `--submit` pass in the container, or alerts never resolve and approval-wait clocks restart.
     - The paired dry runs on both hosts in the same minute, which write nothing and each ping the
