@@ -197,7 +197,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
         --permission metadata=read --permission pull_requests=read)"
   mint_rc=$?
   if [ "$mint_rc" -ne 0 ] || [ -z "$INERT_LANDING_GITHUB_TOKEN" ]; then
-    echo "FATAL: could not mint the inert lane's GitHub read token from the read-only App (sds-github-mint exited $mint_rc)" >&2
+    echo "FATAL: could not mint the inert lane's GitHub read token from the read-only App (the key's BWS read or sds-github-mint exited $mint_rc)" >&2
     exit 1
   fi
   export INERT_LANDING_GITHUB_TOKEN

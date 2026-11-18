@@ -469,6 +469,13 @@ def _ask_to_act(
     return Outcome(repository, number, _RECORDED[status], detail)
 
 
+def _landing_policy(cm_token: str) -> LandingPolicy:
+    """The declaration, read as `run` and `repositories` both read it, so the repositories the
+    container mints for are derived under the same settings the pass reads them under."""
+    cm_url = os.environ.get("INERT_LANDING_CHANGE_MANAGER_URL", "")
+    return read_landing_policy(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL)
+
+
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Land the update bot's inert-population work.")
     parser.add_argument(
@@ -479,7 +486,6 @@ def run(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cm_token = os.environ.get("INERT_LANDING_CHANGE_MANAGER_TOKEN", "")
-    cm_url = os.environ.get("INERT_LANDING_CHANGE_MANAGER_URL", "")
     token = os.environ.get("INERT_LANDING_ORCHESTRATOR_TOKEN", "")
     url = os.environ.get("INERT_LANDING_ORCHESTRATOR_URL", "")
     github_token = os.environ.get("INERT_LANDING_GITHUB_TOKEN", "")
@@ -496,7 +502,7 @@ def run(argv: list[str] | None = None) -> int:
             return EXIT_UNUSABLE
 
     try:
-        rule = read_landing_policy(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL)
+        rule = _landing_policy(cm_token)
     except LandingPolicyError as error:
         # THE WHOLE PASS, not one repository. One declaration covers every repository at once, so
         # reporting this per repository would be N copies of one fact -- and a rule this program
@@ -596,12 +602,11 @@ def repositories() -> int:
     derive. The policy parse refuses an empty population, so a list read here is never empty.
     """
     cm_token = os.environ.get("INERT_LANDING_CHANGE_MANAGER_TOKEN", "")
-    cm_url = os.environ.get("INERT_LANDING_CHANGE_MANAGER_URL", "")
     if not cm_token:
         print("[UNUSABLE] INERT_LANDING_CHANGE_MANAGER_TOKEN is unset", file=sys.stderr)
         return EXIT_UNUSABLE
     try:
-        rule = read_landing_policy(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL)
+        rule = _landing_policy(cm_token)
     except LandingPolicyError as error:
         print(f"[UNUSABLE] the landing policy could not be read: {error}", file=sys.stderr)
         return EXIT_UNUSABLE
