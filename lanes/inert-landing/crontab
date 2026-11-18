@@ -1,0 +1,12 @@
+# sds-lane-inert-landing's schedule: one landing pass an hour at minute 37, in the image's
+# America/New_York time. The Mac job runs at minute 35 (`scripts/com.devon.inert-landing.plist`,
+# `StartCalendarInterval` Minute 35, `--submit`), but minute 35 is the change proposer's, so the
+# lane takes 37, a minute no other lane starts on: execution-watch runs on the quarter-hours,
+# the unit verifier on 2-52/10, the deploy watcher on 20, the change proposer on 35, the revision
+# watcher on 40 and the rotation decomposer on 50, and the daily lanes on 06:31, 06:55, 07:05,
+# 07:25, 07:30 and 07:47. Hourly, and in no window, because landing in this population changes
+# nothing already serving (the launcher's header says why). `--submit` is passed here, where it is
+# visible, as the plist passes it: the bare `lane-run inert-landing` is the reporting run, which
+# asks for nothing but pings the lane's real check (ADR-0059, "It pings the real check").
+# The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+37 * * * * lane-run inert-landing --submit
