@@ -4,9 +4,10 @@ Outcome: done
 
 ## What I built
 
-- PR: https://github.com/AlobarQuest/orchestrator/pull/744 (head `1c7cd4ec` before this line was added). Base `main` `0714aff9`. Branch
-  `hq/mac-conformance-facts-pin`. Pin commit `063c1874`. The PR head is the commit that adds this
-  report on top of the pin commit. The PR is open and not merged.
+- PR: https://github.com/AlobarQuest/orchestrator/pull/744. Base `main` `0714aff9`. Branch
+  `hq/mac-conformance-facts-pin`. `063c1874` is the only commit that touches a file other than
+  this report; every later commit on the branch edits only this report. The PR is open and not
+  merged.
 - `security-standards.pin.toml`:
   - `revision`: `08754a0fb887e572509337f36948b048963c25f4` → `1dfda4d0f578516b73c980275840bb25416f8752`.
   - `artifact_sha256`: `0d081268…bf6d` → `ee00a16c0f9267e1d4606b0067a5f8fbe8e6cd85c61fd1181909b19a0cc3daba`.
@@ -19,14 +20,16 @@ Outcome: done
 
 I read security-standards only through `git archive` (inside `shape_registry_context.py`) after a
 `git fetch`. `origin/main` was `1dfda4d0f578516b73c980275840bb25416f8752`. I didn't change that
-checkout. The script `/tmp/w221-digest.sh <rev>` writes a fresh `mktemp -d` output for each run,
-then does the following:
+checkout. I ran `/tmp/w221-digest.sh <rev>` once at the old pin and twice at the new revision.
+Each run writes to a fresh `mktemp -d` directory. The script, verbatim:
 
-```
+```bash
+#!/bin/bash
+set -euo pipefail
+cd /Users/devon/Projects/orchestrator/.worktrees/hq-W-221
+REV=$1; OUT=$(mktemp -d /tmp/w221-reg.XXXXXX)/registry
 .venv/bin/python scripts/shape_registry_context.py --source ~/Projects/security-standards --revision "$REV" --output "$OUT"
-.venv/bin/python -c "...from build_registry_bundle import artifact_digest, build_bundle_from_artifact
-  d = artifact_digest(Path(OUT)); b = build_bundle_from_artifact(Path(OUT), REV, d)
-  print digest, b['source_revision'], the actor list"
+.venv/bin/python -c "import sys,json; sys.path.insert(0,'scripts'); from build_registry_bundle import artifact_digest, build_bundle_from_artifact; from pathlib import Path; d=artifact_digest(Path(sys.argv[1])); b=build_bundle_from_artifact(Path(sys.argv[1]), sys.argv[2], d); print('out', sys.argv[1]); print('digest', d); print('source_revision', b['source_revision']); print('actors', len(b['actors']), [a['agent_id'] for a in b['actors']])" "$OUT" "$REV"
 ```
 
 The `build_bundle_from_artifact` call is the in-build gate's own check. It confirms that the
@@ -59,7 +62,9 @@ following files:
 - `src/factory_events/adapters/portfolio_scan.py` (new, #100).
 
 `src/agent_registry/` and the rest of `src/factory_events/` are byte-identical. That includes
-`store.py`, `chain.py`, `envelope.py` and `db.py`.
+`store.py`, `chain.py`, `envelope.py`, `db.py` and `__main__.py`. security-standards'
+`pyproject.toml` and `uv.lock` don't change in the range (`git diff --stat 08754a0f 1dfda4d0 --
+pyproject.toml uv.lock` is empty), so no dependency floor moves here, unlike P-PIN (#705).
 
 ### Run-time effect (the stop point check)
 
@@ -67,15 +72,31 @@ Nothing beyond the new schema value and registry label changes what runs:
 
 - The orchestrator image reaches `factory_events` only through
   `import_module("factory_events.store")` and `import_module("factory_events.chain")`
-  (`src/orchestrator/factory_chain_read.py:222,240` at `0714aff9`). At `1dfda4d0`, `store.py`
-  imports only `factory_events.envelope` (line 20). `chain.py` imports only `factory_events.db`
-  and `store` (line 15). Neither imports `cli` or `adapters`.
+  (`src/orchestrator/factory_chain_read.py:222,240` at `0714aff9`). An unanchored grep for `cli`
+  and `adapters` in the shaped `store.py`, `chain.py`, `envelope.py`, `db.py` and `__init__.py`
+  at `1dfda4d0` finds only a docstring mention of "the adapters' watermarks" (`store.py:10`). No
+  module on the read path imports `cli` or `adapters`.
 - No file in this repository runs `factory_events.cli`, `adapt --source` or
   `factory_events.adapters`. I grepped the whole repository except `.venv`, `.git` and `docs`.
-- The lanes that put `security-standards/src` on `PYTHONPATH` read the Mac checkout, not the
-  image (`scripts/run-bump-driver.sh:229,273`). The container lanes set `SECURITY_STANDARDS_DIR`
-  to their own clone (`scripts/run-work-carrier.sh:352`, `run-bump-proposer.sh:377`,
-  `run-rotation-proposer.sh:303`). The pin doesn't move those clones.
+- The pin does reach the container lanes. In their container branch, each sets
+  `SECURITY_STANDARDS_DIR="$REPO_ROOT/security-standards"`, which is the image's pinned copy at
+  `/app/security-standards`. See `scripts/run-work-carrier.sh:350-352` and `:572` (the chain
+  read, with `PYTHONPATH="$SECURITY_STANDARDS_DIR/src"`), `run-bump-proposer.sh:375-377`, and
+  `run-rotation-proposer.sh:296-303`, each at `0714aff9`. Those lanes reach `factory_events` two
+  ways:
+  - The chain walk: `orchestrator.factory_chain_read`, and intent-packages'
+    `chain_db.py:105,134` (`factory_events.store` and `chain`; intent-packages `origin/main`
+    `134b4c9`). Both modules are unchanged.
+  - The emitter: intent-packages' `emitter.py:128-137` runs `python -m factory_events emit`,
+    which loads `cli.py` through `__main__.py:3`. `cli.py` changes in only three hunks: the body
+    of `_cmd_adapt` (`@@ -87`, `@@ -103`, with the new import inside the function) and the `adapt`
+    subparser's `choices` (`@@ -148`). The module's top-level imports and `emit` don't change, so
+    `emit` behaves as before.
+  - Nothing I found runs `adapt` against the image's copy. I didn't check repositories other than
+    this one and intent-packages. The `adapt` caller is the Mac nightly in security-standards,
+    which runs from the Mac checkout.
+- The bump driver's Mac branch puts the Mac checkout's `security-standards/src` on `PYTHONPATH`
+  (`scripts/run-bump-driver.sh:229,273`). The pin doesn't change that checkout.
 - Effect of the schema value: a chain walk in an image built at this pin accepts a stored event
   whose `source.system` is `mac-conformance-facts`. Before this pin, the walk refuses that event.
   This is the intended change.
@@ -143,16 +164,16 @@ the pin and `docs/superpowers/` it finds the following:
 
 The diff replaces two constants. I checked both against the recipe and against the gate's own
 read-back function. The recipe reproduces the old digest, which shows the probe can tell a right
-pin from a wrong one. I didn't run `/code-review` on a two-constant data diff. The recompute is a
-stronger check than reading the diff.
+pin from a wrong one. `/code-review low main...HEAD` reported no findings.
 
 ## Concerns
 
 - The handoff assumed the fixtures copy the pinned `src/`. They don't, so nothing in CI exercises
   the new schema value against the fixture. That coverage comes from security-standards' own
   tests (#102's `tests/test_factory_envelope.py`, `tests/test_agent_registry.py`).
-- This pin also brings #100's `cli.py` and `adapters/portfolio_scan.py` into the image. No image
-  path imports them.
+- This pin also brings #100's `cli.py` and `adapters/portfolio_scan.py` into the image. The
+  container lanes' emitter loads the changed `cli.py` for `emit`, but the change touches only
+  `adapt`. Nothing I found imports `adapters/portfolio_scan.py` in the image.
 
 ## Follow-ups
 
@@ -171,7 +192,7 @@ stronger check than reading the diff.
   change. It edits one TOML data file and adds this report.
 - **Code Brain 4 (never silently swallow an exception):** The diff adds no exception handling.
   The newly copied `cli.py` deliberately swallows `FeedError` (#100, ADR-0059 Amendment 11
-  item 6, and the code comment names the reason). Nothing in the image calls it.
+  item 6, and the code comment names the reason). Nothing I found runs `adapt` in the image.
 - **Code Brain 5 (never log secrets):** The pin holds a commit sha and a content digest. The new
   registry entry is a label with no credential. Neither is a secret, and the diff logs nothing.
 - **Infra Brain 591, 592, 593 (no BWS token in a tracked file or in history, no inline
