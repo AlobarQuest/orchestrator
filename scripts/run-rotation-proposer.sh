@@ -36,7 +36,9 @@
 #   3  something was found -- a rotation revision `stacked` on one still awaiting review, a
 #      package in a state this lane never writes, a check infraops reported that this program
 #      cannot read, a cause that could not be filed (nothing revised), a refused proposal, a
-#      record stranded by a newer revision, or a revision committed and not published.
+#      record stranded by a newer revision, or a revision committed and not published. In the
+#      lane's container only, also a due credential the registry hasn't handed over to the SDS
+#      (`manual-exposure`, `manual-request`, `manual-age`), which a person rotates.
 #
 # A WRITING PASS TELLS A PERSON through alert-hub (`rotation_proposer/alerts.py`): each finding, and
 # an approval wait older than 48 hours. A failed send prints to stderr and never changes the exit
@@ -61,6 +63,10 @@
 #   - The lifecycle runs under the image's interpreter with the clone's `src` on `PYTHONPATH`. No
 #     chain setting reaches the program: this lane holds no chain credential (D-43 B).
 #   - It unsets `BWS_ACCESS_TOKEN` before git or any program runs, and reads no Keychain item.
+#   - It always sets `ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER=1`, whatever the environment held:
+#     the pass then reports a due credential not handed over as a finding and alerts on it
+#     (ADR-0059 Amendment 12 decision item 4). The Mac's branch unsets it, because there the
+#     03:00 infra-drift scan still files those as change-manager items.
 # Exit 1 there also covers a failed mint or clone; exit 2 also covers the fence.
 #
 # Usage:
@@ -157,6 +163,11 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     exit 2
   fi
   export INFRADRIFT_CONFIG_DIR SECURITY_DRIFT_STATE_DIR
+
+  # THE FINDINGS FOR CREDENTIALS NOT HANDED OVER (ADR-0059 Amendment 12 decision item 4). The state
+  # file lives on this lane's volume, so this pass is where a person learns that a credential they
+  # rotate is due; set here and never read from the environment, so no compose value turns it off.
+  export ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER=1
 
   # NO CHAIN SETTING (D-43 B; ADR-0055 amendment 24 item 5). This lane holds no chain credential:
   # its `revise` and `transition` emits fail and record `event_id` None in the lineage. Nothing
@@ -355,4 +366,7 @@ if [ ! -x "$REPO_ROOT/.venv/bin/rotation-proposer" ]; then
   echo "FATAL: no rotation-proposer in $REPO_ROOT/.venv (run uv sync)" >&2
   exit 1
 fi
+# The container's switch, never the Mac's, whatever the calling environment held: here the 03:00
+# infra-drift scan still reports a credential not handed over, as a change-manager item.
+unset ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER
 "$REPO_ROOT/.venv/bin/rotation-proposer" "$@"

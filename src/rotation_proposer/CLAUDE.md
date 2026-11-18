@@ -38,3 +38,12 @@
   proposes, never to record a finished rotation or report, and an unread record is that
   credential's `error`; the decomposer reads it before proposing. Detail:
   `docs/operations/rotation-proposer.md`.
+- A due credential the registry doesn't hand over is `legacy` (no finding, no alert) unless
+  `ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER` is exactly `1`, which only the launcher's container
+  branch sets, unconditionally; its Mac branch unsets it, because there infra-drift's 03:00 scan
+  still files those as change-manager items. Set, it is `manual-exposure`, `manual-request` or
+  `manual-age` (one per credential, by `PRECEDENCE`), beside `not-handed-over` when a package
+  exists. `manual-exposure` is the one `critical` alert, sent by a second `KeyedAlerts` with its own
+  `alerts-critical.json` that runs only when it has something to fire or remember; both instances
+  get the same holds. ADR-0059 Amendment 12 decision item 4; detail:
+  `docs/operations/rotation-proposer.md`, "Credentials not handed over".

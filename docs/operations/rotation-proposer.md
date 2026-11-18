@@ -12,8 +12,11 @@ installed is read from `launchctl list` and the Healthchecks listing, not from t
 - **What is due: infraops, not this repository.** It runs
   `node <infraops checkout>/dist/cli/security-drift-cli.js cred-findings` and reads JSON. That
   subcommand applies infraops' own due rule (`credFindings`) to the registries listed in
-  `~/.config/infra-drift/cred-consumers.list` and to `cred-rotation-state.json`. This program
-  opens neither file. The JSON shape is pinned by `tests/fixtures/rotation_findings.json`, a
+  `cred-consumers.list` (in `INFRADRIFT_CONFIG_DIR`) and to `cred-rotation-state.json` (in
+  `SECURITY_DRIFT_STATE_DIR`). On the Mac both default to `~/.config/infra-drift`. In the lane's
+  container the compose names both, and the state file lives on the lane's volume (ADR-0059
+  Amendment 12 decision item 1); the launcher refuses a pass with exit 2 when either is unset or
+  its file is missing. This program opens neither file. The JSON shape is pinned by `tests/fixtures/rotation_findings.json`, a
   byte-identical copy of infraops' file. A change to either side starts there.
 - **Each handed-over credential's anchor: the same answer.** `last_rotated` serves the date
   infraops measures that credential's age from (its recorded rotation, else the registry's
@@ -153,17 +156,24 @@ same pass.
 ## Alerts
 
 After a `--submit` pass the proposer syncs alert-hub alerts as sender `sds-bridge`
-(`rotation_proposer/alerts.py`). The state directory is `ROTATION_PROPOSER_STATE_DIR`, default
-`~/Library/Application Support/sds/rotation-proposer`; it holds `alerts.json`, what the pass fired,
-and `approval-since.json`, when each approval wait was first seen.
+(`rotation_proposer/alerts.py`). Every one is kind `alert`, never a notice. The state directory is
+`ROTATION_PROPOSER_STATE_DIR`, default `~/Library/Application Support/sds/rotation-proposer`; it
+holds `alerts.json`, the `warning` alerts the pass fired, `alerts-critical.json`, the `critical`
+ones, and `approval-since.json`, when each approval wait was first seen.
 
 - `rotation-finding:<credential>:<status>` fires on the pass that reports a finding status, and
-  resolves on the first pass that doesn't.
+  resolves on the first pass that doesn't. It's `warning`, except `manual-exposure`, which is
+  `critical` (see "Credentials not handed over").
 - `rotation-approval:<credential>` fires once a credential has stayed `awaiting-approval` or
-  `declined` for 48 hours. Waiting on a named person is the lane working, but not for days.
+  `declined` for 48 hours, at `warning`. Waiting on a named person is the lane working, but not for
+  days.
+
+`KeyedAlerts` sends one severity, and a state file has one `sync` caller, so the `critical` alerts
+have their own instance and file. That instance runs only when it has an alert to fire or one to
+remember, so a pass that never reports `manual-exposure` creates no file.
 
 A pass that couldn't use its inputs (exit 2) syncs nothing, so every remembered key holds. A
-credential reporting `error` holds its remembered keys and its approval clock: that status may only
+credential reporting `error` holds its remembered keys in both files, and its approval clock: that status may only
 say a fetch failed, which says nothing about its other findings, and the code can't tell it from a
 genuine error on one credential. The sightings are written before alert-hub is asked and kept when
 it refuses, so an outage never restarts a clock. A failed sync is printed to stderr and never
@@ -176,9 +186,10 @@ changes the exit code.
   another. The pass does not replace a revision Devon is reviewing.
 - **`declined`**: Devon rejected the revision that carries this occurrence.
 - **`unexpected-state`** (a finding): any lifecycle state this lane never writes.
-- **`legacy`**: the registry has not marked the credential `rotated_by_sds`, and no package
-  exists. A person rotates it, and infraops' 03:00 scan reports it to change-manager as a manual
-  item; this lane does nothing.
+- **`legacy`** (on the Mac only): the registry has not marked the credential `rotated_by_sds`, and
+  no package exists. A person rotates it, and infraops' 03:00 scan reports it to change-manager as
+  a manual item; this lane does nothing. In the lane's container the same credential reports a
+  `manual-*` finding instead (see "Credentials not handed over").
 - **`not-handed-over`** (a finding): a standing package exists, but the registry has not marked the
   credential `rotated_by_sds`. The pass never acts on it, because a person may be rotating it.
   Set the flag in the credential's `.cred-consumers.toml`, and only when no such rotation is in
@@ -192,6 +203,48 @@ changes the exit code.
   `class` names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`), or its type has an
   issue plan and a rotation plan and infraops serves no `last_rotated` for it, or its type has only
   an issue plan and infraops records it issued. The pass writes nothing for it.
+
+## Credentials not handed over
+
+In the lane's container, a due credential the registry doesn't mark `rotated_by_sds` is a finding,
+and the pass alerts on it (ADR-0059 Amendment 12 decision item 4). The state file lives on the
+lane's volume, and once infraops' Mac scan stops reading it, this pass is the only signal a person
+gets. The launcher's container branch sets `ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER=1` on every
+pass, and its Mac branch unsets it. Unset, or set to anything but `1`, the pass reports `legacy`.
+
+| infraops check | Status | Severity |
+| --- | --- | --- |
+| `cred.exposure-rotate` | `manual-exposure` | `critical` |
+| `cred.rotation-requested` | `manual-request` | `warning` |
+| `cred.rotation-age` | `manual-age` | `warning` |
+
+Each credential reports one of them, by the precedence in "Which rotation, and its name". infraops
+reports no age or request beside an open exposure, so the one combination the precedence decides
+is a request with an age: the pass reports `manual-request`, whose detail says that the same
+rotation answers the age. A credential with a standing package also reports `not-handed-over`. The
+pass never acts on either: it observes, revises and proposes nothing.
+
+A `manual-exposure` alert stays firing until infraops stops reporting the exposure, which is when
+`resolve-exposure` records it (Infra Brain rule 1032). Each alert's detail carries the manual
+checklist that infraops' change-manager item carried. Before the steps, read the credential's
+`.cred-consumers.toml` row. It names the class's landmines, the open preconditions, the provider,
+the replacement scope, the keeper and the consumers, none of which the alert carries.
+
+1. **Create:** mint the replacement at the provider, and name it distinctly.
+2. **Store and deploy:** update the keeper in BWS in place, then every mapped consumer.
+3. **Revoke:** revoke the old credential at the provider once the consumers verify.
+4. **Record:** run infraops' `security-drift-cli record-rotation --cred <credential> --date now`.
+   For an exposure, then run `security-drift-cli resolve-exposure --cred <credential> --exposure
+   <id>`. The next pass resolves the alert.
+
+A row whose disposition is `revoke-no-replacement` has no replacement: revoke the credential, retire
+the BWS copy, close any exposure with `resolve-exposure`, and delete the row. `record-rotation`
+refuses that row.
+
+Both commands write `cred-rotation-state.json` on the lane's volume, so they run inside the lane's
+container, as its user, from an interactive session (ADR-0059 Amendment 12 decision item 2). A write
+on the Mac never reaches the volume. Where the infraops CLI and the registry files are between
+passes is settled by the rotation proposer's cut-over.
 
 Every finding carries `rotated_by_sds` from infraops' `cred-findings`. A finding without it (an
 infraops older than the handover) stops the whole pass with exit 2.

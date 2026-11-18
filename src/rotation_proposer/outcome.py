@@ -16,6 +16,9 @@ from typing import Final
 # `awaiting-approval`, `declined` and `revised` are absent because waiting on Devon is the lane
 # working, not failing; the first two raise an alert only once they have waited long enough
 # (`alerts.APPROVAL_ALERT_HOURS`).
+# `manual-exposure`, `manual-request` and `manual-age` are a due credential the registry has not
+# handed over, which a person rotates (ADR-0059 Amendment 12 decision item 4). Only the lane's
+# container reports them (`cli.NOT_HANDED_OVER_ENV`); on the Mac the same credential is `legacy`.
 FINDING_STATUSES: Final = frozenset(
     {
         "error",
@@ -33,8 +36,17 @@ FINDING_STATUSES: Final = frozenset(
         "stalled",
         "record-wontfix",
         "due-after-rotation",
+        "manual-exposure",
+        "manual-request",
+        "manual-age",
     }
 )
+# A trigger (`findings.TRIGGERS`) -> the finding a credential not handed over reports for it.
+NOT_HANDED_OVER_STATUSES: Final = {
+    "exposure": "manual-exposure",
+    "requested": "manual-request",
+    "age": "manual-age",
+}
 
 
 @dataclass(frozen=True)

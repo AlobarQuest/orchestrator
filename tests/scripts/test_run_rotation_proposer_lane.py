@@ -545,6 +545,39 @@ def test_on_the_mac_nothing_is_minted_or_cloned_and_the_checkouts_are_its_own(
         assert set(reads) == {HEALTHCHECKS_KEY_UUID}
 
 
+SWITCH = "ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER"
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
+@pytest.mark.parametrize("inherited", [None, "", "0", "1"], ids=["unset", "empty", "off", "on"])
+def test_the_container_always_turns_on_the_findings_for_credentials_not_handed_over(
+    tmp_path: Path, args: tuple[str, ...], inherited: str | None
+) -> None:
+    """ADR-0059 Amendment 12 decision item 4: whatever the compose or `lane-run` passed."""
+    run = _run(tmp_path, *args, **{SWITCH: inherited})
+    assert run.code == 0, run.output
+    assert run.env()[SWITCH] == "1"
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
+@pytest.mark.parametrize("inherited", [None, "1"], ids=["unset", "on"])
+def test_on_the_mac_the_findings_switch_never_reaches_the_program(
+    tmp_path: Path, args: tuple[str, ...], inherited: str | None
+) -> None:
+    """The Mac's 03:00 infra-drift scan still files these as change-manager items."""
+    run = _run(
+        tmp_path,
+        *args,
+        BWS_ACCESS_TOKEN=None,
+        BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN,
+        ROTATION_PROPOSER_STATE_DIR=None,
+        **dict.fromkeys(FENCE),
+        **{SWITCH: inherited},
+    )
+    assert run.code == 0, run.output
+    assert SWITCH not in run.env()
+
+
 # ---- the lane's tracked files ----------------------------------------------------------------
 
 

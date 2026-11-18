@@ -11,6 +11,7 @@ import pytest
 
 from rotation_proposer.alerts import (
     APPROVAL_STATUSES,
+    CRITICAL_ALERTS_FILE,
     STATE_DIR_ENV,
     approval_key,
     finding_key,
@@ -211,3 +212,140 @@ def test_no_key_is_a_substring_of_another_finding_kind() -> None:
 
 def test_the_state_directory_variable_is_the_proposers_own() -> None:
     assert STATE_DIR_ENV == "ROTATION_PROPOSER_STATE_DIR"
+
+
+# ---- credentials not handed over: severity, kind, and the second state file ---------------------
+
+PERSON = "openai-project"
+MANUAL = ("manual-exposure", "manual-request", "manual-age")
+
+
+@pytest.mark.parametrize(
+    ("status", "severity"),
+    [
+        pytest.param("manual-exposure", "critical", id="exposure"),
+        pytest.param("manual-request", "warning", id="request"),
+        pytest.param("manual-age", "warning", id="age"),
+    ],
+)
+def test_a_credential_a_person_rotates_fires_an_alert_at_its_severity(
+    hub: Hub, tmp_path: Path, status: str, severity: str
+) -> None:
+    _sync(hub, tmp_path, [Outcome(PERSON, status, "the checklist")])
+    assert hub.sent == [
+        {
+            "key": f"rotation-finding:{PERSON}:{status}",
+            "severity": severity,
+            "kind": "alert",
+            "status": "firing",
+            "title": f"Rotation {status}: {PERSON}",
+            "message": "the checklist",
+        }
+    ]
+
+
+@pytest.mark.parametrize("status", MANUAL)
+def test_it_stays_while_reported_and_resolves_on_the_first_pass_that_does_not(
+    hub: Hub, tmp_path: Path, status: str
+) -> None:
+    key = finding_key(PERSON, status)
+    _sync(hub, tmp_path, [Outcome(PERSON, status, "x")])
+    _sync(hub, tmp_path, [Outcome(PERSON, status, "x")], 24)
+    _sync(hub, tmp_path, [Outcome(PERSON, "legacy", "x")], 48)
+    _sync(hub, tmp_path, [], 72)
+    assert _sent(hub) == [(key, "firing"), (key, "resolved")]
+    severities = {row["severity"] for row in hub.sent}
+    assert severities == {"critical" if status == "manual-exposure" else "warning"}
+
+
+def test_the_critical_alerts_have_their_own_state_file(hub: Hub, tmp_path: Path) -> None:
+    _sync(hub, tmp_path, [Outcome(PERSON, "manual-exposure", "x"), Outcome(PERSON, "stacked", "x")])
+    critical = json.loads((tmp_path / CRITICAL_ALERTS_FILE).read_text())
+    warning = json.loads((tmp_path / "alerts.json").read_text())
+    assert critical == [finding_key(PERSON, "manual-exposure")]
+    assert warning == [finding_key(PERSON, "stacked")]
+
+
+def test_a_pass_that_never_reports_a_critical_status_opens_no_second_file(
+    hub: Hub, tmp_path: Path
+) -> None:
+    """The Mac's passes: nothing about them changes, not even a new empty file."""
+    _sync(hub, tmp_path, [Outcome(PERSON, "legacy", "x"), Outcome(CREDENTIAL, "stacked", "x")])
+    _sync(hub, tmp_path, [], 1)
+    assert not (tmp_path / CRITICAL_ALERTS_FILE).exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "alerts.json",
+        "approval-since.json",
+    ]
+
+
+def test_an_error_holds_the_credentials_critical_alert_too(hub: Hub, tmp_path: Path) -> None:
+    """Infra Brain rule 1032: an exposure clears only when the finding stops, never on a pass
+    that could not read the credential."""
+    exposure, age = finding_key(PERSON, "manual-exposure"), finding_key("other", "manual-age")
+    _sync(
+        hub,
+        tmp_path,
+        [Outcome(PERSON, "manual-exposure", "x"), Outcome("other", "manual-age", "x")],
+    )
+    _sync(hub, tmp_path, [Outcome(PERSON, "error", "the registry: unreadable")], 1)
+    assert _about(hub, exposure) == [(exposure, "firing")]
+    assert _about(hub, age) == [(age, "firing"), (age, "resolved")]
+    _sync(hub, tmp_path, [], 2)
+    assert _about(hub, exposure)[-1] == (exposure, "resolved")
+
+
+def test_an_error_on_a_credential_holds_its_warning_beside_its_critical(
+    hub: Hub, tmp_path: Path
+) -> None:
+    held = [finding_key(PERSON, "manual-exposure"), finding_key(PERSON, "not-handed-over")]
+    _sync(
+        hub,
+        tmp_path,
+        [Outcome(PERSON, "manual-exposure", "x"), Outcome(PERSON, "not-handed-over", "x")],
+    )
+    _sync(hub, tmp_path, [Outcome(PERSON, "error", "x")], 1)
+    assert [row for row in _sent(hub) if row[1] == "resolved"] == []
+    assert sorted(_about(hub, *held)) == sorted((key, "firing") for key in held)
+
+
+def test_a_failed_critical_send_is_named_and_kept_for_the_next_pass(
+    hub: Hub, tmp_path: Path
+) -> None:
+    key = finding_key(PERSON, "manual-exposure")
+    hub.status = 500
+    reason = _sync(hub, tmp_path, [Outcome(PERSON, "manual-exposure", "x")])
+    assert reason is not None and reason.startswith("critical: ")
+    hub.status = 202
+    _sync(hub, tmp_path, [Outcome(PERSON, "manual-exposure", "x")], 1)
+    assert _sent(hub) == [(key, "firing"), (key, "firing")]
+
+
+def test_a_failed_warning_send_still_sends_the_critical_one(hub: Hub, tmp_path: Path) -> None:
+    def refuse_warnings(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        hub.sent.append(body)
+        return httpx.Response(500 if body["severity"] == "warning" else 202, json={})
+
+    outcomes = [Outcome(PERSON, "manual-exposure", "x"), Outcome("other", "manual-age", "x")]
+    reason = sync_alerts(
+        outcomes,
+        token="t",
+        state_dir=tmp_path,
+        now=NOW,
+        transport=httpx.MockTransport(refuse_warnings),
+    )
+    assert reason is not None
+    assert json.loads((tmp_path / CRITICAL_ALERTS_FILE).read_text()) == [
+        finding_key(PERSON, "manual-exposure")
+    ]
+
+
+def test_the_existing_finding_keys_keep_their_warning_severity(hub: Hub, tmp_path: Path) -> None:
+    existing = sorted(FINDING_STATUSES - set(MANUAL))
+    _sync(hub, tmp_path, [Outcome(CREDENTIAL, status, "x") for status in existing])
+    assert sorted(row["key"] for row in hub.sent) == sorted(
+        finding_key(CREDENTIAL, status) for status in existing
+    )
+    assert {row["severity"] for row in hub.sent} == {"warning"}
+    assert not (tmp_path / CRITICAL_ALERTS_FILE).exists()

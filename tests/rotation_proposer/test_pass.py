@@ -25,6 +25,7 @@ from rotation_proposer import cli
 from rotation_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 from rotation_proposer.client import Orchestrator
 from rotation_proposer.findings import Due, FindingsError, Unrecognised
+from rotation_proposer.findings import parse as findings_parse
 from rotation_worker.registry import RegistryEntry, RegistryError
 from sds_members.client import SERVICES, Member, MembersUnreadable
 from tests.bump_proposer.test_pass import _Estate, _Spine
@@ -1004,3 +1005,143 @@ def test_a_sync_failure_keeps_the_exit_code(rig, monkeypatch, capsys, unrecognis
     monkeypatch.setattr(cli, "sync_alerts", lambda *args, **kwargs: "alert-hub said no")
     assert run(["--submit"]) == (EXIT_FINDINGS if unrecognised else EXIT_OK)
     assert "alert-hub said no" in capsys.readouterr().err
+
+
+# ---- a credential not handed over, in the lane's container (ADR-0059 Amendment 12 item 4) -------
+
+PERSON = "openai-project"
+
+
+def _infraops(*entries: dict) -> str:
+    return json.dumps({"schema_version": 1, "findings": list(entries), "last_rotated": {}})
+
+
+def _check(check: str, **facts: str) -> dict:
+    return {"check": check, "id": PERSON, "class": "openai-key", "rotated_by_sds": False, **facts}
+
+
+SCAN_EXPOSURE = _check(
+    "cred.exposure-rotate", exposure_id="transcript-1", exposure_date="2026-07-09"
+)
+SCAN_REQUEST = _check("cred.rotation-requested", rotate_requested="2026-10-07")
+SCAN_AGE = _check("cred.rotation-age", anchor="2025-01-02")
+
+
+@pytest.fixture
+def container(rig, monkeypatch):
+    """The rig with the switch the launcher's container branch sets."""
+    monkeypatch.setenv(cli.NOT_HANDED_OVER_ENV, "1")
+    return rig
+
+
+def _read(rig, monkeypatch, text: str) -> None:
+    monkeypatch.setattr(cli, "read_due", lambda: findings_parse(text))
+
+
+def _statuses(rig) -> list[tuple[str, str]]:
+    (outcomes, _token, _state), *_ = rig.synced
+    return [(o.credential_id, o.status) for o in outcomes]
+
+
+def test_in_the_container_a_due_credential_a_person_rotates_is_a_finding(container, capsys) -> None:
+    container.due = [LEGACY]
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert container.acts() == ([], 0, 0, 0)
+    assert _statuses(container) == [("openai-project", "manual-age")]
+    assert "legacy" not in capsys.readouterr().out
+
+
+def test_without_the_switch_the_same_pass_is_legacy_and_alerts_nothing(rig, capsys) -> None:
+    """The Mac: the variable is unset, so the pass is what it was before the switch existed."""
+    rig.due = [LEGACY]
+    assert run(["--submit"]) == EXIT_OK
+    assert _statuses(rig) == [("openai-project", "legacy")]
+
+
+@pytest.mark.parametrize("value", ["", "0", "true", "yes"])
+def test_only_the_value_the_launcher_sets_turns_it_on(rig, monkeypatch, value) -> None:
+    monkeypatch.setenv(cli.NOT_HANDED_OVER_ENV, value)
+    rig.due = [LEGACY]
+    assert run(["--submit"]) == EXIT_OK
+    assert _statuses(rig) == [("openai-project", "legacy")]
+
+
+def test_a_package_for_it_reports_the_trigger_beside_not_handed_over(container) -> None:
+    """Kills: an exposure on a misconfigured credential going dark once the scan stops."""
+    write_package(container.root, PERSON)
+    container.due = [replace(LEGACY, trigger="exposure", basis="transcript-1")]
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert container.acts() == ([], 0, 0, 0)
+    assert _statuses(container) == [(PERSON, "manual-exposure"), (PERSON, "not-handed-over")]
+
+
+@pytest.mark.parametrize(
+    ("entries", "status"),
+    [
+        pytest.param((SCAN_EXPOSURE,), "manual-exposure", id="exposure"),
+        pytest.param((SCAN_REQUEST,), "manual-request", id="request"),
+        pytest.param((SCAN_AGE,), "manual-age", id="age"),
+        # infraops' `credFindings` never pairs an exposure with either: it `continue`s past them.
+        pytest.param((SCAN_AGE, SCAN_REQUEST), "manual-request", id="age-and-request"),
+        pytest.param((SCAN_REQUEST, SCAN_AGE), "manual-request", id="request-and-age"),
+        pytest.param((SCAN_EXPOSURE, SCAN_AGE), "manual-exposure", id="exposure-and-age"),
+        pytest.param((SCAN_EXPOSURE, SCAN_REQUEST), "manual-exposure", id="exposure-and-request"),
+        pytest.param((SCAN_AGE, SCAN_REQUEST, SCAN_EXPOSURE), "manual-exposure", id="all-three"),
+    ],
+)
+def test_each_combination_fires_the_one_finding_its_precedence_names(
+    container, monkeypatch, entries, status
+) -> None:
+    _read(container, monkeypatch, _infraops(*entries))
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert _statuses(container) == [(PERSON, status)]
+
+
+@pytest.mark.parametrize(
+    ("entry", "names"),
+    [
+        pytest.param(SCAN_EXPOSURE, ("exposure transcript-1", "resolve-exposure"), id="exposure"),
+        pytest.param(SCAN_REQUEST, ("requested 2026-10-07", "same rotation"), id="request"),
+        pytest.param(SCAN_AGE, ("aged from 2025-01-02", "maximum age"), id="age"),
+    ],
+)
+def test_each_finding_carries_the_manual_checklist(container, monkeypatch, entry, names) -> None:
+    _read(container, monkeypatch, _infraops(entry))
+    run(["--submit"])
+    (outcomes, _token, _state), *_ = container.synced
+    detail = outcomes[0].detail
+    for step in ("1. CREATE", "2. STORE and DEPLOY", "3. REVOKE", "4. RECORD", "record-rotation"):
+        assert step in detail
+    assert "revoke-no-replacement" in detail
+    assert "docs/operations/rotation-proposer.md" in detail
+    for name in names:
+        assert name in detail
+    # No command line for a place the cut-over has not settled, and nothing the pass holds secret.
+    assert "dist/" not in detail and "node " not in detail
+    for secret in ("cm-propose", "observer", "sender"):
+        assert secret not in detail
+    assert len(detail) < 4000
+
+
+def test_a_handed_over_credential_reports_what_it_did_with_the_switch_on(container) -> None:
+    """The switch changes only credentials not handed over."""
+    assert run(["--submit"]) == EXIT_OK
+    assert _statuses(container) == [(CREDENTIAL, "revised")]
+
+
+def test_a_pass_that_cannot_read_what_is_due_sends_nothing_with_the_switch_on(
+    container, monkeypatch
+) -> None:
+    def unreadable():
+        raise FindingsError("infraops refused cred-findings: no state file")
+
+    monkeypatch.setattr(cli, "read_due", unreadable)
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert container.synced == []
+
+
+def test_a_dry_run_reports_it_and_sends_nothing(container, capsys, monkeypatch) -> None:
+    container.due = [LEGACY]
+    assert run([]) == EXIT_FINDINGS
+    assert container.synced == []
+    assert "manual-age" in capsys.readouterr().out
