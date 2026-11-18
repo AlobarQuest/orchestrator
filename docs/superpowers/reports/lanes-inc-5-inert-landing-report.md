@@ -182,6 +182,11 @@ same way it stops the Mac's, because both act only through those routes.
   ruff format, and pyright report 0 errors. A first run failed one test,
   `test_layer_manifest.py::test_every_pattern_names_a_file`, because the new test file was
   untracked; it passed after the commit.
+- **CI on PR #736** (run `44206267239`): `Quality` passed in 15 minutes 32 seconds with 15,411
+  passed and 23 skipped, the same 15,434 collected as the local run. `Runner consumer
+  compatibility` and `Rollout transcription currency` passed. The job log doesn't list skip
+  reasons. Neither new test file has a skip marker or condition, so the launcher tests ran on
+  Linux.
 - New tests: 38 in `test_run_inert_landing.py`, 8 in `test_repositories.py`. Each run passed.
 - **Mutations** of the container branch (restored and checked with `cmp` afterwards): 11 tried, 10
   killed. Killed: lane token not unset before the lander; an extra `contents` permission; `gh` in
