@@ -2,8 +2,8 @@ Outcome: done
 
 # The rotation proposer reports the scan's three findings (ADR-0059 Amendment 12, step 3f-5-state work 2)
 
-Branch `hq/rotation-proposer-findings`, base `origin/main` at `ea2905a9`. The PR is open and ready.
-It isn't merged.
+Branch `hq/rotation-proposer-findings`, base `origin/main` at `ea2905a9`. PR #737 is open and ready
+for review. It isn't merged.
 
 ## What changed
 
@@ -86,9 +86,11 @@ no second client.
   so it replaces any inherited value. `test_the_container_always_turns_on_the_findings_for_credentials_not_handed_over`
   runs the real launcher under `env -i` with the variable unset, empty, `0` and `1`, on a dry run
   and on `--submit`. Each case hands the program `1`.
-- **The Mac never passes it.** `test_on_the_mac_the_findings_switch_never_reaches_the_program` runs
-  the Mac branch with the variable unset and with it inherited as `1`. Neither hands it to the
-  program.
+- **The Mac never passes it.** The Mac branch gained one line, `unset
+  ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER`, just before the program runs. It does nothing when the
+  variable is absent, which is the live job's case: the plist doesn't set it.
+  `test_on_the_mac_the_findings_switch_never_reaches_the_program` runs the Mac branch with the
+  variable unset and with it inherited as `1`. Neither hands it to the program.
 - **Unset, Python behaves as before.** `test_without_the_switch_the_same_pass_is_legacy_and_alerts_nothing`
   reports `legacy` with exit 0. `test_only_the_value_the_launcher_sets_turns_it_on` covers `""`,
   `0`, `true` and `yes`. `test_a_pass_that_never_reports_a_critical_status_opens_no_second_file`
@@ -139,7 +141,7 @@ scan reports only the exposure there too, so it hides nothing.
 
 The detail for an age finding reads as follows (`<...>` marks the values):
 
-> `<credential>` (`<class>`) is due: last rotated `<date>`, past its class's maximum age. The
+> `<credential>` (`<class>`) is due: aged from `<date>`, past its class's maximum age. The
 > registry doesn't mark it rotated_by_sds, so a person rotates it. First read its
 > .cred-consumers.toml row: its class's landmines, open preconditions, provider, replacement scope,
 > keeper and consumers. Then: 1. CREATE: mint the replacement at the provider and name it
@@ -199,24 +201,32 @@ the directories to the `rotation-state-dirs` act. Whether the launcher writes th
 the act carries it as data, is a design choice that belongs to that act, so I didn't make it here.
 Whatever the choice, a list written for one pass has to agree with the per-pass clone paths.
 
-### Follow-up 6: can a backdated `record-rotation` hide a finding in the proposer's pass? (No)
+### Follow-up 6: can a backdated `record-rotation` hide a finding in the proposer's pass? (Yes, if it's run on the Mac)
 
 `recordRotation` (`cred-rotation.ts` lines 185-192 at `c3359bf`) overwrites `lastRotated` with the
 given date and has no guard that keeps the date from moving backward. `rotationAnchor` reads
-`lastRotated` first. So a backdated record moves the volume copy's date earlier, never later:
+`lastRotated` first. The answer depends on which copy the backdated write lands on:
 
-- the age anchor moves back, so `cred.rotation-age` fires sooner;
-- a date earlier than `rotate_requested` reopens `cred.rotation-requested`.
+- **Written in the container, to the volume copy: no.** The volume's date moves earlier, never
+  later. The age anchor moves back, so `cred.rotation-age` fires sooner. A date earlier than
+  `rotate_requested` reopens `cred.rotation-requested`. Both effects over-report.
+- **Written on the Mac during the window: yes.** Suppose the volume holds a date D2 and a person
+  corrects it to an earlier D1 by running `record-rotation` on the Mac, as the scan's checklist
+  still tells them to. The write reaches only the Mac copy, so the volume, which the proposer
+  reads, keeps the newer D2. Two findings can then be hidden:
+  - `cred.rotation-age`, if D2 is too recent to age;
+  - `cred.rotation-requested`, if D2 is on or after `rotate_requested` and D1 is before it.
 
-Both effects over-report. The hidden-finding hazard in #735 follow-up 6 belongs to the stale Mac
-copy. That copy keeps the newer date after a backdated write lands on the volume, so the Mac scan
-under-reports. The proposer reads the volume copy, which is the only copy written after the
-cut-over, and writes made on the Mac never reach it. The proposer's own `record-rotation` records
-only a date later than `last_rotated`.
+  This lasts until the write is repeated in the container. The infraops change doesn't end it,
+  because after that change nothing reads the Mac copy.
 
-The volume copy hides a finding only when its record is false: someone records a rotation that
-didn't happen, or one dated after a request it doesn't answer. That's an accuracy problem with what
-was recorded, not something a stale copy causes.
+The proposer's own `record-rotation` records only a date later than `last_rotated`, so it can't
+cause either case. Otherwise, the volume copy hides a finding only when its record is false: someone
+records a rotation that didn't happen, or one dated after a request it doesn't answer.
+
+The cut-over needs one more step for this. "What the cut-over still needs" lists it: replay in the
+container every `record-rotation` and `resolve-exposure` that a person runs on the Mac during the
+window, backdated ones included.
 
 ### Values HQ needs to match against alert-hub's routing rules
 
@@ -250,6 +260,26 @@ alert is meant to reach a person: it's an exposure, which Infra Brain rule 1032 
   - a dry run, which reports and sends nothing;
   - the container switch for every inherited value;
   - the Mac branch never passing the switch.
+
+## Code review
+
+I ran `/code-review` (medium) on `origin/main...hq/rotation-proposer-findings` and checked each of
+its seven findings:
+
+- **Fixed:** the age detail said "last rotated `<date>`". infraops' `anchor` can be the row's
+  `last_rotated` or `created` date, so the detail now says "aged from `<date>`".
+- **Not a defect:** an uncaught `StateUnwritable` or `ValueError` from the critical `sync`.
+  `StateUnwritable` is an `AlertHubError`, so it's caught. A `ValueError` needs a key outside
+  `KEY_GRAMMAR`, and `alert_key` escapes every part, as it does for the existing instance.
+- **Not new:** a corrupt state file re-fires the critical alerts. That's `KeyedAlerts`' behavior for
+  every state file, including `alerts.json`.
+- **Not changed:**
+  - Restructuring `_not_handed_over`: the branches are short, and tests pin all four cases.
+  - Merging the two partition comprehensions: the code stays readable as it is.
+  - Replacing the environment variable with a CLI flag: the handoff prescribes the variable, and a
+    flag would mean editing the launchd plist and crontab argument contract.
+  - A second `KeyedAlerts` on every pass: `remembered()` on a missing file reads nothing and writes
+    nothing, and a test pins that.
 
 ## Self-review
 
@@ -286,9 +316,11 @@ alert is meant to reach a person: it's an exposure, which Infra Brain rule 1032 
 - **Infra Brain 593 (no inline bootstrap token):** the compose and launcher changes add no token.
   The compose is unchanged.
 - **Infra Brain 1032 (`cred.exposure-rotate`):** `manual-exposure` is `critical`. It stays firing
-  while infraops reports the exposure, and resolves only once infraops stops, which `resolve-exposure`
-  or the revoke record makes happen. An `error` pass or an exit-2 pass holds it. I didn't surface any
-  exposed credential; I made no live read.
+  while infraops reports the exposure for a credential not handed over, and an `error` pass or an
+  exit-2 pass holds it. It resolves on the first pass that doesn't report it. That normally means
+  `resolve-exposure` or the revoke record ended the exposure, with one exception: the registry row
+  flips to `rotated_by_sds` while the exposure is still open. Concern 6 covers that case. I didn't
+  surface any exposed credential; I made no live read.
 
 ## Concerns and follow-ups
 
@@ -308,6 +340,14 @@ alert is meant to reach a person: it's an exposure, which Infra Brain rule 1032 
 5. **Exit 3 in the container** now also means "a credential a person rotates is due". Because the
    dead-man switch treats exit 3 as success, it changes no ping. Anything that later reads the
    lane's exit code needs to know this.
+6. **A `rotated_by_sds` flip resolves an open exposure's critical alert.** Suppose the registry row
+   gains `rotated_by_sds` while its exposure is still open. The next pass takes the handed-over path
+   and reports no `manual-exposure`, so the critical alert resolves as "Rotation no longer needs a
+   person". The exposure itself doesn't go dark: the handed-over path files it as a rotation and
+   revises or generates its package, and that path reports what it reports today. But the
+   `critical` signal ends before the exposure does. I left the code alone, because the handoff
+   keeps handed-over reporting as it is. Holding the critical key across the flip would mean
+   reporting something new on the handed-over path.
 
 ## What the cut-over still needs
 
@@ -315,6 +355,9 @@ alert is meant to reach a person: it's an exposure, which Infra Brain rule 1032 
   compose. It must also put a `cred-consumers.list` there that names in-container registry paths,
   and get those registries on disk (follow-up 10). Until then, the launcher's fence stops every
   container pass with exit 2.
+- The cut-over replays in the container every `record-rotation` and `resolve-exposure` that a
+  person ran on the Mac between the copy and the infraops change, backdated ones included
+  (follow-up 6).
 - The `rotation-state-copy` act copies the Mac state file, checks the digest, mode 0600 and owner,
   and checks that `alerts.json` and `approval-since.json` come along. `alerts-critical.json` doesn't
   exist on the Mac and needs no copy.

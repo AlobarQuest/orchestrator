@@ -1102,7 +1102,7 @@ def test_each_combination_fires_the_one_finding_its_precedence_names(
     [
         pytest.param(SCAN_EXPOSURE, ("exposure transcript-1", "resolve-exposure"), id="exposure"),
         pytest.param(SCAN_REQUEST, ("requested 2026-10-07", "same rotation"), id="request"),
-        pytest.param(SCAN_AGE, ("last rotated 2025-01-02", "maximum age"), id="age"),
+        pytest.param(SCAN_AGE, ("aged from 2025-01-02", "maximum age"), id="age"),
     ],
 )
 def test_each_finding_carries_the_manual_checklist(container, monkeypatch, entry, names) -> None:

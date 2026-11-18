@@ -521,7 +521,8 @@ def _person_rotates(item: Due) -> Outcome:
         )
         close = ""
     else:
-        why = f"last rotated {item.dated}, past its class's maximum age"
+        # infraops' anchor: the recorded rotation, else the row's `last_rotated`, else `created`.
+        why = f"aged from {item.dated}, past its class's maximum age"
         close = ""
     detail = (
         f"{credential} ({item.credential_class}) is due: {why}. The registry doesn't mark it "
