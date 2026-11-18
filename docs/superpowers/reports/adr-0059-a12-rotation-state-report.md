@@ -147,6 +147,9 @@ These are listed in the PR body:
   - Exposure findings stay reported. They're raised by the proposer's pass as `critical` alerts
      that stay firing until the exposure is revoked or `resolve-exposure` records it.
   - The order constraint and the stale-window item keep them from going dark during the move.
+  - The window hides none of the three moved findings. It can hide `cred.unknown-class`, which
+    isn't an exposure finding, for a credential whose exposure was resolved in the container; the
+    cut-over's window item checks those credentials (fix round 2).
   - I saw no secret value anywhere.
 - **Infra Brain 212 (HTTPS for public FQDNs):** doesn't apply; docs only.
 
@@ -230,3 +233,69 @@ These are for HQ. I didn't act on them because the brief says to change no other
 - **Decision item 2 is incomplete.** It says "`record-rotation` reads the list and the state
   file". `record-rotation` also reads every registry file the list names (line 119). That isn't
   a credential read, so the item's claim that it needs no new credential still holds.
+
+## Fix round 2 (worker W-208)
+
+Fixes the two false sentences HQ's Opus re-review found, plus two completions. ADR fix commit:
+`b57f67c5` (parent `51045612`, the PR head before this round; `git fetch` showed nothing later
+before the push). All lines are in
+`docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` at `b57f67c5`. I
+read every cited line at its commit (infraops-mcp-server `c3359bf`, orchestrator `a410af18`)
+before writing it.
+
+### Changes
+
+1. **Context, lines 3484-3492 (was false).** "The state file only clears findings" and "A stale
+   state file can therefore only over-report" are replaced. The bullet now says the following:
+   - A resolved exposure clears `cred.exposure-rotate`.
+   - A recorded rotation or revoke clears `cred.rotation-age` and `cred.rotation-requested`.
+   - An exposure the state still shows open also suppresses that credential's
+     `cred.unknown-class`, `cred.rotation-age` and `cred.rotation-requested` (the `continue` at
+     `cred-rotation.ts` line 249).
+   - So a stale state file over-reports the three state-dependent findings, and can hide
+     `cred.unknown-class` for a credential whose exposure it still shows open.
+
+   The citation widens from 237-238 to `cred-rotation.ts` lines 140-144, 201-211 and 237-262.
+2. **Window verify item, lines 3640-3648 (was false).** "Because the state only clears findings,
+   the window can over-report but never hides one" is replaced. The window over-reports the three
+   moved findings and hides none of them. It can hide `cred.unknown-class` for a credential whose
+   exposure was resolved in the container: the Mac's frozen copy still shows it open. The Mac
+   scan suppresses the finding whether or not the credential is handed over, because
+   `scanFindings` withholds only the three trigger checks (`cred-rotation.ts` lines 310-315,
+   `ROTATION_TRIGGER_CHECKS` at 301-305). The proposer's pass doesn't report it either
+   (`rotation_proposer/findings.py` line 60 at `a410af18`, `NOT_ROTATIONS`). The cut-over now
+   lists each exposure resolved in the window and shows that its credential's class has a
+   rotation policy.
+3. **Decision item 2, lines 3528-3530.** `record-rotation` reads "the list, the registry files the
+   list names and the state file" (`security-drift-cli.ts` line 119, `loadCredConsumerFiles`).
+4. **Citation, decision item 3 "Order", lines 3551-3552.** "The scan reads a missing state file as
+   an empty one" now cites `loadRotationState` (`cred-rotation.ts` line 152) on
+   `loadValidated0600Json`'s missing-file case (`validated-store.ts` line 27). `credScan` calls
+   `loadRotationState` with no existence guard (`security-drift-cli.ts` line 137). The old
+   citation, lines 167-170, is a comment in `doCredFindings`.
+
+`git diff --word-diff` against `51045612` shows no other word changed. The other changed lines
+are reflow only, to keep the paragraphs at the file's width.
+
+In this report, the Infra Brain 1032 bullet under "Standards followed" gains a sub-bullet: the
+window hides none of the three moved findings but can hide `cred.unknown-class`, which the
+cut-over's window item checks. The summary at lines 53-54 ("the state file only clears findings,
+so the window over-reports but never hides one") is superseded by change 2; I left it as written.
+
+### Checks
+
+- `make check` on the committed tree `b57f67c5`, with database `orchestrator_test_hq_w_208`:
+  exit 0, `10 workers [15335 items]`, 15334 passed, 1 skipped.
+- Security scan from the repo root: 0 BLOCK, 2 WARN, 1 INFO, the standing findings.
+- CI on `b57f67c5`: all three checks pass (run `44210855769`). The Quality job log reads
+  `4 workers [15434 items]` and `15411 passed, 23 skipped`. CI collects more items than the local
+  run because the environments differ, and more than round 1's CI run (15388); neither run failed
+  a test.
+
+### Concerns
+
+- **An open exposure also masks age and request.** The new Context bullet says a stale file
+  over-reports the three state-dependent findings. For a credential whose exposure the stale file
+  still shows open, `cred.rotation-age` and `cred.rotation-requested` are suppressed too. They
+  stay behind that credential's own `cred.exposure-rotate` finding, which is reported, so the
+  credential isn't dark. I kept the brief's wording and didn't add this.
