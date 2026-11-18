@@ -149,3 +149,84 @@ These are listed in the PR body:
   - The order constraint and the stale-window item keep them from going dark during the move.
   - I saw no secret value anywhere.
 - **Infra Brain 212 (HTTPS for public FQDNs):** doesn't apply; docs only.
+
+## Fix round 1 (worker W-207)
+
+Fixes HQ's Opus whole-branch review: two blocking findings and three factual corrections. ADR
+fix commit: `d5778590` (parent `25cd0ae9`, the PR head before this round; `git fetch` showed
+nothing later before the push). All lines are in
+`docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` at `d5778590`.
+
+### Changes
+
+1. **The scan's other credential findings (blocking), decision item 3, lines 3530-3541.** The
+   amendment no longer says those findings don't read the state file. It now says that today two
+   of them depend on it:
+   - `credScan` loads the state inside the same `try` as the list (`security-drift-cli.ts`
+     135-156, comment 272-274), so a state file that fails the check raises `cred.registry-error`.
+   - `cred.unknown-class` is reached only after the open-exposure `continue` (`cred-rotation.ts`
+     237-262).
+
+   After the infraops change, `cred.registry-error` comes from reading the list and its registry
+   files only. A volume copy that fails the check makes the proposer's pass exit 2, so the
+   integrity signal keeps a home.
+
+   The infraops verify item (lines 3637-3646) adds that `cred.unknown-class` must not change for
+   a credential with an open exposure, or the pull request states what changes and why.
+2. **The third writer's check (blocking), cut-over verify item, lines 3615-3627.** The item now
+   covers `resolve-exposure` and `record-rotation` in the container. It cites `doRecordRotation`'s
+   read of the list and every registry file (`security-drift-cli.ts` line 119). It also says the
+   CLI is in the per-pass infraops clone that the launcher deletes at the start and end of each
+   pass (`run-rotation-proposer.sh` 230-251 and 284-287 at `9052f7f8`), and it requires the
+   cut-over to state where the CLI and the listed registry files are between passes.
+3. **The lanes list, decision item 5, lines 3585-3587.** `rotation-proposer` joined the token's
+   `lanes` list in #734 (`9052f7f8`, `.bws-secrets.toml` lines 287-290), as `bump-proposer` did in
+   #733 (`a410af18`).
+4. **D-61's words, decision item 2 (lines 3520-3523) and decision item 5 (lines 3587-3589).** Only
+   `resolve-exposure` carries D-61's label. The person's `record-rotation` "runs the same way and
+   adds no credential, scope or network path".
+5. **Citations, each checked at its cited commit:**
+   - `rotation-proposer.md` 122-125 (line 3480);
+   - alert-hub `validate.ts` line 99 at `2218702` (line 3561);
+   - `scanFindings` at `cred-rotation.ts` lines 310-315 (line 3495).
+
+No other text changed.
+
+### Checks
+
+- `make check` on the committed tree `d5778590`, with database `orchestrator_test_hq_w_207`:
+  exit 0, 15335 collected, 15334 passed, 1 skipped.
+- Security scan from the repo root: 0 BLOCK, 2 WARN, 1 INFO. These are the standing findings,
+  unchanged by a docs-only diff.
+- CI on `d5778590`: all three checks pass (run `44205367479`). The Quality job log reads
+  `4 workers [15388 items]` and `15365 passed, 23 skipped`. CI's collected count differs from the
+  local count because the two environments differ; neither run failed a test.
+
+### Notes on method
+
+- The brief's `git reset --hard origin/hq/adr-0059-a12-rotation-state` was denied by the
+  permission layer. I reached the same state with
+  `git switch -C hq/adr-0059-a12-rotation-state-fix-1 origin/hq/adr-0059-a12-rotation-state`; the
+  branch held no work.
+- The brief cites `src/security-drift/security-drift-cli.ts`. At infraops `c3359bf` that file is
+  `src/cli/security-drift-cli.ts`, as the ADR already cites it. The content at the brief's line
+  numbers matched.
+
+### Concerns
+
+These are for HQ. I didn't act on them because the brief says to change no other text.
+
+- **Where the listed registry files are in the container is undecided.** #734's report
+  (`docs/superpowers/reports/lanes-inc-4-rotation-proposer-report.md` at `9052f7f8`, "The list
+  file: not built, and why") says the Mac list names four paths. Of those, only
+  infraops-mcp-server's file exists in the container before `cred-findings` runs: the mirrors are
+  bare and fetched later. That is why the verify item asks the cut-over to state where the files
+  are, rather than claiming they're in the per-pass clones as the brief said.
+- **A stale copy can now hide one finding.** The Context says "a stale state file can therefore
+  only over-report", and the window item says the window "never hides one". Both hold for the
+  three moved findings, but not for `cred.unknown-class`: in the window, an exposure resolved in
+  the container is still open in the Mac's frozen copy. The Mac scan's `continue` then suppresses
+  `cred.unknown-class` for that credential.
+- **Decision item 2 is incomplete.** It says "`record-rotation` reads the list and the state
+  file". `record-rotation` also reads every registry file the list names (line 119). That isn't
+  a credential read, so the item's claim that it needs no new credential still holds.
