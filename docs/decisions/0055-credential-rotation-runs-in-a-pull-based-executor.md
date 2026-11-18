@@ -4107,9 +4107,9 @@ phase, before the SDS goes into production.
      - **infraops `vps_exec`.** It runs any shell command on prod over SSH as `VPS_USER`, which
        defaults to `root` (infraops-mcp-server `src/services/ssh-client.ts`, lines 30-33;
        `src/tools/vps.ts`, lines 34-72), and no file in that repository sets another user. Every
-       session with infraops connected holds it, through the infraops SSH key on the Mac, so any
-       process running as Devon's user on the Mac reaches the root token's file, as it reaches the
-       VM today.
+       session with infraops connected holds it, through the infraops SSH key on the Mac. So any
+       process that can use that key reaches the root token's file, as a process running as
+       Devon's user reaches the VM today.
      - **Any other root login to the VPS host.**
    - **T1, as amended.** Whoever has root on the VPS host gets the executor's root identity: write
      on `Rotation / Keepers`, `Rotation / Work` and `Rotation / Inbox`, read on `Rotation / Admin`
@@ -4121,8 +4121,8 @@ phase, before the SDS goes into production.
      and the keepers of credentials that never reach the host. Holders of Coolify's terminal and
      SSH key and every infraops `vps_exec` holder are among those root holders. Devon accepts
      this residual (D-64 B, D-65 option 2). Today's T1, an agent session on the Mac reaching what
-     the executor holds, stays inside it, through `vps_exec` instead of `orb`. SYSTEM and VERIFIER
-     bearers stay outside the root's reach.
+     the executor holds, stays inside it, through `vps_exec` instead of `orb`. The SYSTEM and
+     VERIFIER bearers stay outside the executor's BWS identity's reach.
    - **Cut-over prerequisites: the root paths narrow first (D-65).** Before increment 7's cut-over,
      each of the following is its own decision for Devon, made later and not here: whether and how
      infraops `vps_exec` stops logging in as root, and whether and how Coolify's `localhost` server
@@ -4149,9 +4149,14 @@ phase, before the SDS goes into production.
        `database`. `_target` refuses it for `set` and `probe`, and `loaded` accepts it. Today
        `_target` requires all three keys for every verb.
      - One target per lane in the root-owned `targets.toml`. Each names the lane's container and
-       `BWS_ACCESS_TOKEN`, and the lane token's registry row names it as its `helper_target`.
-     - `bws_lane_token`'s `consumer_loaded` calls the helper's `loaded` for that target and
-       answers true only on an equal fingerprint. It no longer stops at the `PATCH`'s 2xx.
+       `BWS_ACCESS_TOKEN`. The lane token's registry row names it as its `helper_target`, as a
+       `postgres-role` row does (`adapters/postgres_role.py`, line 158). That's a row field, not
+       a destination identity field (`destinations.py`, `IDENTITY_FIELDS`).
+     - `bws_lane_token`'s consumer check calls the helper's `loaded` for that target in a
+       reissue's `verify` unit, and passes only on an equal fingerprint. An issue's `store` unit
+       runs `verify_consumers` right after its `PATCH`, before any restart
+       (`plans.derive_issue`), so it keeps amendment 19 item 7's proof, the `PATCH` answering
+       2xx. An issue has no revoke, so R10 doesn't reach it.
    - **Where the executor waits for the restart.** It waits in the `verify` unit
      (`verify_consumers`), unclaimed, as the mint and reader waits do
      (`docs/operations/rotation-executor.md`, lines 134-145; `worker.py::_take`). Each pass reads
@@ -4171,9 +4176,11 @@ phase, before the SDS goes into production.
      (`docs/operations/rotation-executor.md`, lines 164-167), so Devon's revoke now follows a
      machine read. After a leak, Devon still revokes first (D-26, amendment 19 item 10). The
      `loaded` read then proves the restarted container holds the new token, as it does on a
-     non-leak reissue. An issue has no revoke, so its plan is unchanged.
+     non-leak reissue. An issue's plan is unchanged.
    - **R10 is restored for lane tokens.** `retire_old` follows a machine `verify_consumers` for
-     every registered consumer, as decision 3 requires (lines 160-161). Amendment 19 item 7's
+     every registered consumer, as decision 3 requires (lines 160-161). That's Infra Brain 1032's
+     fail-safe, no revoke without attested consumers, now held by machine evidence instead of
+     HQ's report. Amendment 19 item 7's
      departure (lines 2370-2376, D-27) ends at increment 7's cut-over. The lane phases'
      `lanes-finish` and `lane-run --read` stay as the lane's own deploy checks, but they're no
      longer the revoke's precondition.
@@ -4230,7 +4237,7 @@ Each item names the step that verifies it.
 
 ### What it grants, and nothing more
 
-Nothing beyond D-63 C and D-64 B. No BWS identity, project, grant or scope is added or widened: the
+Nothing beyond D-63 C, D-64 B and D-65 option 2. No BWS identity, project, grant or scope is added or widened: the
 root keeps exactly its scope (Infra Brain 598). The executor's new home is a host user with no sudo
 and no `docker` group. It reaches root only through the existing helper key and forced command.
 The helper's consumers-only targets let it read one thing more: the fingerprint of each lane
@@ -4264,9 +4271,11 @@ Line numbers are at `ad721fc0`. This amendment edits none of them.
 | ADR-0055 asset table, the root's row (line 338) | Amended by item 2: the file is on the VPS host, readable by the executor and anything with root on that host. |
 | ADR-0055 T1 (line 350) | Amended by item 2. |
 | Amendment 1, T1 widened to control of production Coolify (lines 627-629) | Stands, inside item 2's T1. |
+| Amendment 2, the destination-list residual, "an agent on the Mac, already T1's accepted residual" (line 721) | Stands: that agent stays inside item 2's T1, through `vps_exec`. |
+| Amendment 12 item 7, the Mac instance's identity (lines 1495-1500) | Stands. The Mac's Keychain instance doesn't move. "The VM exists so an agent session on the Mac can't act as the executor" no longer holds after the cut-over, because `vps_exec` reaches the VPS host; item 2's T1 states that. |
 | Amendment 17 item 2, the helper (lines 2117-2127) | Stands, plus a consumers-only target for `loaded` (item 3). |
 | Amendment 17, the executor's reach (lines 2141-2142) and the helper key in `Rotation / Keepers` (lines 2152-2155) | Stand. The same key and path, from the same host (item 1). |
-| Amendment 19 item 1, "on the VM instance only" (line 2240) | Read as the BWS-store instance, which runs on the VPS host after the cut-over. Nothing else changes. |
+| Amendment 19 item 1, "on the VM instance only" (line 2240), and every later "the VM instance" or "the VM executor" in this ADR | Read as the BWS-store instance, which runs on the VPS host after the cut-over. Nothing else changes. |
 | Amendment 19 item 3, the departure for a reissue (lines 2284-2285) | Ends at the cut-over (item 3). |
 | Amendment 19 item 6, the executor never redeploys a lane (lines 2324-2352) | Stands. The session keeps `--token` (D-63 C). |
 | Amendment 19 item 7, what each side proves, and the departure (lines 2353-2376) | The executor's proof becomes the `loaded` fingerprint. The departure (lines 2370-2376) ends at the cut-over. |
