@@ -3481,10 +3481,15 @@ The file is read and written through infraops's `security-drift-cli.js`:
   also runs (step 4 of the manual checklist, `src/security-drift/cred-rotation.ts` lines 318-350,
   and `rotation-proposer.md` lines 105-107 for a rotation that answers an exposure); and
   `resolve-exposure` (`security-drift-cli.ts` lines 87-108), which a person runs.
-- The state file only clears findings. An exposure is declared in a registry's
-  `.cred-consumers.toml` (`spec.exposures`); the state records which exposures are resolved, each
-  credential's last recorded rotation, and so its recorded revoke (`cred-rotation.ts` lines
-  140-144, 201-211 and 237-238). A stale state file can therefore only over-report.
+- An exposure is declared in a registry's `.cred-consumers.toml` (`spec.exposures`); the state
+  records which exposures are resolved, each credential's last recorded rotation, and so its
+  recorded revoke. A resolved exposure clears `cred.exposure-rotate`. A recorded rotation or revoke
+  clears `cred.rotation-age` and `cred.rotation-requested`. An exposure the state still shows open
+  also suppresses that credential's `cred.unknown-class`, `cred.rotation-age` and
+  `cred.rotation-requested`: the scan reports the exposure and moves to the next credential
+  (`cred-rotation.ts` lines 140-144, 201-211 and 237-262). So a stale state file
+  over-reports the three state-dependent findings, and can hide `cred.unknown-class` for a
+  credential whose exposure it still shows open.
 - Every read goes through `loadValidated0600Json`, which refuses a file that isn't a regular file
   at mode 0600 owned by the reading uid, and every write is an atomic rename at mode 0600 owned by
   the writer (`src/security-drift/validated-store.ts`).
@@ -3521,9 +3526,9 @@ lines 8-9), so today its pass raises nothing for them.
      with no new network path (D-61's words). A person's `record-rotation`, for a credential not
      handed over, runs the same way and adds no credential, scope or network path. Neither needs a
      new credential: `resolve-exposure` reads only the state file, and `record-rotation` reads the
-     list and the state file; neither reads BWS, change-manager or alert-hub
-     (`security-drift-cli.ts` lines 87-126). The command runs as the container's own user, so the
-     file it writes stays owned by the uid the lane's pass reads with.
+     list, the registry files the list names and the state file; neither reads BWS,
+     change-manager or alert-hub (`security-drift-cli.ts` lines 87-126). The command runs as the
+     container's own user, so the file it writes stays owned by the uid the lane's pass reads with.
 3. **The Mac scan.** infra-drift's 03:00 credential scan (`credScan`, `security-drift-cli.ts`
    lines 130-157 and 275-279) stops reading the state file, through an infraops change in
    infraops-mcp-server, and stops raising `cred.exposure-rotate`, `cred.rotation-age` and
@@ -3543,11 +3548,11 @@ lines 8-9), so today its pass raises nothing for them.
    **Order.** The infraops change merges only after the rotation proposer's VPS pass reports those
    three findings for credentials not handed over (decision item 4), so no finding goes dark.
    Until it merges, the Mac copy stays in place, unchanged: the scan reads a missing state file as
-   an empty one (`security-drift-cli.ts` lines 167-170 and `validated-store.ts`'s missing-file
-   case), so a deleted Mac copy would bring every resolved exposure back as an URGENT item. Once
-   the infraops change merges, nothing reads the Mac copy, so it is no moved lane's input under
-   lines 1299-1301. This amendment doesn't decide whether it is then deleted; deleting it changes
-   nothing any pass reads.
+   an empty one (`loadRotationState`, `cred-rotation.ts` line 152, on `loadValidated0600Json`'s
+   missing-file case, `validated-store.ts` line 27), so a deleted Mac copy would bring every
+   resolved exposure back as an URGENT item. Once the infraops change merges, nothing reads the
+   Mac copy, so it is no moved lane's input under lines 1299-1301. This amendment doesn't decide
+   whether it is then deleted; deleting it changes nothing any pass reads.
 4. **Signals.** Each moved finding keeps a machine home (ADR-0021 amendment 1). The rotation
    proposer's pass raises the three findings for each credential not handed over through
    alert-hub, as the `sds-bridge` sender it already reads on a `--submit` pass
@@ -3632,10 +3637,15 @@ item 2), the infraops change, or the rotation proposer's cut-over (step 3f-5).
   arrives in a registry is reported by both the scan and the proposer's pass. The scan's checklist
   still tells a person to run `record-rotation` or `resolve-exposure` on the Mac; such a write
   never reaches the volume, so the proposer's pass over-reports that credential until the write is
-  repeated in the container. Because the state
-  only clears findings, the window can over-report but never hides one. The infraops change
-  merges only once the proposer's VPS pass covers those findings; the cut-over states the pass
-  that showed it.
+  repeated in the container. The window over-reports the three moved findings and hides none of
+  them. It can hide `cred.unknown-class` for a credential whose exposure was resolved in the
+  container: the frozen copy still shows that exposure open, so the Mac scan suppresses the
+  finding, whether or not the credential is handed over (`scanFindings` withholds only the three
+  trigger checks, `cred-rotation.ts` lines 310-315), and the proposer's pass doesn't report it
+  (`rotation_proposer/findings.py` line 60, `NOT_ROTATIONS`). The cut-over lists each exposure
+  resolved in the window and shows that its credential's class has a rotation policy. The
+  infraops change merges only once the proposer's VPS pass covers those findings; the cut-over
+  states the pass that showed it.
 - **The Mac scan's read is off only after the VPS pass covers the findings (the infraops change).**
   The infraops pull request cites the VPS pass that raised the three findings for credentials not
   handed over, or showed none due, and its tests prove the scan reads no state file and still
