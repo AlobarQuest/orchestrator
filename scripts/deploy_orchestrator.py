@@ -956,6 +956,7 @@ LANE_CHECKS: dict[str, str] = {
     "estate-landing": "sds-estate-landing",
     "execution-watch": "sds-execution-watch",
     "fork-harden": "sds-fork-hardening",
+    "follow-up-mint": "sds-follow-up-mint",
     "fork-sync-watch": "sds-fork-sync-watch",
     "inert-landing": "sds-inert-landing",
     "landing-ledger": "sds-landing-ledger",

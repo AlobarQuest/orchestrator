@@ -1198,6 +1198,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         "bump-driver",
         "bump-proposer",
         "estate-landing",
+        "follow-up-mint",
         "inert-landing",
         "rotation-proposer",
     }

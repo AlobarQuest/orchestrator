@@ -1,0 +1,12 @@
+# sds-lane-follow-up-mint's schedule: one pass a day at 06:43, in the image's America/New_York
+# time. The lane has no Mac job to follow. 06:43 is after infra-drift's 03:00 audit, which mints
+# on the Mac until infraops-mcp-server drops that step, so on a day both run the lane's pass finds
+# what the audit minted `already_minted`. It is outside estate landing's 02:00 to 06:00 window,
+# which a lane's quiet slot avoids. Minute 43 is one no other lane starts on: the unit verifier
+# runs on 2-52/10, execution-watch on */15, the estate lander on 16, the deploy watcher on 20, the
+# change proposer on 35, the inert lander on 37, the revision watcher on 40, the rotation
+# decomposer on 50 and the bump driver on 51, and the daily lanes on 06:31, 06:55, 07:05, 07:25,
+# 07:30 and 07:47. Daily, as Amendment 10 decides: a follow-up is due in days, not hours. The line
+# carries no flag: the launcher takes none, and every pass mints.
+# The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+43 6 * * * lane-run follow-up-mint
