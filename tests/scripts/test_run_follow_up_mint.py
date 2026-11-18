@@ -149,8 +149,21 @@ def test_no_secret_is_a_process_argument() -> None:
     the launcher reads with `sds_bws_value`'s one-argument form and hands the CLI only the key."""
     text = LAUNCHER.read_text()
     assert 'sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")' in text
-    call = next(line for line in text.splitlines() if "/.venv/bin/orchestrator" in line)
-    assert "TOKEN" not in call
+    # The whole call, its continuation lines joined.
+    joined = text.replace("\\\n", " ")
+    call = next(line for line in joined.splitlines() if "/.venv/bin/orchestrator" in line)
+    assert call.split() == [
+        '"$REPO_ROOT/.venv/bin/orchestrator"',
+        "mint-follow-ups",
+        "--idempotency-key",
+        '"$IDEMPOTENCY_KEY"',
+        "--json",
+        ">",
+        '"$SDS_OUTCOME_REPORT"',
+        "2>&1",
+    ]
+    key = next(line for line in text.splitlines() if line.startswith("IDEMPOTENCY_KEY="))
+    assert key == 'IDEMPOTENCY_KEY="follow-up-mint:$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
     assert "/usr/bin/security" not in text
     assert re.search(r"\bgh\b", text) is None
 
