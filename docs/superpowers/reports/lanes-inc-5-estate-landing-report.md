@@ -39,7 +39,7 @@ GitHub App, GHCR, Coolify, change-manager, orchestrator, alert-hub or Healthchec
     `estate_lander` import row, as the inert lander's row already has it, for
     `bump_proposer.landing_policy`. **This file isn't in the handoff's file list.** I edited it as
     one of `src/estate_lander`'s tests, because it guards that package's imports, and the parallel
-    worker's fence doesn't include it. See concern 7.
+    worker's fence doesn't include it. See concern 2.
 - `layers.toml`: the new launcher test file.
 - Docs: `docs/operations/deploy.md` gains the estate lander's lane paragraph and its remaining
   cut-over steps, after the inert lander's. `docs/operations/credentials.md` gains the holder
@@ -134,6 +134,10 @@ concerns section.
   - Preset overrides are still honoured.
   - An unreadable Coolify token logs the old line and leaves the variable empty.
   - The exit codes pass through.
+- Neither `scripts/com.devon.estate-landing.plist` nor `scripts/install-estate-landing-launchd.sh`
+  sets `BWS_ACCESS_TOKEN` (grep), so the launchd job always takes the Mac path. A hand run on the
+  Mac with `BWS_ACCESS_TOKEN` exported takes the container branch: with no `LANDER_STATE_DIR` it
+  exits 1 before reading anything. That is #736's behaviour too.
 - `test_the_coolify_url_is_the_tailnet_default` pins `DEFAULT_COOLIFY_URL ==
   "http://100.92.138.19:8000"`. `src/estate_clients/confined.py` isn't touched.
 
@@ -141,9 +145,9 @@ concerns section.
 
 - Targeted: `tests/scripts/test_run_estate_landing.py`, `tests/estate_lander`,
   `tests/architecture/test_landing_edges.py`, `tests/scripts/test_deploy_lanes.py`,
-  `tests/scripts/test_run_inert_landing.py` and `tests/architecture/test_layer_manifest.py`: 472
-  passed. The first layer-manifest run failed only because the new file was untracked; it passed
-  after the commit.
+  `tests/scripts/test_run_inert_landing.py` and `tests/architecture/test_layer_manifest.py`: 469
+  passed and 1 failed. The failure was the layer-manifest test, because the new file was still
+  untracked; its three tests passed after the commit.
 - Mutation check of the new guards (9 mutations, each restored, `__pycache__` cleared): 9 killed, 0
   survived. The mutations were:
   - dropping `contents` on `--submit`;
@@ -155,10 +159,12 @@ concerns section.
   - allowing an empty deploying population;
   - printing the inert population too;
   - deriving the list with the lane's token.
-- `make check` on database `orchestrator_test_hq_w_210`: green, with 15484 passed and 1 skipped
-  (15485 collected). The first two runs failed, and I fixed each cause: one E501 line in the new
-  docstring, one unformatted test file, and the `estate_lander` import row in
-  `test_out_of_process_isolation.py` (see concern 7).
+- `make check` on database `orchestrator_test_hq_w_210`: green, with 15484 passed and 1 skipped.
+  pytest printed no collected line, so I added the two. The first three runs failed, and I fixed
+  each cause in turn: one E501 line in the new docstring, one unformatted test file, and the
+  `estate_lander` import row in `test_out_of_process_isolation.py` (see concern 2). That row's rule
+  (the test's docstring, item 2) asks only that a new dependency be written in the row beside its
+  reason, which it is.
 
 ## Report-don't-fix findings
 
@@ -185,7 +191,11 @@ Two read-only probes would settle it:
 1. The anonymous exchange from the lane container:
    `curl -s -o /dev/null -w '%{http_code}' 'https://ghcr.io/token?scope=repository:alobarquest/<image>:pull&service=ghcr.io'`
    for each deploying repository's image. Today those are `brain` and `change-manager`, as the
-   policy declares them, and the image names come from Coolify.
+   policy declares them, and the image names come from Coolify. Follow it with a manifest `HEAD`
+   using the returned token. Run both first on `sds-lanes` (public) and `orchestrator` (private).
+   Nothing shows yet that the exchange's status code alone separates public from private, so an
+   estate image's result is read only against those two controls. `curl` is in the lane image
+   (`lanes/Dockerfile` line 53).
 2. An in-process `Registry(token).digest(image, tag)` with a token minted in-process, printing only
    the outcome type. That is a live mint, so it is HQ's or an interactive session's act, not mine.
 
@@ -356,31 +366,40 @@ code for any of them:
    and is unverified either way.** If it fails, the container can't point production back after a
    bad landing. That is loud (`landing-not-pointed-back` or `landing-production-pinned`), but it
    happens at the worst moment, and no pass before then exercises it. HQ needs to run probe 1
-   (anonymous, read-only) before the cut-over turns the schedule on. If an image is private, the
-   registry client's authentication, or that image's visibility, becomes a decision for Devon. The
-   handoff says not to change the client.
-2. **The lander gains a read of `GET /api/landing-policy`.** It's the same host and the same
-   READ-scoped credential, the route the inert lander, bump proposer, and membership check already
-   read with this bearer. I don't read it as a new network path, identity, or scope, but it widens
-   the estate lander's outbound table by one route. `test_landing_edges.py` records it, and HQ may
-   want to confirm.
-3. **A record a person approves outside the policy's deploying population is outside the minted
-   token.** Its watch row's listing is held as unreadable, and its compare fails to "not at or
+   (anonymous, read-only, with the `sds-lanes` and `orchestrator` controls) before the cut-over
+   turns the schedule on. If an estate image is private, the registry client's authentication, or
+   that image's visibility, becomes a decision for Devon. The handoff says not to change the client.
+2. **Deriving the repository list in `estate_lander` widened two guards.**
+   - `test_landing_edges.py`: the lander gains a read of `GET /api/landing-policy`. It's the same
+     host and the same READ-scoped credential, the route the inert lander, bump proposer and
+     membership check already read with this bearer. I don't read it as a new network path,
+     identity or scope, but it widens the estate lander's outbound table by one route.
+   - `test_out_of_process_isolation.py`: the `estate_lander` row gains `bump_proposer`, for
+     `bump_proposer.landing_policy`, as the inert lander's row has. **This file is outside the
+     handoff's file list.** I edited it as one of `src/estate_lander`'s tests, because it guards
+     that package's imports, and the parallel worker's fence doesn't include it. If HQ reads the
+     fence strictly, the alternative is to move the deploying-population read out of
+     `estate_lander`, which I judged worse.
+3. **A watch row whose repository isn't in the policy's deploying population is outside the minted
+   token.** Two routes lead there:
+   - A later policy version drops a repository while its watch row persists. This is the more
+     ordinary route.
+   - A person approves a record outside the policy.
+
+   Either way, that row's listing is held as unreadable, and its compare fails to "not at or
    after". That compare failure starts its applications' deploy again on each submitting pass that
    restores it. On the Mac, `gh auth token` reaches any repository, so this is a container-only
-   difference. I know of no such record. The docstring of `repositories()` states it.
+   difference. I know of no such row today. The docstring of `repositories()` states it. The
+   change-manager citation (`app/deploy_policy.py` ~689) comes from the local checkout at
+   `~/Projects/change-manager`, commit `82f1456`, read-only.
 4. **ADR-0059's lane-state row for `estate-landing` (line 339) names `held-since.json` and
    `alerts.json` only.** The estate lane also writes `revert-alerts.json`
    (`sync_revert_alerts("estate-landing", …)`). The compose comment and deploy.md's cut-over copy
    step name all three. The ADR row needs an amendment, which is outside my fence.
 5. **Standards gap:** the quoted Code Brain rule 3 doesn't say whether shell launchers' stderr lines
    must be JSON. I followed the existing launchers.
-7. **The file fence:** `tests/architecture/test_out_of_process_isolation.py` is outside the
-   handoff's listed files. The new import needed a one-entry row change there (see "What
-   changed"). If HQ reads the fence strictly, the alternative is to move the deploying-population
-   read out of `estate_lander`, which I judged worse.
-6. The handoff's fact "the change-manager READ credential … every pass" and the other facts
-   matched the source.
+6. The handoff's other facts matched the source: the UUIDs, the App id, the Coolify default and
+   guard lines, the Dockerfile's state directory, the check name, and the crontab minutes.
 
 ## Cut-over steps that remain
 

@@ -951,8 +951,11 @@ its own change or act. It moves outside the 02:00 to 06:00 New York landing wind
    - Coolify reach: `curl -fsS http://100.92.138.19:8000/api/health` (no token), as G-73 did from
      the revision watcher's container.
    - GHCR reach and each estate image's visibility: the anonymous exchange,
-     `curl -s -o /dev/null -w '%{http_code}' 'https://ghcr.io/token?scope=repository:alobarquest/<image>:pull&service=ghcr.io'`
-     for each deploying repository's image.
+     `curl -s -o /dev/null -w '%{http_code}' 'https://ghcr.io/token?scope=repository:alobarquest/<image>:pull&service=ghcr.io'`,
+     followed by a manifest `HEAD` with the token it returns, for each deploying repository's
+     image. Run it first on the two images whose visibility is recorded (D-23): `sds-lanes`, which
+     is public, and `orchestrator`, which is private. An estate image's result means public or
+     private only if those two controls answer differently.
    Neither proves the minted token's pull or the Coolify token's authority; only a `--submit` pass
    with a bad landing in the watch uses them.
 8. Cut-over steps 2 onward:
