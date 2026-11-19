@@ -1244,10 +1244,9 @@ healthchecks_check = "sds-work-carrier"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
 # ── The bump-proposer lane's token and ping URL (ADR-0059 increment 4) ───────────
-# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
-# for its first issue by `rotate_requested`; a later change dates the ping URL's row, once the
-# token's `store` unit completes, so the two issue units never wait on a mint at once. Both keepers
-# were created in Rotation / Keepers at HQ gate G-75, which also gave the lane's reads on its eight
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
+# first issue by `rotate_requested`. The ping URL's row is dated only after the token's `store` unit
+# completed, so the two issue units never waited on a mint at once. Both keepers were created in Rotation / Keepers at HQ gate G-75, which also gave the lane's reads on its eight
 # secrets to the `bump-proposer` machine account D-54 created. That account's Mac token has its own
 # row, `bws-bump-proposer-token` (a `bitwarden-sm` row, not rotated by the SDS), so the lane token
 # is a second token of the same account, with the same reach.
@@ -1280,7 +1279,6 @@ reach_projects = []
   redeploy = false
   note = "the sds-lane-bump-proposer service's variable; the lane phases redeploy it, never the executor"
 
-# Not yet due: a later change adds `rotate_requested`, once the token's `store` unit completes.
 # No `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "bump-proposer-ping-url"
@@ -1288,6 +1286,7 @@ class = "healthchecks-ping-url"
 provider = "healthchecks-ping-url"
 bws_uuid = "786f75e2-3d02-4667-8607-b50601312a9d"
 rotated_by_sds = true
+rotate_requested = "2026-11-19"
 # The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
 # keeps the check it pinged from the Mac (ADR-0059 decision 3).
 healthchecks_check = "sds-bump-proposer"
@@ -1298,9 +1297,9 @@ healthchecks_check = "sds-bump-proposer"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
 # ── The rotation-proposer lane's token and ping URL (ADR-0059 increment 4) ───────
-# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
-# for its first issue by `rotate_requested`; a later change dates the ping URL's row, once the
-# token's `store` unit completes. Both keepers were created in Rotation / Keepers at HQ gate G-75,
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
+# first issue by `rotate_requested`. The ping URL's row is dated only after the token's `store` unit
+# completed, so the two issue units never waited on a mint at once. Both keepers were created in Rotation / Keepers at HQ gate G-75,
 # which also created the `rotation-proposer` machine account and gave it the lane's reads on its
 # five secrets.
 # Neither row carries `created`, for the reason the landing ledger's block gives.
@@ -1331,7 +1330,6 @@ reach_projects = []
   redeploy = false
   note = "the sds-lane-rotation-proposer service's variable; the lane phases redeploy it, never the executor"
 
-# Not yet due: a later change adds `rotate_requested`, once the token's `store` unit completes.
 # No `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "rotation-proposer-ping-url"
@@ -1339,6 +1337,7 @@ class = "healthchecks-ping-url"
 provider = "healthchecks-ping-url"
 bws_uuid = "506a5436-4643-4040-8a8b-b50601312be2"
 rotated_by_sds = true
+rotate_requested = "2026-11-19"
 # The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
 # keeps the check it pinged from the Mac (ADR-0059 decision 3).
 healthchecks_check = "sds-rotation-proposer"
