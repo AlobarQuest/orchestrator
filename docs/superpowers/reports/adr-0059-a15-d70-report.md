@@ -45,6 +45,8 @@ call (no infraops, Coolify or BWS), no production act, no merge.
   existed and before the review fixes (`PGTZ=UTC`, fixture
   `SECURITY_STANDARDS_DIR`): exit 0. Lint "All checks passed", pyright 0 errors, pytest 15,832
   passed, 1 skipped, 15,833 items collected.
+- `tests/architecture` (layer manifest included) against `orchestrator_test_hq_w_234`, on the
+  committed tree with the fixes and this report (`git status` clean): 2,089 passed.
 - Security scanner from the repo root (`--category security`): 0 BLOCK, 2 WARN, 1 INFO.
 - Line and quote checks, each at the commit named:
   - D-70 at sds-hq `8cc39b0` line 13: quoted verbatim (compared mechanically, whitespace
