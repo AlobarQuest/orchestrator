@@ -296,3 +296,12 @@ amendment 1). Two rows follow, the CLI's first.
   `set-allow-volatile-features`) tell a person to run `npx modern-web-guidance@latest ...`. That
   text is in `modern-web.mjs`, a tarball file no rule reaches; the hardened skill tells an agent
   never to run such a command and to tell the user instead.
+
+## Amendment 6 — The tool installer moves to localops (2026-11-19)
+
+The tool installer leaves SDS for `AlobarQuest/localops`, Devon's repository for Mac-only tools,
+under ADR-0059 Amendment 16 (D-57 A). It moves with the same function. The copy drops its two
+orchestrator calls (the factory-policy read and the `tool_revision` observation write), and
+localops keeps its own change window (D-71). This ADR's decisions keep governing the installer in
+localops until localops records its own, except where those cuts change them: "The record" no
+longer writes an orchestrator observation, and the window is localops' own.

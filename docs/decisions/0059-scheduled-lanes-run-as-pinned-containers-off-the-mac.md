@@ -4491,3 +4491,310 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Amendment 14's table row on increment 8's identity question, "except the Coolify window token's permissions, which are open under D-70" (line 4375) | Superseded: answered by decision item 1 (D-70 A). |
 | Amendment 14's table row on Amendment 9's rows, "the Coolify window token among them is open under D-70" (line 4384) | Superseded: answered by decision item 1. The rest of the row stands. |
 | Amendment 14's title, "on its own narrow credentials" (line 4003) | Not renamed. Inaccurate for the production Coolify token (Context): that token is the lane's own but team-wide. |
+
+## Amendment 16 (2026-11-19): the fork chain leaves SDS for localops (D-57 A)
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
+  D-12). The ADR's own status is unchanged.
+- **Decided by:** Devon, on 2026-11-16, answering HQ D-57 (sds-hq `state/decisions.md` at
+  `27984a2`, line 26). The question and its recorded answer, in full:
+
+  > **D-57** Fork supply-chain chain (fork-sync-watch, fork-harden, tool-installer) runs inside
+  > orchestrator from Mac launchd jobs, and the membership check treats the forks as SDS members.
+  > D-35 kept them on the Mac but inside SDS. Should they come out of SDS, and by when? (A) The
+  > whole chain moves out of orchestrator into a local, non-SDS tool on the Mac, and the forks
+  > leave SDS membership; done before Phase 1 closes. (B) Only fork-harden moves out. (C) A
+  > separate project after Phase 1. — A. Devon, in an interactive session: "It turns out that the
+  > fork hardening IS running as part of orchestrator. We will need to pull that out, and replace
+  > the functionality on my local machine, by the time SDS is move to the VPS. I dont think we
+  > need to be having the VPS manage local dev environment on my mac." Then chose the whole chain
+  > (fork-sync-watch, fork-harden, tool-installer, and the forks out of SDS membership) and before
+  > Phase 1 closes. (2026-11-16T19:31:25.743344+00:00)
+
+  Devon's direction of 2026-11-19, in an interactive session, set the shape of the move. sds-hq
+  `state/goal.md` at `27984a2` records it under step 3k (line 42); it's that session's record, not
+  a quote. Devon then answered HQ D-71 on 2026-11-19 (sds-hq `state/decisions.md` at `beda28c`,
+  line 13). D-71's recorded answer, in full:
+
+  > (1) A. Same function, not same code: the copy drops the SYSTEM factory-policy read (localops
+  > keeps its own window), the OBSERVER observation write, and the member-record scope (localops
+  > keeps its own fork list); no SYSTEM or OBSERVER bearer in localops. HQ plans the cuts without
+  > asking again. (2) Moot: the interactive session created AlobarQuest/localops (private) on
+  > 2026-11-19. (2026-11-19T12:23:16.403637+00:00)
+
+  HQ's relay of that answer to this amendment's author adds the interim: the `sds-bridge` alert
+  token and the broad account's four reads stay as they are until task (5), and the shared
+  packages are copied into localops, not imported. D-71's question says the same of the broad
+  account's reads ("In both, localops keeps the broad account's four reads above until task (5)
+  moves the App key").
+- **Relates to:** Amendment 3 (lines 1885-2131), which this amendment supersedes in part;
+  decisions 3, 4 and 5; increment 6; the year plan (sds-hq `plan/year-plan.md` at `27984a2`, lines
+  32, 55 and 57); ADR-0042, ADR-0056 and ADR-0057; ADR-0058 (member-record changes).
+
+Line numbers in this amendment are this file's at orchestrator `4046d953`, before the amendment was
+appended, unless another commit is named. The amendment appends only: no passage before it is
+rewritten. Where it and an earlier passage disagree, this amendment governs once it's accepted.
+
+### Context
+
+Amendment 3 (D-35 option 1) kept `fork-sync-watch` and `fork-harden` on the Mac as SDS lanes, on
+the tool installer's grounds: their subject is this Mac's tool chain (decision item 1, lines
+1943-1960). It kept the forks as members (decision item 4, lines 2017-2030). Decision 4 already
+kept `tool-installer` on the Mac inside SDS (lines 745-756).
+
+D-57 A takes all three out of SDS. The year plan states the move. Its Phase 1 summary reads "fork
+sync, hardening and tool install leave the SDS" (line 32). Its Phase 1 list says to take them "out
+of the orchestrator into a local tool on Devon's Mac, outside the SDS, and take the forks out of
+SDS membership" (line 55). Its done-when adds that "the forks are no longer SDS members" (line 57).
+
+The three jobs aren't only Devon's `gh` login today. At `4046d953`:
+
+- `fork-sync-watch` reads GitHub through `gh` alone (`scripts/run-fork-sync-watch.sh`, lines
+  30-32).
+- `fork-harden` reads the OBSERVER bearer (`f793576f-…`) through the narrow `sds-operator`
+  identity, then takes its scope from the member record with `scripts.sds_scope granted
+  security_patches` (`scripts/run-fork-harden.sh`, lines 28-35 and 71-89).
+- `tool-installer` reads the SYSTEM bearer (`221a48d5-…`), the OBSERVER bearer and the
+  `sds-bridge` alert sender token (`b415d03b-…`), all through the narrow identity
+  (`scripts/run-tool-installer.sh`, lines 59-61 and 89-135). It reads `GET
+  /api/v1/factory-policy` with SYSTEM for the change window
+  (`src/tool_installer/policy_client.py`). It writes `tool_revision` observations with OBSERVER
+  (`src/tool_installer/orchestrator_client.py`, `src/tool_installer/record.py` line 74).
+- All three read the Healthchecks API key (`51509d5e-…`) through the broad account, in
+  `scripts/sds-deadman.sh`'s name lookup (line 75), to find their ping URLs.
+- `fork-sync onboard`, operator-run and never scheduled, reads the fork-sync App's private key
+  (`998b817e-…`), the Anthropic key (`b74bf8b3-…`) and a change-manager read credential through the
+  broad account (`src/fork_sync/bws.py`).
+
+D-71 decided which of these survive the move.
+
+### Decision
+
+1. **Amendment 3 is superseded in part.** Amendment 3's decision items are disposed of as follows:
+   - **Item 1** (lines 1943-1960). The two "Stays" rows, and decision 5's `tool-installer` row
+     (line 789), read "Leaves SDS for localops". Decision 5's three rows read:
+
+     | Launch agent | Disposition | Reason |
+     |---|---|---|
+     | `fork-harden` | Leaves SDS for localops | Its subject is Devon's development environment, not the portfolio (D-57 A, Amendment 16). |
+     | `fork-sync-watch` | Leaves SDS for localops | As `fork-harden` (D-57 A, Amendment 16). |
+     | `tool-installer` | Leaves SDS for localops | As `fork-harden` (D-57 A, Amendment 16). |
+
+     Of the 20 launch agents, 15 move, 2 stay and 3 leave SDS. The 15 that move are decision 5's
+     original 17 Moves (line 793) less `fork-harden` and `fork-sync-watch`, the same 15 as
+     Amendment 3 item 1 (line 1952). The two that stay are `activation-sweep` and
+     `rotation-worker`. The three that leave are `fork-harden`, `fork-sync-watch` and
+     `tool-installer`. 15 + 2 + 3 = 20. The eleven stateful lanes are unchanged. Decision 4's
+     opening sentence, "Three agents stay, all because their subject is the Mac itself" (line
+     747), reads as two. Its tool installer bullet leaves the list. Its other two bullets stand:
+     the Keychain rotation instance and the machine-activation sweep (D-4, Q2).
+   - **Item 2** (lines 1961-2004). Its withdrawals stand: neither lane moves to the VPS. Each
+     "Still applies on the Mac" or "keeps … on Devon's login" disposition applies to the
+     orchestrator-run jobs until task (3) switches them, and to localops' jobs after that.
+   - **Item 3** (lines 2005-2016). The bar's exclusion is no longer needed, because the three are
+     no longer SDS lanes. The Phase 1 bar, "no lane that acts on a member runs on the Mac" (line
+     23), applies to SDS lanes only. A localops job isn't one.
+   - **Item 4** (lines 2017-2030). "Membership is unchanged" is reversed: the forks leave the member
+     record (decision item 4).
+   - **Item 5** (lines 2031-2050). What still applies on the Mac moves to localops (decision item
+     6). Its week-bar bullet is already moot under Amendment 6 (line 2739).
+   - **Item 6** (lines 2051-2068). The cleanup it named never ran: `LANE_CHECKS` still holds
+     `fork-harden` and `fork-sync-watch` (`scripts/deploy_orchestrator.py`, lines 961-962), and
+     `STAYS_ON_THE_MAC` is `{"activation-sweep", "tool-installer"}`
+     (`tests/scripts/test_deploy_lanes.py`, line 869). Task (4) removes the launchers, so it
+     removes both rows and the `tool-installer` member of that set in the same change.
+
+   Decision 4's other two Mac exceptions are unchanged. "Agents outside this repository" reads "the
+   exceptions are decision 4's two" (lines 817-818).
+
+2. **localops.** The three jobs move to `AlobarQuest/localops`, a private repository checked out
+   at `~/Projects/localops`, created by an interactive session on 2026-11-19 (D-71 (2)). It is
+   Devon's home for every Mac-only tool: the fork chain first, others later (goal step 3k). It
+   isn't an SDS member and has no member record. SDS code never imports or calls it. It imports
+   nothing from orchestrator: the shared packages it uses are copied into it (decision item 3).
+   Its GitHub credential stays Devon's `gh` login, as the Mac jobs use today. The move keeps the
+   function and not the code (D-71 (1)): landing each fork's `main`, writing `hardened`, and
+   installing from it survive. The copy cuts every SDS call.
+
+3. **The five tasks, in order.** These are goal step 3k's five (sds-hq `state/goal.md` at
+   `27984a2`, line 42). Each task runs in its own change, after the one before it merges.
+   1. **This amendment**, and one short amendment each to ADR-0042 and ADR-0057.
+   2. **A worker copies the code and tests into localops**, with `make check` green there. The
+      `fork` layer of `layers.toml` (lines 707-733) lists the chain's files, and the copy also
+      takes what those files load from outside it:
+      - `src/fork_sync/` (with `templates/`), `src/fork_harden/` and `src/tool_installer/`, each
+        with its `CLAUDE.md`, and their tests `tests/fork_sync/` (with `fixtures/`),
+        `tests/fork_harden/` and `tests/tool_installer/`.
+      - `scripts/run-fork-harden.sh`, `scripts/run-fork-sync-watch.sh` and
+        `scripts/run-tool-installer.sh`; `scripts/install-fork-harden-launchd.sh`,
+        `scripts/install-fork-sync-watch-launchd.sh` and `scripts/install-tool-installer-launchd.sh`;
+        `scripts/com.devon.fork-harden.plist`, `scripts/com.devon.fork-sync-watch.plist` and
+        `scripts/com.devon.tool-installer.plist`; and `tests/scripts/test_run_fork_sync_watch.py`
+        and `tests/scripts/test_run_tool_installer.py`.
+      - `docs/operations/fork-hardening.md` and `docs/operations/onboarding-a-fork.md`.
+      - The shared packages, copied (D-71): `src/alert_hub_client/` (imported by
+        `tool_installer/alerts.py` line 22 and `cli.py` line 54), `src/estate_clients/confined.py`
+        (`fork_sync/estate.py` line 19, `tool_installer/github.py`, `orchestrator_client.py` and
+        `policy_client.py`) and `src/revision_watcher/estate.py`'s `LandingReader`
+        (`fork_sync/estate.py` line 20). `tests/tool_installer/test_client_surface.py` imports
+        `tests.architecture.import_scan` (line 14), which is copied or replaced.
+      - The launcher helpers they source: `scripts/sds-deadman.sh`, `scripts/sds-bws.sh`,
+        `scripts/sds-token.sh` (only `run-tool-installer.sh`, for the `sds-bridge` read) and
+        `scripts/sds-install.sh` (all three installers).
+      - The three console scripts, `tool-installer`, `fork-sync` and `fork-harden`
+        (`pyproject.toml`, lines 86-103), and the `templates` package data (line 127).
+
+      The copy makes the three cuts D-71 decided:
+      - **The factory-policy read.** localops keeps its own change window. No SYSTEM bearer.
+      - **The `tool_revision` observation write.** No OBSERVER bearer. Nothing in SDS reads the
+        type; `src/orchestrator/persistence/models.py` names it as an allowed type (line 207).
+      - **The member-record scope.** `fork-harden` takes its forks from localops' own list, not
+        from `scripts.sds_scope`, so it keeps hardening once the forks leave membership.
+   3. **The Mac jobs switch to localops' scripts.** The three `com.devon.*` jobs are reinstalled
+      from localops, and orchestrator's copies stop running.
+   4. **A worker removes the code from orchestrator**, removes the forks from the membership check
+      (`src/membership_check/consistency.py` lines 145-148, `src/membership_check/cli.py` lines
+      19-21, 36 and 174-192), and removes the fork entries from `src/landing_ledger/record.py`
+      (lines 206-207, two of `KNOWN_UNDERCOUNTED_CHECK_LANDINGS`' four rows). The same task stages
+      the member-record change (decision item 4).
+   5. **The fork-sync GitHub App's key registration moves to localops**, and so does the source of
+      the forks' scaffolded workflows. The registration is factory-runner `.cred-consumers.toml`,
+      the `fork-sync-app-private-key` entry (line 108 at factory-runner `08dc5aa`). `fork-sync-watch`
+      reads its fork list from that entry (`src/fork_sync/watch.py`, lines 79-80 and 154-174). The
+      workflow source is `src/fork_sync/templates/`.
+
+   Every path named in this item exists at `4046d953`.
+
+4. **Membership.** The forks leave the member record. A member-record change is staged by a
+   session and applied only by a person on `/review` (ADR-0058). It comes at task (4), after the
+   code that reads the forks' membership is gone or changed to tolerate their absence: the
+   membership check's fork rows, and the `fork-harden` scope task (2) cuts. The seed,
+   `docs/operations/membership-seed.toml`, lists five forks as members, each with
+   `dependency_updates` and `security_patches` granted: `AlobarQuest/rtk` (line 197),
+   `AlobarQuest/claude-octopus` (line 215), `AlobarQuest/rea` (line 233),
+   `AlobarQuest/n8n-as-code` (line 251) and `AlobarQuest/n8n-manager` (line 269). The first four
+   also have `rollouts` granted, for `tool_installer` `TOOLS`; `n8n-manager` doesn't. The seed doesn't
+   list `AlobarQuest/modern-web-guidance`. The live record names it (HQ D-58, sds-hq
+   `state/decisions.md` at `beda28c`, line 26; ADR-0057 Amendment 1), so it leaves with the
+   other five. The authority is the live record (`GET /api/v1/members`), which task (4) reads
+   before it stages the change.
+
+5. **What else stops covering the forks, and what localops must keep.** Each SDS lane or path below
+   reads or acts on the forks because they're members:
+
+   | SDS lane or path | What it does for the forks | After the move |
+   |---|---|---|
+   | Inert landing lands the fork-sync sync pull requests, authored by `fork-secure-upstream-sync[bot]` (change-manager `app/deploy_policy.py`, lines 611-630 at `4ed5da6`; Amendment 3 item 4) | Lands each fork's `main`. | localops lands them. Landing each fork's `main` is part of the function that must survive. Once the forks' grants are withdrawn, the inert lander refuses them with `landing_repository_not_granted` (`src/inert_lander/cli.py`, line 169; `src/lander/core.py`, line 162), so localops lands before task (4) applies. How it lands is the first open item. The six forks leave change-manager's inert population at task (4), or the membership check reports a population entry with no grant (`consistency.py`, line 127). |
+   | The orchestrator's inert landing path treats a fork's upstream sync as its own subject: it asks `security_patches` beside `dependency_updates` (`services/landing/terms.py`, lines 68-69; `inert_landing_admission.py`, lines 255-262), lands it with a merge commit, never a squash, so the next sync doesn't conflict (`inert_landing_admission.py`, lines 500-504; `inert_pr_merge.py`, lines 46-51), and never watches it for a revert (`revert_act.py`, lines 14-18) | Lands each fork's sync with its upstream commits kept. | The function survives in localops: a sync pull request lands with its commits kept (open item 1). In SDS these branches reach no member after task (4), which decides whether they and change-manager's `fork-secure-upstream-sync[bot]` author go (open item 6). |
+   | `fork-sync onboard` step 10 opens a change-manager pull request that adds the fork to the inert population (`src/fork_sync/onboarding.py`, lines 683-690 and 839-849) | Admits a new fork to SDS's landing lane. | Ends: a new fork lands through localops. The second open item. |
+   | The landing ledger observes landings in every `onboarding` and `member` repository (`scripts/sds_scope.py`, lines 59-63, the `ledger` population; `scripts/run-landing-ledger.sh`, line 130) | Files each fork landing as an observation. | Ends when the forks leave the record. Task (4) removes the two fork rows from `src/landing_ledger/record.py` (lines 206-207). |
+   | The membership check compares `fork_harden` `FORKS`, fork-sync's fork list and `tool_installer` `TOOLS` with the grants (`consistency.py`, lines 145-148; `cli.py`, lines 19-21, 36 and 174-192) | Reports a fork whose grant disagrees with the chain's lists. | Ends at task (4). localops has no member record, so it keeps no equivalent. |
+   | The read-only App `alobar-sds-lanes-read` is installed on the forks (D-14, D-58), so the VPS lanes that mint a read token per member, such as the unit verifier (D-58), can mint for them | Lets the VPS lanes read each fork. | Ends. Removing the installation is Devon's act, the fourth open item. The "SDS lanes" App already left the forks (Amendment 3, G-24). |
+   | The pin watcher and the membership check list the members plus each installation account's public repositories (Amendment 4 decision item 1, lines 2188-2252) | Reads the forks as members. | After task (4), the forks are public non-members, read as any other public repository. Neither lane acts on them, so nothing replaces it. |
+   | The credential registry: `.cred-consumers.toml` names the chain's launchers as consumers of the narrow and broad identities and the bearers (lines 104-106, 160-162, 216, 411-413 and 453-455), and `tests/fixtures/rotation_destination_format.json` repeats one row (lines 153-155) | Tells a rotation who reads each credential. | After task (3) the reader is localops' launcher. Task (4) re-points or removes each row (open item 6). |
+   | `tool-installer` writes `tool_revision` observations and reads the factory policy (decision item 3) | Records what this machine installed. Takes the change window from SDS. | Cut at task (2). localops keeps its own window. |
+   | `fork-harden` takes its scope from the member record (`run-fork-harden.sh`, lines 71-89) | Hardens only granted forks. | Cut at task (2). localops keeps its own fork list. |
+
+6. **Alerting.** Today the chain pings three Healthchecks checks through `scripts/sds-deadman.sh`:
+   `sds-fork-hardening` (`run-fork-harden.sh`, lines 43 and 67) and `sds-fork-sync-watch`
+   (`run-fork-sync-watch.sh`, lines 40 and 60) as outcome alarms, and `sds-tool-installer`
+   (`run-tool-installer.sh`, line 87) as a dead-man switch with `--finding 3`. The tool installer
+   also sends keyed alerts (`tool-install:<tool>`) through alert-hub as the `sds-bridge` source.
+   The move keeps a dead-man and an outcome alarm for each job from the first localops run. Until
+   localops has its own, it pings the same three checks through the copied `sds-deadman.sh` and
+   sends through `sds-bridge`. localops' own alert-hub source and Healthchecks checks are the third
+   open item.
+
+7. **Authority, exactly.** This amendment grants no credential, scope, App installation, BWS grant,
+   alert-hub source or Healthchecks key. localops keeps Devon's `gh` login for GitHub. It holds no
+   SYSTEM or OBSERVER bearer (D-71 (1)). Until task (5), it keeps these reads exactly as the Mac jobs
+   make them today:
+   - **The `sds-bridge` alert token**, through the narrow `sds-operator` identity. That identity
+     can also read the SYSTEM and OBSERVER bearers (`run-tool-installer.sh`, lines 89-92). localops
+     never fetches them, but the identity it holds can, until task (5) ends the read.
+   - **The broad account's four reads.** These are the Healthchecks API key (ping-URL lookup, all
+     three jobs), and, for `fork-sync onboard`, the fork-sync App's private key, the Anthropic key
+     and the change-manager read credential.
+
+   Each read ends at a named task, by a credential localops owns or by dropping the step that
+   needs it:
+   - The `sds-bridge` read ends at task (3), when localops' own alert-hub source replaces it
+     (open item 3).
+   - The Healthchecks key read ends at task (3), with localops' own checks (open item 3).
+   - The change-manager read ends at task (3), with `fork-sync onboard` step 10 (open item 2).
+   - The fork-sync App key and Anthropic key reads end at task (5), when the App key's
+     registration moves to localops.
+
+   A task (3) read whose replacement needs a credential Devon hasn't granted by then stays until
+   task (5), and task (5) ends it. The narrow identity leaves localops with the `sds-bridge` read. Any new credential localops needs, such as its
+   own alert-hub source token, a BWS identity or a Healthchecks key, is a later gate: Devon grants
+   it and this amendment doesn't. Removing the read-only App's installation from the forks is
+   Devon's act at task (4).
+
+### Open items
+
+Each gap names the task that resolves it. Phase 1 can't close until each is resolved (sds-hq
+standing answer of 2026-11-06, limit 1).
+
+1. **How localops lands each fork's sync pull request** (task (3)). Inert landing does this
+   today, with a merge commit so the fork keeps upstream's commits (decision item 5). localops'
+   way of landing keeps that property, and it runs before task (4) withdraws the grants, so no
+   sync pull request waits unlanded in between. This amendment doesn't design it.
+2. **`fork-sync onboard` step 10** (task (3)). The step admits a fork to change-manager's inert
+   population. It changes with the first item, so onboarding a fork stops touching SDS.
+3. **localops' own alert-hub source and Healthchecks checks** (task (3)). The design comes in task
+   (3), and any credential each needs is a later gate Devon grants. Until both are in place,
+   localops uses decision item 6's interim.
+4. **The read-only App's installation on the forks** (task (4)). Devon removes the six forks from
+   `alobar-sds-lanes-read`'s installation on the App's settings page, after the member-record change
+   applies.
+5. **change-manager's inert population** (task (4)). The six forks leave `inert_landing`'s
+   repositories in change-manager `app/deploy_policy.py` (lines 611-627 at `4ed5da6`, less `sds-canary` at line 624), as a
+   versioned policy change, in the same task as the member-record change.
+6. **The orchestrator remnants** (task (4)). These include the `fork` layer in `layers.toml`, the
+   three console scripts in `pyproject.toml`, the chain's rows in `.cred-consumers.toml` and
+   `.bws-secrets.toml`, the rotation-destination fixture's row, `LANE_CHECKS` and
+   `STAYS_ON_THE_MAC` (decision item 1, Amendment 3 item 6), the architecture tests that name the
+   chain's files, and the inert landing path's fork branches (decision item 5). `"tool_installer"` in
+   `src/orchestrator/persistence/models.py` (line 110) and `"tool_revision"` (line 207) name stored
+   rows, which are immutable, so task (4) decides whether they stay. Before it deletes anything,
+   task (4) greps the exit manifests and evidence. At `4046d953`,
+   `docs/operations/wave-exit-manifest.toml` and `docs/operations/exit-criteria-claims.toml` name
+   none of the chain.
+7. **The interim reads and the App key** (tasks (3) and (5)). Each read ends at the task decision
+   item 7 names for it, and none outlasts task (5). Task (5) also moves the fork-sync App's key
+   registration and the scaffolded workflows' source (decision item 3).
+8. **Increment 6's Mac plumbing** (task (3)). Amendment 3's fourth open item (lines 2111-2119)
+   names four staying launchers. After task (3), only `run-activation-sweep.sh` remains in
+   orchestrator. localops' launchers source their own copies of `sds-deadman.sh`, `sds-bws.sh`
+   and `sds-token.sh`. Like every launcher, they also source `~/.claude/bin/activate-checkout.sh`,
+   which orchestrator doesn't own. Increment 6 is free to retire orchestrator's lane use of these
+   helpers once task (3) has switched the jobs.
+
+The year plan's `done_bar` text and `plan/projects/lanes-off-the-mac.yaml` are sds-hq's, changed
+through an interactive session's pull request (sds-hq `state/goal.md` at `27984a2`, line 15). They
+aren't this ADR's.
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `4046d953`:
+
+| Passage | Disposition |
+|---|---|
+| Decision 4, "Three agents stay, all because their subject is the Mac itself" and its tool installer bullet (lines 745-749) | Two stay: the Keychain rotation instance and the machine-activation sweep. The tool installer leaves SDS for localops (decision item 1). |
+| Decision 5, the `fork-harden` and `fork-sync-watch` rows (lines 779-780), already replaced by Amendment 3 item 1 | Superseded: "Leaves SDS for localops" (decision item 1). |
+| Decision 5, the `tool-installer` row (line 789) | Superseded: "Leaves SDS for localops". |
+| Decision 5, "Seventeen move and three stay" (line 793), as Amendment 3 item 1 made it (line 1952) | Fifteen move, two stay and three leave SDS. |
+| "Agents outside this repository", "the exceptions are decision 4's three" (lines 817-818), as Amendment 3's row made it (line 1978) | The exceptions are decision 4's two. |
+| Increment 6, "Retire the Mac's lane plumbing" (lines 1046-1049), with Amendment 3's fourth open item (lines 2111-2119) | Open item 8: one staying launcher in orchestrator after task (3). |
+| Amendment 3's title and decision item 1 (lines 1885 and 1943-1960) | Superseded: both lanes leave SDS for localops. The title isn't renamed. |
+| Amendment 3 decision item 2 (lines 1961-2004) | Its withdrawals stand. Its Mac dispositions apply to the orchestrator-run jobs until task (3) and to localops' jobs after it. Its row on the read-only App's installation on the forks, "stands, because all six are members" (line 1994), is reversed at task (4): Devon removes the installation (open item 4). |
+| Amendment 3 decision item 3 (lines 2005-2016) | No longer needed: the three aren't SDS lanes. |
+| Amendment 3 decision item 4 (lines 2017-2030) | Reversed: the forks leave the member record (decision item 4). |
+| Amendment 3 decision item 5 (lines 2031-2050) | Moves to localops (decision item 6). Its week-bar bullet stays moot (Amendment 6, line 2739). |
+| Amendment 3 decision item 6 (lines 2051-2068) | Carried by task (4): the launchers go, so the `LANE_CHECKS` rows (`deploy_orchestrator.py`, lines 961-962) and `tool-installer` in `STAYS_ON_THE_MAC` (`test_deploy_lanes.py`, line 869) go with them. |
+| Amendment 3's open item 2, the read-only App's Issues permission, "The read-only App's installation on factory-runner and the forks doesn't change" (lines 2101-2105) | The permission's answer stands. The installation on the forks is removed at task (4) (open item 4). |
+| Decision 2, the read-only App's installation "on factory-runner and each fork (Q9, HQ D-14)" (lines 614-617), and Q9 (lines 1553-1556) | Narrowed at task (4): Devon removes the installation from the forks. factory-runner keeps it. |
+| Amendment 5 decision item 4, the membership check's fork list read (lines 2572-2577) | Ends at task (4), with the membership check's fork rows. |
+| Amendment 13's verify item, "The five forks never get a green claim (step 3k)" (lines 3958-3960), and its row on Amendment 3 item 4 (line 3975) | Answered: this amendment is step 3k's amendment. The forks leave membership at task (4). |
+| Amendment 3's Consequences, "The two lanes keep reading through Devon's `gh` login and the Keychain items" (lines 2077-2080) | Superseded by decision item 7. |
