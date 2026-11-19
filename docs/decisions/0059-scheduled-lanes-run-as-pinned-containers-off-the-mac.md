@@ -4165,15 +4165,16 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
    amendment names each by role, not by UUID:
    - **A dedicated production Coolify window token (D-68 (1) B), its permissions open under
      D-70.** In D-68's words, "application read, PATCH, and deploy only, no read:sensitive". The
-     sources don't show a token of that shape. ADR-0055 at `3585b4f9` lists the production
-     Coolify token's permissions as "Team-wide `read`, `write` and `deploy`, no
-     `read:sensitive`", reaching env writes, restarts, creating and deleting applications,
-     projects, servers, databases and SSH keys, and running any image, so it "probably reaches
-     secrets from a container" (line 341). ADR-0055's probe 1 measured, on dev Coolify beta.470,
-     that a token without `write` gets 403 `Missing required permissions: write` on
-     `POST`/`PATCH /applications/{uuid}/envs` and restart (line 525). The window PATCHes `/applications/{uuid}` (infraops `src/change-manager/tools.ts` lines
-     189, 210, 248 and 255 at `fdf3e91b`) and deploys (line 222); an application PATCH without
-     `write` wasn't measured. So the approved shape can't be minted as worded from what these
+     sources don't show a token of that shape. ADR-0055 at `3585b4f9` lists the rotation
+     executor's production Coolify token (`Rotation / Coolify`) as "Team-wide `read`, `write` and
+     `deploy`, no `read:sensitive`", reaching env writes, restarts, creating and deleting
+     applications, projects, servers, databases and SSH keys, and running any image, so it
+     "probably reaches secrets from a container" (line 341). ADR-0055's probe 1, on dev Coolify
+     beta.470, called `POST`/`PATCH /applications/{uuid}/envs`, `GET …/envs` and `POST
+     …/restart`, and records that tokens without `write` get 403 `Missing required permissions:
+     write` (line 525). The window PATCHes `/applications/{uuid}` (infraops
+     `src/change-manager/tools.ts` lines 189, 210, 248 and 255 at `fdf3e91b`) and deploys (line
+     222); an application PATCH without `write` wasn't measured. So the approved shape can't be minted as worded from what these
      sources show, and they don't show whether production beta.473 offers an application-scoped
      permission. Which token the lane gets is D-70's to decide (sds-hq `state/decisions.md` at
      `9fd32943`, line 5): (A) a dedicated team-wide `read`, `write` and `deploy` token without
@@ -4368,7 +4369,7 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Passage | Disposition |
 |---|---|
 | Decision 1's clone bullet, "The lanes that need other repositories clone them at the start of each pass. These lanes are the bump driver ..., both bridge proposers ..., the work carrier ... and fork hardening" and "Each clone is shallow, at `main`, into a directory the pass discards" (lines 306-311) | Extended by decision item 1 (D-66 A): the change-window lane also clones infraops-mcp-server, anonymous, shallow, at `main`, into a directory the pass removes, and runs its bundled CLI from the clone. No venv and no install. |
-| Decision 2, "Each moved lane gets its own BWS machine account ... with a direct read grant on exactly the lane's `.bws-secrets.toml` entries and nothing else" (lines 487-494) | Stands. `sds-lane-change-window` reads exactly the four secrets and the ping URL of decision item 3. |
+| Decision 2, "Each moved lane gets its own BWS machine account ... with a direct read grant on exactly the lane's `.bws-secrets.toml` entries and nothing else" (lines 487-494) | Stands. `sds-lane-change-window` reads exactly the four secrets and the ping URL of decision item 3; the Coolify window token among them waits for D-70. |
 | "Agents outside this repository", the `change-window` row (line 822) | Stands as a description of the Mac job today. The moved lane differs by decision items 1 to 3 and 5: it runs the bundled CLI from a per-pass clone, not infraops' working copy; it executes production items only, with no dev token; it sends the digest itself as a notice at about 04:00; and its own account reads four secrets of its own, not the shared identity's Coolify tokens, Anthropic key and full bearer; the Coolify window token among them waits for D-70. "Moves, increment 8 (D-9)" stands. |
 | Increment 8, "with the prod and dev Coolify tokens" (lines 1075-1076) | Superseded for the moved lane by decision item 2 (D-67 C): the lane holds only the production window token. |
 | Increment 8, "Its identity question: ... it needs its own" (lines 1076-1077) | Answered by decision item 3 (D-68 B, B and the standing answer), except the Coolify window token's permissions, which are open under D-70 (verify items). |
