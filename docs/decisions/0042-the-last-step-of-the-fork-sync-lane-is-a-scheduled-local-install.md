@@ -303,4 +303,5 @@ The tool installer leaves SDS for `AlobarQuest/localops`, Devon's repository for
 under ADR-0059 Amendment 16 (D-57 A). It moves with the same function. The copy drops its two
 orchestrator calls (the factory-policy read and the `tool_revision` observation write), and
 localops keeps its own change window (D-71). This ADR's decisions keep governing the installer in
-localops until localops records its own.
+localops until localops records its own, except where those cuts change them: "The record" no
+longer writes an orchestrator observation, and the window is localops' own.
