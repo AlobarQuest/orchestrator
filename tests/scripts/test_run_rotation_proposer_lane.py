@@ -717,8 +717,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BWS_ACCESS_TOKEN": "${ROTATION_PROPOSER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "ROTATION_PROPOSER_STATE_DIR": "/var/lib/sds/rotation-proposer",
-            # A placeholder: the ping-URL secret doesn't exist yet.
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `rotation-proposer-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "506a5436-4643-4040-8a8b-b50601312be2",
             # The list's directory, which the launcher fills each pass beside its clones, and the
             # state file's, on the lane's volume (ADR-0059 Amendment 12 decision 1).
             "INFRADRIFT_CONFIG_DIR": "/var/tmp/sds-rotation-proposer/infra-drift",
@@ -767,11 +767,13 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 
 def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it: its four secrets. Its
-    ping-URL secret joins them when it exists. The launcher names each secret it reads."""
+    """The lane's `--token` proof reads what the manifest lists for it: its four secrets and its
+    ping-URL secret. The launcher names each secret it reads, except the ping-URL secret, whose id
+    reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "506a5436-4643-4040-8a8b-b50601312be2"
     secrets = deploy.lane_secrets(manifest, "rotation-proposer")
-    assert sorted(secrets) == sorted(SUBMIT_ONLY)
+    assert sorted(secrets) == sorted([*SUBMIT_ONLY, ping_url_secret])
     launcher = LAUNCHER.read_text()
     for uuid in secrets:
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid

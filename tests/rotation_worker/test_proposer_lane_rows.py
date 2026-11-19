@@ -37,8 +37,7 @@ class Lane:
     service: str
     variable: str
     check: str
-    # The `.bws-secrets.toml` secrets the lane reads and its ping URL's keeper, which isn't listed
-    # there until a later change writes its id in the compose. Both keepers came at HQ gate G-75.
+    # The `.bws-secrets.toml` secrets the lane reads, its ping URL's keeper among them.
     reach: frozenset[str]
 
     @property
@@ -137,8 +136,8 @@ def test_the_token_row_declares_the_lane_s_manifest_secrets_and_its_ping_url_kee
     ping_keeper = rows[lane.ping_url].credential["bws_uuid"]
     projects, secrets = bws_lane_token.declared_reach(rows[lane.token].credential)
     assert projects == frozenset()
-    assert ping_keeper not in _lane_secrets(lane)
-    assert secrets == _lane_secrets(lane) | {ping_keeper}
+    assert ping_keeper in _lane_secrets(lane)
+    assert secrets == _lane_secrets(lane)
     assert secrets == lane.reach
 
 

@@ -14,10 +14,12 @@
 # The lane's token is the resource's own `BUMP_PROPOSER_BWS_ACCESS_TOKEN` variable, which the VM
 # rotation executor writes; this file names it and never holds a value. With it the launcher reads
 # every secret the pass needs (`scripts/run-bump-proposer.sh`, "TWO HOSTS, ONE LAUNCHER").
-# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
-# secret, `bump-proposer-ping-url` in `Rotation / Keepers`, created at HQ gate G-75: an id, not a secret
-# and not the ping URL. While it's empty the dead-man helper
-# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `bump-proposer-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
+# the lane's own token on a `--submit` pass (`scripts/sds-deadman.sh`); a bare pass pings nothing.
+# The VM rotation executor writes the URL there from its inbox; while the secret holds the inbox's
+# empty marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:
   bump-proposer:
@@ -27,7 +29,7 @@ services:
       BWS_ACCESS_TOKEN: ${BUMP_PROPOSER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       BUMP_PROPOSER_STATE_DIR: /var/lib/sds/bump-proposer
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 786f75e2-3d02-4667-8607-b50601312a9d
       FACTORY_EVENTS_DB_HOST: b82fa1vg5whecgnjreuqb5tk
       FACTORY_EVENTS_DB_PORT: "5432"
       FACTORY_EVENTS_DB_NAME: postgres
