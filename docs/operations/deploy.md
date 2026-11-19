@@ -1257,9 +1257,16 @@ its own change or act.
    compose without deploying it.
 2. The lane's identity gate and the mint gates for its four secrets and its ping URL: the new
    `change-window` lane account with read grants on exactly those five. The four are a dedicated
-   Coolify window token (D-68 B), change-manager's `execute` bearer (`M2M_TOKEN_EXECUTE`,
-   change-manager #168), an Anthropic API key, and an alert-hub sender token for the digest. Then
-   the VM root's keeper commands for the lane token and `change-window-ping-url`.
+   production Coolify token for this lane only, team-wide `read`, `write` and `deploy` without
+   `read:sensitive` (D-70 A, ADR-0059 Amendment 15), change-manager's `execute` bearer
+   (`M2M_TOKEN_EXECUTE`, change-manager #168), an Anthropic API key, and an alert-hub sender token
+   for the digest. Devon creates and mints each value and grants each read. Once the `execute`
+   bearer is minted, the session reads it by UUID in one process, writes its sha256 hash (never
+   echoed) to change-manager's `M2M_TOKEN_EXECUTE` in both `is_preview` rows, restarts
+   change-manager as an announced production act, and verifies the restart by `/api/health`
+   `revision`, one `execute`-scoped read with the new bearer and a refused control bearer, all
+   before the paired pass (ADR-0059 Amendment 14 decision item 7). Then the VM root's keeper
+   commands for the lane token and `change-window-ping-url`.
 3. The lane's `.bws-secrets.toml` and `.cred-consumers.toml` rows in this repository, with the
    secrets' UUIDs, in their own changes. In the same work, a change writes each UUID into the
    launcher and removes it from `EMPTY_IDS`.
