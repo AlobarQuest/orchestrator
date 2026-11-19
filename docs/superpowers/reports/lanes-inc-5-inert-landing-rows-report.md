@@ -16,7 +16,8 @@ modelled on #746 (`3fffa6e5`).
     `rotated_by_sds = true`, `rotate_requested = "2026-11-19"`, five-secret `reach_secrets`, and
     `reach_projects = []`. Its consumers are the keeper (`bws-secret`) and `coolify-env` with
     `instance = "prod"`, `resource_type = "service"`, uuid `w1ujl75mr0sqdrtur294ldrk`, key
-    `INERT_LANDING_BWS_ACCESS_TOKEN` (the compose's line 22), and `redeploy = false`.
+    `INERT_LANDING_BWS_ACCESS_TOKEN` (the compose's line 22 at base, line 23 after this diff's comment
+    edit), and `redeploy = false`.
   - `inert-landing-ping-url` (line 1388): `healthchecks-ping-url`, keeper `35557473-…`,
     `rotated_by_sds = true`, check `sds-inert-landing`, and no `rotate_requested`. It carries the
     same fields as #746's ping-URL rows.
@@ -49,9 +50,9 @@ No Mac `runtime-fetch` entry changed (lines 111 and 216).
 
 | Secret | Its row | Earlier moved lanes' container readers | This PR |
 |---|---|---|---|
-| SYSTEM bearer `221a48d5-…` | `orchestrator-system-bearer`, this repository, line 191 | None. Its one orchestrator `runtime-fetch` (line 216) is a combined Mac `ref` listing `run-work-carrier.sh` and `run-rotation-decomposer.sh`. Those two lanes read this bearer in their containers, and neither got a separate container entry. #729 (`e7744356`) didn't touch the line. | No change |
-| change-manager READ `314f276d-…` | `change-manager-read-bearer`, in **change-manager**'s registry, not this repository | Yes. At change-manager `main`, the row's entries for `run-bump-proposer.sh`, `run-work-carrier.sh`, `run-membership-check.sh` and `run-rotation-decomposer.sh` each describe the `sds-lane-…` container and the lane's token. Each replaced its Mac entry, because a destination's identity is `(repo, ref)`. `run-inert-landing.sh`'s entry still describes the Mac job. | No change. It is another repository's file, and the handoff forbids changing it. See follow-up 1. |
-| `sds-bridge` sender `b415d03b-…` | None. A GitHub code search across AlobarQuest finds no `.cred-consumers.toml` naming it, only manifests, launchers and HQ files. | None possible | No change |
+| SYSTEM bearer `221a48d5-…` | `orchestrator-system-bearer`, this repository, line 191 | None. Its one orchestrator `runtime-fetch` (line 216) is a combined Mac `ref` listing `run-work-carrier.sh` and `run-rotation-decomposer.sh`. Those two lanes read this bearer in their containers, and neither got a separate container entry. #729 (`e7744356`) didn't touch the line. The other launcher entries later in the file (lines 301, 383, 390, 446 and 460) belong to `work-carrier-observer-bearer` and `orchestrator-observer-bearer`, not this row. | No change |
+| change-manager READ `314f276d-…` | `change-manager-read-bearer`, in **change-manager**'s registry, not this repository | Yes. At change-manager `main`, the row's entries for `run-bump-proposer.sh`, `run-work-carrier.sh`, `run-membership-check.sh` and `run-rotation-decomposer.sh` each describe the `sds-lane-…` container and the lane's token. Each is the only entry for its `(repo, ref)`. `run-inert-landing.sh`'s entry there describes the Mac job (launchd at :35, the broad Keychain account). | No change. It is another repository's file, and the handoff forbids changing it. See follow-up 1. |
+| `sds-bridge` sender `b415d03b-…` | None. `gh search code b415d03b-… --owner AlobarQuest --filename .cred-consumers.toml --limit 100` returns only orchestrator's registry, where it appears only inside `reach_secrets` lists. The same search for `314f276d-…`, as a control, returns change-manager and orchestrator. | None possible | No change |
 
 ## Checks
 
@@ -76,7 +77,8 @@ No Mac `runtime-fetch` entry changed (lines 111 and 216).
      SYSTEM bearer's combined ref (line 216). Neither is a token row of that account.
    - The nearest lane-token reach is the rotation decomposer's, `{221a48d5, 314f276d, b415d03b,
      936bbbf2}`. It shares three secrets with this row and differs from it.
-   - infraops `cred-rotation.ts` has no reach rule: `grep reach` returns no match.
+   - infraops has no reach rule: `grep reach_secrets` across infraops `src/` returns no match, and
+     `grep reach` in `cred-rotation.ts` matches only a comment (line 298).
    - `test_no_other_lane_token_row_declares_the_same_reach` runs the rule over every lane-token
      row at `main` through `RepoMirror`. The new row passes, and a twin given any other row's whole
      reach is caught as that row.
@@ -124,14 +126,17 @@ No Mac `runtime-fetch` entry changed (lines 111 and 216).
      `rotation-inert-landing-bws-token` (`generate.py`, line 295), a first-issue plan for
      `bws-lane-token`, and writes it through intent-packages' `create-rotation`.
    - The pass proposes nothing for `inert-landing-ping-url`, because no finding is due.
-   - It acts on the row because orchestrator is in `REGISTRY_REPOSITORIES` and already holds the
-     `credential_rotation` grant that its other `rotated_by_sds` rows need.
+   - The pass generates only if the member record grants `credential_rotation` on orchestrator
+     (`src/rotation_proposer/CLAUDE.md`). I didn't read the member record. Orchestrator's other
+     `rotated_by_sds` rows depend on the same grant.
+   - The generating pass proposes no change record. The first pass after revision 1 is approved
+     proposes it (`src/rotation_proposer/CLAUDE.md`, first bullet).
    - The volume state doesn't change anything. The state has no entry for either id, which serves
      `null`, the same as a never-rotated row. The proposer's one write to that state is
      `record-rotation`, which it makes only for a `resolved` record (`cli.py` docstring, lines 38 to
      48), so this pass writes nothing there for the new rows.
-   - After that, revision 1 is the standing approval's case (ADR-0055 amendment 22): a lane
-     credential's revision 1, approved by policy and checked by the carrier.
+   - Revision 1 of a lane credential is the case the standing approval's policy may approve, once
+     the work carrier has checked it (ADR-0055 amendment 22, as the root `CLAUDE.md` states it).
 6. **Fixtures and existing tests.**
    - `lanes_in_registry` (`deploy_orchestrator.py`, line 1202) matches the `coolify-env` service
      consumer keyed `INERT_LANDING_BWS_ACCESS_TOKEN` (`_lane_of_token_consumer`, line 1193).
@@ -144,8 +149,11 @@ No Mac `runtime-fetch` entry changed (lines 111 and 216).
      lane-token population at run time, so the new row doesn't change what any of them asserts.
      The full `make check` runs them all.
    - Once this merges, `registered_lanes` (line 1256, reading `origin/main`) returns the thirteen
-     lanes. `require_lanes_current` (line 1266) and `lanes_to_follow` (line 1295) act only on a
-     lane with a finished `--add` run, and `inert-landing` has none. So nothing treats it as
+     lanes. Its only callers are `require_lanes_current` (line 1266) and `lanes_to_follow` (line
+     1295), and `lanes_in_registry` is called only by `registered_lanes` (grep across `scripts/` and
+     `src/`). `require_lanes_current` checks a registered lane only through
+     `last_finished(load_runs(...))` and skips it when that is `None`. `lanes_to_follow` keeps only
+     lanes with a finished run. `inert-landing` has no recorded run. So nothing treats it as
      registered, holding a release, before its token is issued and its `--add` passes (item 7).
 7. **Membership check.** `src/membership_check/cli.py` line 119 reads
    `of_a_type(rotated_by_sds(...))` only to derive the set of repositories whose registry hands the
