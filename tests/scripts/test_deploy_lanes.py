@@ -867,13 +867,19 @@ def test_the_repositorys_registry_registers_the_twelve_moved_lanes() -> None:
 
 # The launchers that stay on the Mac (ADR-0059 decision 4) and so are no lane.
 STAYS_ON_THE_MAC = {"activation-sweep", "tool-installer"}
-_ARM = re.compile(r"^\s*sds_deadman_arm\s+(sds-[a-z-]+)\b", re.MULTILINE)
-_CHECK_NAME = re.compile(r'^\s*CHECK_NAME="(sds-[a-z-]+)"', re.MULTILINE)
+# A check name as a launcher spells it: quoted (`"Change Manager OPs Check"`, the change window's,
+# which keeps the Mac job's check) or bare (`sds-landing-ledger`). Never a `$` expansion.
+_NAME = r'(?:"([^"$\n]+)"|([A-Za-z0-9][A-Za-z0-9._-]*)(?!\S))'
+_ARM = re.compile(rf"^\s*sds_deadman_arm\s+{_NAME}", re.MULTILINE)
+_CHECK_NAME = re.compile(rf"^\s*CHECK_NAME={_NAME}", re.MULTILINE)
+
+
+def _check_names(text: str) -> set[str]:
+    return {quoted or bare for quoted, bare in (*_ARM.findall(text), *_CHECK_NAME.findall(text))}
 
 
 def _launcher_check(path: Path) -> str:
-    text = path.read_text()
-    names = set(_ARM.findall(text)) | set(_CHECK_NAME.findall(text))
+    names = _check_names(path.read_text())
     assert len(names) == 1, (path.name, names)
     return names.pop()
 
@@ -886,6 +892,15 @@ def test_the_check_names_are_the_launchers() -> None:
     moving = {lane: name for lane, name in launchers.items() if lane not in STAYS_ON_THE_MAC}
     assert deploy.LANE_CHECKS == moving
     assert STAYS_ON_THE_MAC <= launchers.keys()
+
+
+def test_a_check_name_is_read_quoted_or_bare_and_never_as_an_expansion() -> None:
+    """The control for the reader above: each spelling a launcher uses, and none it doesn't."""
+    assert _check_names('CHECK_NAME="Change Manager OPs Check"\n') == {"Change Manager OPs Check"}
+    assert _check_names('CHECK_NAME="sds-bump-driver"\n') == {"sds-bump-driver"}
+    assert _check_names('sds_deadman_arm sds-pin-watcher --finding 2 "$@"\n') == {"sds-pin-watcher"}
+    assert _check_names('sds_deadman_arm "$CHECK" --finding 2\nCHECK_NAME="$NAME"\n') == set()
+    assert _check_names('CHECK_NAME="a"\nsds_deadman_arm b --finding 2\n') == {"a", "b"}
 
 
 def test_the_stateful_lanes_are_the_lane_images_state_directories() -> None:
@@ -1199,6 +1214,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     manifest = (ROOT / ".bws-secrets.toml").read_text()
     placeholders = {
         "bump-driver",
+        "change-window",
         "estate-landing",
         "follow-up-mint",
         "inert-landing",

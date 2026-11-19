@@ -1202,6 +1202,86 @@ following, in this order, each in its own change or act.
    the orchestrator reader's list) and the keeper's note; ADR-0007's "Scheduled trigger";
    `follow-up-scheduling.md`, "Running a pass"; and `credentials.md`'s SDS consumer paragraph.
 
+`change-window`'s tracked files (`lanes/change-window/compose.yaml` and `crontab`) don't register
+it either. It's ADR-0059 increment 8's lane: it executes the change requests change-manager holds
+as approved, for production Coolify only (D-67 C; a person handles dev items). It keeps no state,
+so its compose mounts no volume: each pass clones infraops-mcp-server anonymously, shallow at
+`main`, into a directory it removes, and runs its bundled CLI, `dist/bundle/change-mgr-cli.js`
+(D-66 A; infraops #171), which needs no `npm ci`. It joins no external network: change-manager,
+alert-hub and the Anthropic API are HTTPS URLs, and production Coolify is the tailnet address
+`http://100.92.138.19:8000`, which estate landing reaches the same way (HQ G-73). Its crontab runs
+`lane-run change-window --submit` daily at 04:00 New York time, the Mac job's hour. That's inside
+02:00 to 06:00, which is the quiet slot a redeploy of this resource avoids, not a rule on when a
+lane runs, and minute 0 is also an execution-watch start (`*/15`).
+
+A bare pass is a dry run: `run-window --dry-run --instance prod` lists the approved items and
+prints the ids it would claim as one JSON line. It opens no window, claims nothing and builds no
+Anthropic client, so it reads the `execute` bearer alone and pings nothing (the check is the
+window's). A `--submit` pass runs `run-window --instance prod --report-dir <pass directory> --now
+<UTC time>` and then sends the digest. The program gets `COOLIFY_BASE_URL`, `COOLIFY_API_TOKEN`,
+`ANTHROPIC_API_KEY`, `CHANGE_MGR_API_BASE` (`https://change-mgr.alobar.net`) and
+`CHANGE_MGR_M2M_TOKEN`, the names the bundle reads. No `COOLIFY_DEV_*` or `COOLIFY_PROD_*` variable
+reaches it; infraops' Coolify client reads `COOLIFY_PROD_*` before the base pair.
+
+The lane keeps the window's existing check, `Change Manager OPs Check` (slug `operations-check`),
+as an outcome alarm: `/start`, then success on 0 or `/fail` with the report. `LANE_CHECKS` names
+it, and `test_the_check_names_are_the_launchers` reads a quoted check name. Whether the self-hosted
+listing the quiet slot reads holds exactly one check of that name is a cut-over verify item.
+
+The digest is an `info` notice, sent at once with the Mac's key (`report:change-window:<date>`)
+and subject, and cut to the hub's notice limits (12,000 characters, a 16,384-byte body). It isn't
+an `info` alert held through quiet hours, for these reasons, from alert-hub's sender guide and
+source:
+
+- A held alert that is closed before quiet hours end never delivers: `staleReason` cancels a
+  pending delivery when its alert is closed (`src/engine/delivery.ts`).
+- An alert left open makes the next day's send with the same key a repeat that notifies nobody,
+  and the sender guide forbids a date in an alert key.
+- An alert's `message` caps at 4,000 characters, a notice's at 12,000, and the sender guide's
+  "Send a report as a notice" is the documented form for a daily report.
+
+So the digest arrives at about 04:00, not at the Mac's 07:30 outbox send: a notice delivers on
+arrival, and the lane keeps no outbox. A failed send logs one line and leaves the pass's exit as it
+was.
+
+The lane's four secrets don't exist yet, so each id is empty in the launcher, and a pass that needs
+an empty id fails closed with one line before it clones or reads anything. `test_run_change_window.py`'s
+`EMPTY_IDS` lists them, and `test_deploy_lanes.py`'s `placeholders` lists the lane for its empty
+ping-URL id. The ids live in the launcher, not the compose, because `lane-run` passes the
+launcher a fixed list of variables.
+
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act.
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-change-window` from the
+   compose without deploying it.
+2. The lane's identity gate and the mint gates for its four secrets and its ping URL: the new
+   `change-window` lane account with read grants on exactly those five. The four are a dedicated
+   Coolify window token (D-68 B), change-manager's `execute` bearer (`M2M_TOKEN_EXECUTE`,
+   change-manager #168), an Anthropic API key, and an alert-hub sender token for the digest. Then
+   the VM root's keeper commands for the lane token and `change-window-ping-url`.
+3. The lane's `.bws-secrets.toml` and `.cred-consumers.toml` rows in this repository, with the
+   secrets' UUIDs, in their own changes. In the same work, a change writes each UUID into the
+   launcher and removes it from `EMPTY_IDS`.
+4. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write, read from `Change Manager OPs Check` (ADR-0055 amendment 23).
+5. A served release whose compose names the ping-URL secret's id, with `change-window` removed from
+   `test_deploy_lanes.py`'s `placeholders`.
+6. The lane's `--add`, then the `lane-run --read` proof over all five secrets.
+7. The paired pass: `run-window --dry-run --instance prod` on both hosts in the same minute (the
+   bare `lane-run change-window` in the container), compared on exit code and on the set of ids
+   each would claim. Beside it, read-only reach probes from the lane's container: `curl -fsS
+   http://100.92.138.19:8000/api/health` (no token) for production Coolify, and an unauthenticated
+   request to the Anthropic API base that proves the container reaches the host. Neither proves
+   the Coolify token's or the Anthropic key's authority; only a `--submit` pass uses them.
+8. The schedule, and the Mac job's retirement: boot out and disable `com.devon.change-window`
+   between two 04:00 passes, then turn the container's schedule on, so the two never run the same
+   window.
+9. After the cut-over: change-manager's pull request deleting its
+   `launchagent:com.devon.change-window` required check (D-69 A); security-standards' registry and
+   governance-map lines for the moved job; and, after rollback ends, infraops-mcp-server's removal
+   of the Mac job.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
