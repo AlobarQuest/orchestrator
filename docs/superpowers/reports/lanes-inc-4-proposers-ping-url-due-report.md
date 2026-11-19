@@ -4,7 +4,7 @@ Outcome: done
 
 Handoff: `lanes-inc-4-proposers-ping-url-due` (worker W-228). Branch
 `hq/lanes-inc-4-proposers-ping-url-due`, base `origin/main` at `3fffa6e5`, as the handoff read.
-PR: PR_PLACEHOLDER.
+PR: #747 (`AlobarQuest/orchestrator`); the code is `7c8c5b96`, and the PR head is the commit that adds this line.
 
 ## What I built
 
