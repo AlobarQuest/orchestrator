@@ -48,13 +48,15 @@ SEAMS = {
 DIGEST = "# Change window\n\n- app-one: done\n"
 
 # The `bws` stub logs the UUID and the token it was given. A UUID in `$BWS_REFUSES` fails, and one
-# in `$BWS_EMPTY` holds an empty value; the ping-URL secret holds `PING_URL`; every other secret
+# in `$BWS_EMPTY` holds an empty value, and `$BWS_RAW_UUID` answers `$BWS_RAW` as it is; the
+# ping-URL secret holds `PING_URL`; every other secret
 # `value-of-<uuid>`.
 _BWS = f"""#!/bin/sh
 echo "$3 token=${{BWS_ACCESS_TOKEN:-}}" >> "$BWS_LOG"
 echo "bws $*" >> "$ARGV_LOG"
 case " $BWS_REFUSES " in *" $3 "*) exit 1 ;; esac
 case " $BWS_EMPTY " in *" $3 "*) echo '{{"value": ""}}'; exit 0 ;; esac
+[ "$3" = "${{BWS_RAW_UUID:-}}" ] && {{ printf '%s' "$BWS_RAW"; exit 0; }}
 [ "$3" = "{PING_URL_UUID}" ] && {{ echo '{{"value": "{PING_URL}"}}'; exit 0; }}
 printf '{{"value": "value-of-%s"}}' "$3"
 """
@@ -448,6 +450,17 @@ def test_an_unreadable_or_empty_secret_fails_the_pass_before_the_window(
     assert run.nodes() == []
     assert run.send == []
     assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+@pytest.mark.parametrize("value", ['a"b', "a\\\\b", "a b"], ids=["quote", "backslash", "space"])
+def test_a_sender_token_curls_config_cant_carry_fails_before_the_window(
+    tmp_path: Path, value: str
+) -> None:
+    raw = json.dumps({"value": value})
+    run = _run(tmp_path, "--submit", BWS_RAW_UUID=SENDER_UUID, BWS_RAW=raw)
+    assert run.returncode == 1
+    assert "holds a character curl's config can't carry" in run.stderr
+    assert run.nodes() == [] and run.send == []
 
 
 @pytest.mark.parametrize("mode", [(), ("--submit",)], ids=["bare", "submit"])

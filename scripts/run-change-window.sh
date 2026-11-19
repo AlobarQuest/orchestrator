@@ -139,6 +139,12 @@ if [ "$SUBMITTING" -eq 1 ]; then
   _DIGEST_TOKEN="$(sds_bws_value "$DIGEST_SENDER_UUID")"
   [ -n "$_DIGEST_TOKEN" ] || sds_outcome_fail \
     "FATAL: could not read the digest's alert-hub sender token from BWS (the lane's token), or it is empty"
+  # The token becomes one quoted line of curl's config, so it may hold no quote, backslash or
+  # whitespace, as `sds_deadman_resolve_by_uuid` holds the ping URL.
+  case "$_DIGEST_TOKEN" in
+    *[[:space:]\"\\]*) sds_outcome_fail \
+      "FATAL: the digest's alert-hub sender token holds a character curl's config can't carry" ;;
+  esac
   COOLIFY_BASE_URL="$COOLIFY_URL"
   export COOLIFY_BASE_URL COOLIFY_API_TOKEN ANTHROPIC_API_KEY
 fi

@@ -14,7 +14,7 @@ lane files and docs only. I made no live call and no production act, and wrote n
 | `lanes/change-window/compose.yaml` | New. One service: the `sds-lanes` image at `${SDS_LANES_IMAGE_TAG}`, `command: ["change-window"]`, `BWS_ACCESS_TOKEN: ${CHANGE_WINDOW_BWS_ACCESS_TOKEN}`, `LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}` and `SDS_DEADMAN_PING_URL_UUID: ""`. It has no volume, network, ports or labels, and uses `restart: unless-stopped`. |
 | `lanes/change-window/crontab` | New. `0 4 * * * lane-run change-window --submit`. |
 | `scripts/run-change-window.sh` | New. The container-only launcher. |
-| `tests/scripts/test_run_change_window.py` | New. 44 tests with fake `bws`, `git`, `node` and `curl`. |
+| `tests/scripts/test_run_change_window.py` | New. 47 tests with fake `bws`, `git`, `node` and `curl`. |
 | `scripts/deploy_orchestrator.py` | One `LANE_CHECKS` row: `"change-window": "Change Manager OPs Check"`. I also edited the table's comment. |
 | `tests/scripts/test_deploy_lanes.py` | `_ARM` and `_CHECK_NAME` read a quoted or a bare check name (never a `$` expansion), and `len(names) == 1` stays. I added a control test, `test_a_check_name_is_read_quoted_or_bare_and_never_as_an_expansion`. `change-window` joins `placeholders`. |
 | `layers.toml` | The launcher and its test join the `landing` layer. `lanes/**` is already `runtime`'s. |
@@ -112,9 +112,9 @@ be used.
 ## Tests and checks
 
 - `make check` against `orchestrator_test_hq_w_231`: ruff, format, pyright and shellcheck clean.
-  **15,829 passed, 1 skipped (15,830 collected)** in 314 seconds.
-- `tests/scripts/test_run_change_window.py`: 44 passed.
-- Mutation runs: 15 mutations, each with the file backed up, restored and checked restored, and
+  **15,832 passed, 1 skipped (15,833 collected)** in 314 seconds.
+- `tests/scripts/test_run_change_window.py`: 47 passed.
+- Mutation runs: 16 mutations, each with the file backed up, restored and checked restored, and
   `__pycache__` cleared. Every mutation failed at least one test, so none survived:
   - Check-name test (HQ's requirement):
     - The launcher names `Change Manager Ops Check`, which differs from its `LANE_CHECKS` row.
@@ -132,6 +132,7 @@ be used.
     - The digest token is exported.
     - A failed send sets `rc=1`.
     - An odd `run-window` code folds to 0.
+    - The sender token's character guard is removed.
 
   My first M5 and M12 attempts matched the header comment instead of the code and survived. I reran
   both against the code lines, and both failed a test.
@@ -205,6 +206,17 @@ be used.
 - The test's `Run` reads every stub's argv log, so the no-secret-in-argv check is dynamic, across
   `bws`, `git`, `node` and `curl`. It isn't a text scan.
 - Every pass's temporary directory is checked empty after the run, failures included.
+- `/code-review` at medium effort on `origin/main...HEAD` returned five findings:
+  - Fixed: the digest token was written into a quoted curl config line unchecked. A token holding a
+    quote, backslash or whitespace now fails the pass before the window runs, as
+    `sds_deadman_resolve_by_uuid` checks the ping URL. Three tests cover it.
+  - Not fixed: the CLI's codes other than 0 and 1 fold to 1. `main` exits only 1 on an error, and
+    the fold is documented in the header.
+  - Not fixed: the digest file's date. The source names the file `opts.now.slice(0, 10)`, which is
+    the launcher's own `--now` date.
+  - Not fixed: the cut loop costs one encode per character. It's the Mac's `_cut_report` logic,
+    and it runs only on a digest over 12,000 characters.
+  - Reported as a concern: the clone at an unpinned `main`, which is D-66 A's design.
 
 ## Standards followed
 
@@ -235,6 +247,10 @@ be used.
 
 ## Concerns and follow-ups
 
+- **The clone is unpinned.** Each `--submit` pass runs infraops-mcp-server's `main` bundle with
+  the prod Coolify window token, the Anthropic key and the `execute` bearer in its environment, so
+  `main`'s branch protection is the trust boundary. That's D-66 A's design and the rotation
+  proposer's clone model, recorded here for the mint gates.
 - **Shared minute 0.** The 04:00 line shares minute 0 with execution-watch's `*/15`. Every other
   lane took a minute no lane starts on, and each lane's own test asserts that its minute is unique.
   This lane's test doesn't, because the time is HQ's configuration. The two containers share no
