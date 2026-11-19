@@ -4254,11 +4254,26 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
    takes effect only by the act named for it:
    - **The production Coolify window token.** Devon's act: he creates it in production Coolify with
      the permissions in decision item 3 and mints its value into BWS.
-   - **change-manager's `execute` bearer.** Devon's act: he mints the value into BWS. The bearer
-     authenticates only once its hash is in change-manager's `M2M_TOKEN_EXECUTE` setting and
-     change-manager has restarted (change-manager `docs/operations/bearer-settings.md`). This
-     amendment grants that setting's write and the restart to no one; whoever makes them, they
-     precede the lane's paired pass, which reads the bearer.
+   - **change-manager's `execute` bearer.** Devon mints its value into BWS and grants its read:
+     that's Devon's part of the mint gate. An interactive session then does the rest, as the
+     session's part of the change-window lane's mint gate, not an unattended HQ cycle (which reads
+     no secret value, and the hash needs the value) and not Devon. The session reads the bearer by
+     UUID in one process, computes its sha256 hash in-process without echoing it, and writes the
+     JSON entry (`{"execute": {"token_hash": "<sha256>"}}`) to change-manager's
+     `M2M_TOKEN_EXECUTE` in both `is_preview` rows through infraops (change-manager
+     `docs/operations/bearer-settings.md` at `e57076f2`, "The value" and its two-rows rule). It
+     then restarts change-manager as an announced production act with no lane, because the
+     restart touches the whole service. It verifies the restart by change-manager's `/api/health`
+     `revision` (`app/main.py` lines 21-32 at `e57076f2`), by one `execute`-scoped read with the
+     new bearer, and by a known-bad control bearer that's refused. All of this precedes the lane's
+     paired pass, which reads the bearer. Source: HQ's answer to W-232's question, applying the
+     cycle's credential rule (Devon, 2026-11-14, after G-57: Devon's part of a credential is
+     generating its value, storing it in BWS and granting its read, and everything else is the
+     session's, setting the value where it's used and every check included) and the standing
+     answer ("Devon still mints every new credential value into BWS and grants its read; that
+     part is a gate"). Who rotates the bearer later is what its keeper row in change-manager's
+     `.cred-consumers.toml` says when that row is added at the same gate; this amendment doesn't
+     decide it.
    - **The lane's Anthropic key.** Devon's act: he creates it and mints its value into BWS. HQ's
      application of the standing answer.
    - **The `report-change-window` sender and its token.** Devon's act for the token's value, minted
@@ -4270,8 +4285,8 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
      landed as a change-manager PR (decision item 4).
    - **No path to dev Coolify, and no dev executor.** D-67 C: none is created.
 
-   No other account, BWS grant, Coolify token, change-manager scope, network path or executor
-   kind. The lane gains no GitHub credential: infraops-mcp-server is public, so its clone is
+   No other account, BWS grant, Coolify token, change-manager scope, network path, executor
+   kind or production act. The lane gains no GitHub credential: infraops-mcp-server is public, so its clone is
    anonymous (lines 307-309).
 
 ### Verify items
