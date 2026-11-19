@@ -153,3 +153,10 @@ runs upstream's newest npm release with telemetry on, outside the fork's review.
   on it and the guard passes (`would_advance`). The rule's fix and the installer row land in one
   pull request, so `hardened` must be created by a `--push` pass before the installer's next pass:
   the installer's measurement of a row whose branch doesn't exist fails the whole pass.
+
+## Amendment 2 — Fork hardening moves to localops (2026-11-19)
+
+Fork hardening leaves SDS for `AlobarQuest/localops`, Devon's repository for Mac-only tools, under
+ADR-0059 Amendment 16 (D-57 A). It moves with the same function. The copy takes its forks from
+localops' own list instead of the SDS member record (D-71). This ADR's decisions keep governing it
+in localops until localops records its own.
