@@ -4147,9 +4147,9 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
    infraops-mcp-server `main`'s branch protection is the trust boundary for the lane's whole
    production write authority. Devon chose this knowing it, and flagged a revisit (verify items).
 2. **Production items only; a person handles dev items (D-67 C).** The lane runs `run-window` with
-   `--instance prod` in both modes, and the launcher unsets every `COOLIFY_DEV_*` and
-   `COOLIFY_PROD_*` variable before `node` runs (`scripts/run-change-window.sh` lines 151-153), so
-   the program has no dev client. infraops' `selectItems` applies the instance filter before the
+   `--instance prod` in both modes, and the launcher unsets `COOLIFY_DEV_BASE_URL`,
+   `COOLIFY_DEV_API_TOKEN`, `COOLIFY_PROD_BASE_URL` and `COOLIFY_PROD_API_TOKEN` before `node` runs
+   (`scripts/run-change-window.sh` lines 151-153), so the program has no dev client. infraops' `selectItems` applies the instance filter before the
    cap and before any claim, and a dry run and a real run share it (`run-window.ts` lines 32-46 at
    `fdf3e91b`). So the lane never claims, executes or posts an outcome for a dev item, and a dev
    item never takes a slot under the cap. The list call itself is unfiltered
@@ -4163,11 +4163,24 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
    answer).** The lane's own BWS machine account, `sds-lane-change-window` (decision 2, lines
    487-494), reads exactly five secrets, by UUID, and nothing else. None exists yet, so this
    amendment names each by role, not by UUID:
-   - **A dedicated production Coolify window token (D-68 (1) B).** In D-68's words, "application
-     read, PATCH, and deploy only, no read:sensitive". How Coolify's token permissions express that
-     is checked at the token's mint gate (verify items). The lane sends it only to `http://100.92.138.19:8000` (decision
-     item 5). It replaces the Mac job's read of `bbd71f41-…` for this lane; the lane never reads
-     that token.
+   - **A dedicated production Coolify window token (D-68 (1) B), its permissions open under
+     D-70.** In D-68's words, "application read, PATCH, and deploy only, no read:sensitive". The
+     sources don't show a token of that shape. ADR-0055 at `3585b4f9` lists the production
+     Coolify token's permissions as "Team-wide `read`, `write` and `deploy`, no
+     `read:sensitive`", reaching env writes, restarts, creating and deleting applications,
+     projects, servers, databases and SSH keys, and running any image, so it "probably reaches
+     secrets from a container" (line 341). ADR-0055's probe 1 measured, on dev Coolify beta.470,
+     that a token without `write` gets 403 `Missing required permissions: write` on
+     `POST`/`PATCH /applications/{uuid}/envs` and restart (line 525). The window PATCHes `/applications/{uuid}` (infraops `src/change-manager/tools.ts` lines
+     189, 210, 248 and 255 at `fdf3e91b`) and deploys (line 222); an application PATCH without
+     `write` wasn't measured. So the approved shape can't be minted as worded from what these
+     sources show, and they don't show whether production beta.473 offers an application-scoped
+     permission. Which token the lane gets is D-70's to decide (sds-hq `state/decisions.md` at
+     `9fd32943`, line 5): (A) a dedicated team-wide `read`, `write` and `deploy` token without
+     `read:sensitive`, or (B) `read` and `deploy` only, with items that need a PATCH left to a
+     person. D-70 isn't answered. Whichever token D-70 names, the lane sends it only to
+     `http://100.92.138.19:8000` (decision item 5), and it replaces the Mac job's read of
+     `bbd71f41-…` for this lane; the lane never reads that token.
    - **change-manager's `execute` bearer (D-68 (2) B).** change-manager #168's scope: read, plus
      `POST /api/items/{id}/claim`, `POST /api/items/{id}/outcome`, `POST /api/window-runs` and
      `PATCH /api/window-runs/{window_id}`, nothing else (`app/scopes.py` at `e57076f2`). It's
@@ -4179,11 +4192,9 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
      (`b74bf8b3-…`). Its narrowest available form is checked at its mint gate (verify items).
    - **A new alert-hub sender for the digest.** HQ's application of the standing answer, and HQ's
      naming: sender `report-change-window`. A sender token posts `/v1/alerts` as one source, the
-     narrowest credential alert-hub offers, and its one consumer is this lane. Its name
-     matches the `report-*` source glob that alert-hub's sender guide documents for routing reports
-     to email only ("Route reports to email only"), so, per W-231's report ("Report, don't fix"),
-     it needs no rule change. The lane doesn't read the Mac's `report-infraops` token (`4ed74de3-…`) or
-     `ALERT_HUB_TOKEN`.
+     narrowest credential alert-hub offers, and its one consumer is this lane. The notice needs no
+     rule change, as today's `report-infraops` sender's doesn't. The lane doesn't read the Mac's
+     `report-infraops` token (`4ed74de3-…`) or `ALERT_HUB_TOKEN`.
    - **The lane's ping-URL secret**, issued as for every moved lane (Amendment 2; ADR-0055
      amendment 23).
 
@@ -4250,10 +4261,15 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
      deleted.
    - **alert-hub:** the `report-change-window` sender, as configuration within its existing rules.
 7. **Authority, exactly.** D-66 A, D-67 C, D-68 B, B and the standing answer, and D-69 A approve
-   these, for change-window's move and nothing wider. The merge authorizes exactly these; each
-   takes effect only by the act named for it:
-   - **The production Coolify window token.** Devon's act: he creates it in production Coolify with
-     the permissions in decision item 3 and mints its value into BWS.
+   these, for change-window's move and nothing wider. The merge authorizes exactly these, except
+   the production Coolify window token, which it doesn't authorize; each takes effect only by the
+   act named for it:
+   - **The production Coolify window token: not authorized by this amendment.** D-68's approved
+     shape can't be minted as worded (decision item 3), and D-70, which decides the token, isn't
+     answered. The token is authorized only once D-70's answer is recorded in a later amendment or
+     a row of this ADR, and then as that answer names it. Until then the mint gate stops before
+     creating it. Once authorized, it's Devon's act: he creates it in production Coolify and mints
+     its value into BWS.
    - **change-manager's `execute` bearer.** Devon mints its value into BWS and grants its read:
      that's Devon's part of the mint gate. An interactive session then does the rest, as the
      session's part of the change-window lane's mint gate, not an unattended HQ cycle (which reads
@@ -4267,11 +4283,19 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
      `revision` (`app/main.py` lines 21-32 at `e57076f2`), by one `execute`-scoped read with the
      new bearer, and by a known-bad control bearer that's refused. All of this precedes the lane's
      paired pass, which reads the bearer. Source: HQ's answer to W-232's question, applying the
-     cycle's credential rule (Devon, 2026-11-14, after G-57: Devon's part of a credential is
-     generating its value, storing it in BWS and granting its read, and everything else is the
-     session's, setting the value where it's used and every check included) and the standing
-     answer ("Devon still mints every new credential value into BWS and grants its read; that
-     part is a gate"). Who rotates the bearer later is what its keeper row in change-manager's
+     standing answer ("Devon still mints every new credential value into BWS and grants its read;
+     that part is a gate") and the cycle's credential rule, which sds-hq `prompts/cycle.md` line
+     41 at `68466c01` states as:
+
+     > **A credential's part for Devon** is only generating its value, storing it in BWS, and
+     > granting read access, then giving the session the UUIDs. Everything else is the session's:
+     > running setup scripts, setting a password where it's used (a Postgres role by SCRAM
+     > verifier), and every check. Never give Devon terminal commands or ask him to build a value
+     > by hand. When a runbook or ADR says a person or "the owner" runs a step by hand, the
+     > session is that person unless the step needs Devon's own login or judgment (Devon,
+     > 2026-11-14, interactive session, after G-57: "Draft approved").
+
+     Who rotates the bearer later is what its keeper row in change-manager's
      `.cred-consumers.toml` says when that row is added at the same gate; this amendment doesn't
      decide it.
    - **The lane's Anthropic key.** Devon's act: he creates it and mints its value into BWS. HQ's
@@ -4279,8 +4303,9 @@ OrbStack VM (lines 1076-1078). Four facts frame Devon's answers:
    - **The `report-change-window` sender and its token.** Devon's act for the token's value, minted
      into BWS; the sender's name is HQ's configuration under the standing answer.
    - **The lane account's read grants on exactly those four and its ping-URL secret.** Devon's
-     act, at the lane's identity gate (cut-over step 1). The lane token and ping URL are issued
-     as Amendment 2 and ADR-0055 amendment 23 issue every lane's.
+     act, at the lane's identity gate (cut-over step 1). The grant on the Coolify window token
+     waits for that token, which only D-70's recorded answer authorizes. The lane token and ping
+     URL are issued as Amendment 2 and ADR-0055 amendment 23 issue every lane's.
    - **The deletion of change-manager's `launchagent:com.devon.change-window` entry.** D-69 A,
      landed as a change-manager PR (decision item 4).
    - **No path to dev Coolify, and no dev executor.** D-67 C: none is created.
@@ -4308,15 +4333,13 @@ for one lane") and its mint gates (cut-over step 2 there).
   Nothing returns them; a person does. What prevents it is the cut-over's "confirm no pass is
   running" (cut-over step 2, lines 1148-1151) before the bootout, and the quiet slot's `started`
   read of the lane's check before every redeploy of its resource (lines 221-236).
-- **The Coolify window token's permissions (increment 8's mint gate).** Before the token is
-  created, the mint gate reads Coolify's token permissions from Coolify's own documentation or
-  the instance's token screen and records how "application read, PATCH, and deploy only, no
-  read:sensitive" maps to them. The estate lander's token is `read`, `write` and `deploy`
-  (`.cred-consumers.toml` line 665), and W-223 proposed that shape (option b). If Coolify has no
-  application-only write, the token is the narrowest set that does the window's three calls
-  (read an application, PATCH it, deploy it) without `read:sensitive`, and the gate records what
-  that set reaches beyond applications. A token that can't do the job is Devon's decision under
-  the standing answer.
+- **D-70 is open: which Coolify window token (increment 8's mint gate).** D-70 (sds-hq
+  `state/decisions.md` at `9fd32943`, line 5) isn't answered, and this amendment authorizes no
+  Coolify window token (decision item 7). The gap lands at increment 8's mint gate: its answer is
+  recorded in a later amendment or a row of this ADR before the gate creates the token, and the
+  gate stops until it is.
+- **The Coolify window token's permissions (increment 8's mint gate).** The mint gate reads the
+  production instance's token screen and creates only the token D-70's recorded answer names.
 - **The Anthropic key's narrowest form (increment 8's mint gate).** infraops-mcp-server's
   `docs/secrets-inventory.md` says Anthropic doesn't support per-key scoping, and the bundled SDK
   reads workspace and service-account variables, which hints at a narrower form (W-231's
@@ -4346,9 +4369,9 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 |---|---|
 | Decision 1's clone bullet, "The lanes that need other repositories clone them at the start of each pass. These lanes are the bump driver ..., both bridge proposers ..., the work carrier ... and fork hardening" and "Each clone is shallow, at `main`, into a directory the pass discards" (lines 306-311) | Extended by decision item 1 (D-66 A): the change-window lane also clones infraops-mcp-server, anonymous, shallow, at `main`, into a directory the pass removes, and runs its bundled CLI from the clone. No venv and no install. |
 | Decision 2, "Each moved lane gets its own BWS machine account ... with a direct read grant on exactly the lane's `.bws-secrets.toml` entries and nothing else" (lines 487-494) | Stands. `sds-lane-change-window` reads exactly the four secrets and the ping URL of decision item 3. |
-| "Agents outside this repository", the `change-window` row (line 822) | Stands as a description of the Mac job today. The moved lane differs by decision items 1 to 3 and 5: it runs the bundled CLI from a per-pass clone, not infraops' working copy; it executes production items only, with no dev token; it sends the digest itself as a notice at about 04:00; and its own account reads the four narrow secrets, not the shared identity's Coolify tokens, Anthropic key and full bearer. "Moves, increment 8 (D-9)" stands. |
+| "Agents outside this repository", the `change-window` row (line 822) | Stands as a description of the Mac job today. The moved lane differs by decision items 1 to 3 and 5: it runs the bundled CLI from a per-pass clone, not infraops' working copy; it executes production items only, with no dev token; it sends the digest itself as a notice at about 04:00; and its own account reads four secrets of its own, not the shared identity's Coolify tokens, Anthropic key and full bearer; the Coolify window token among them waits for D-70. "Moves, increment 8 (D-9)" stands. |
 | Increment 8, "with the prod and dev Coolify tokens" (lines 1075-1076) | Superseded for the moved lane by decision item 2 (D-67 C): the lane holds only the production window token. |
-| Increment 8, "Its identity question: ... it needs its own" (lines 1076-1077) | Answered by decision item 3 (D-68 B, B and the standing answer). |
+| Increment 8, "Its identity question: ... it needs its own" (lines 1076-1077) | Answered by decision item 3 (D-68 B, B and the standing answer), except the Coolify window token's permissions, which are open under D-70 (verify items). |
 | Increment 8, "how a container reaches the dev Coolify on the Mac's OrbStack VM is that increment's to decide" (lines 1077-1078) | Answered by decision item 2 (D-67 C): no container reaches it, and a person handles dev items. |
 | "Each increment's plan records which repositories it changes and which identities it creates" (line 1087) | Met for increment 8 by decision items 3 and 6. |
 | "Cut-over for one lane", step 2, "Then run the lane's reporting mode (the invocation that changes no record) on the Mac and in the container within the same minute" (lines 1133-1135) | Extended by the paired-pass verify item: change-window's reporting mode is `run-window --dry-run --instance prod`, which pings nothing. |
@@ -4357,6 +4380,6 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Amendment 6, decision item 1, "A lane has moved once its paired pass on the VPS matches its Mac run ... and its Mac job is booted out and disabled" (lines 2679-2682), and decision item 4, "increments 8 and 9's plans state theirs" (lines 2694-2696) | Stands. Increment 8 is done at its cut-over checks: the paired pass as the verify items shape it, and the bootout plus disable of `com.devon.change-window`. The plist is kept until infraops' removal (decision item 6). |
 | Amendment 9, decision item 3, "the phase needs increment 8 to have moved change-window at its cut-over checks" (lines 3016-3018), and its row on the done-when paragraph (line 3067) | Stands. Dev items leaving the lane (decision item 2) don't change the bar: no dev executor remains on the Mac, so no change-window job stays there. |
 | Amendment 9's row on "Agents outside this repository" ("change-window still moves as increment 8", line 3060) and its row on Q7 ("change-window's move as increment 8 stands", line 3068) | Stand. |
-| Amendment 9's row on the `change-window` row, "Its shared Keychain identity with infra-drift ... is increment 8's to replace for change-window" (line 3061), and its row on increment 8, "infra-drift keeps the shared identity; change-window gets its own" (line 3063) | Answered by decision item 3: change-window's own account reads four new, narrow secrets. infra-drift keeps the shared identity (D-41). |
+| Amendment 9's row on the `change-window` row, "Its shared Keychain identity with infra-drift ... is increment 8's to replace for change-window" (line 3061), and its row on increment 8, "infra-drift keeps the shared identity; change-window gets its own" (line 3063) | Answered by decision item 3: change-window's own account reads four new secrets of its own; the Coolify window token among them is open under D-70 (verify items). infra-drift keeps the shared identity (D-41). |
 | Amendment 13's Context, "Five entries are Mac facts: change-manager's `launchagent:com.devon.change-window`, ..." (lines 3751-3754), and its wiring-bound verify item, "five at the base" (lines 3933-3937) | Stand as of their base. After D-69 A's deletion, four entries are Mac facts, and the bound's "names nothing no member declares" requires the security-standards change of decision item 6 if #101's `WIRING` still names the label. |
 | Amendment 13's verify item, "Increment 8 breaks change-manager's `checks` cell (increment 8). When `com.devon.change-window` moves off the Mac, its plist leaves `~/Library/LaunchAgents` ... Increment 8's plan changes change-manager's declaration or adds an executor kind to project-standards" (lines 3953-3957) | Answered by decision item 4 (D-69 A): change-manager's declaration changes, by deleting the entry; no executor kind is added. Its timing is corrected: the cut-over keeps the plist (Amendment 6 decision item 2), so the entry reads a hollow pass until infraops' removal deletes the plist, and change-manager's PR merges before that deletion. |
