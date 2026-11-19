@@ -174,6 +174,9 @@ No Mac `runtime-fetch` entry changed (lines 111 and 216).
   `bws.manifest-matches-usage` (`aaff45ca-…`). The INFO is the judgment prompt on machine-account
   scope.
 - `/code-review` (low) on `origin/main...HEAD` returned no findings.
+- CI on PR head `4f7d66ad` (run 44594948558) passed. `Quality` ran 14,683 passed and 26 skipped,
+  and `Runner consumer compatibility` and `Rollout transcription currency` passed too. That head
+  carries all the code; the only later commit is this line.
 
 ## Files changed
 
