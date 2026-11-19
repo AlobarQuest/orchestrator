@@ -1261,8 +1261,10 @@ its own change or act.
    `read:sensitive` (D-70 A, ADR-0059 Amendment 15), change-manager's `execute` bearer
    (`M2M_TOKEN_EXECUTE`, change-manager #168), an Anthropic API key, and an alert-hub sender token
    for the digest. Devon creates and mints each value and grants each read. Once the `execute`
-   bearer is minted, the session reads it by UUID in one process, writes its sha256 hash (never
-   echoed) to change-manager's `M2M_TOKEN_EXECUTE` in both `is_preview` rows, restarts
+   bearer is minted, the session reads it by UUID in one process and, through infraops, writes the
+   JSON entry holding its sha256 hash (computed in-process, never echoed) to change-manager's
+   `M2M_TOKEN_EXECUTE` in both `is_preview` rows (change-manager
+   `docs/operations/bearer-settings.md`, "The value"), restarts
    change-manager as an announced production act, and verifies the restart by `/api/health`
    `revision`, one `execute`-scoped read with the new bearer and a refused control bearer, all
    before the paired pass (ADR-0059 Amendment 14 decision item 7). Then the VM root's keeper

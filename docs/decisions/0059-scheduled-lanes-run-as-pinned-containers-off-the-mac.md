@@ -4425,9 +4425,11 @@ amendment governs once it's accepted.
 ### Context
 
 Amendment 14 decision item 3 found that D-68 (1) B's window token, "application read, PATCH, and
-deploy only, no read:sensitive", can't be minted as worded: Coolify's token permissions are
-team-wide, and a token without `write` gets 403 on the writes ADR-0055's probe 1 measured. It left
-the token to D-70 and authorized none (decision item 7). D-70 is answered.
+deploy only, no read:sensitive", can't be minted as worded from what its sources show: a token
+without `write` gets 403 on the writes ADR-0055's probe 1 measured, and the sources don't show an
+application-scoped permission on production beta.473. D-70's question states the premise Devon
+answered: Coolify's token permissions are team-wide, and PATCHing an application needs `write`.
+Amendment 14 left the token to D-70 and authorized none (decision item 7). D-70 is answered.
 
 Amendment 14's title says the lane moves "on its own narrow credentials". For the production
 Coolify token that's no longer accurate: the token is the lane's own, but it isn't narrow. The
@@ -4451,8 +4453,9 @@ paragraph records the correction.
    - **The token itself.** Devon's act at increment 8's mint gate (`deploy.md`, the change-window
      cut-over, step 2): he creates it on production Coolify's token screen with exactly the
      permissions of decision item 1 and mints its value into BWS.
-   - **The lane account's read grant on it.** Devon's act at the lane's identity gate (the same
-     step), as one of the five grants Amendment 14 decision item 7 names.
+   - **The lane account's read grant on it.** Devon's act at the lane's identity gate, which
+     `deploy.md`'s change-window cut-over step 2 holds with the mint gates (Amendment 14 decision
+     item 7 calls it the generic "cut-over step 1"), as one of the five grants that item names.
 
    No other token, permission, grant, account or production act. The pin of decision item 3 is a
    requirement on later work, not an authority this amendment grants.
@@ -4463,9 +4466,9 @@ paragraph records the correction.
    no secrets present) is the shape on record; the design is a later decision, not this
    amendment's. The pin doesn't block increment 8's cut-over, and it isn't a verify item of any
    increment. sds-hq's `plan/year-plan.md` names no security phase yet (that's Devon's to add),
-   so the bound is tracked in sds-hq `state/goal.md`, under Queued. Until the pin lands, Amendment
-   14 decision item 1's residual stands, and it now covers a team-wide `write` token: the code
-   that holds it is infraops-mcp-server's unpinned `main` at pass time.
+   so the bound is tracked in sds-hq `state/goal.md`, under Queued (line 76 at `5aede8b`). Until
+   the pin lands, Amendment 14 decision item 1's residual stands, and it now covers a team-wide
+   `write` token: the code that holds it is infraops-mcp-server's unpinned `main` at pass time.
 4. **Not a standing answer.** In Devon's words, "Not a standing answer." D-70 decides this lane's
    token only. It sets no rule for another lane's Coolify token, and it doesn't change the
    standing answer Amendment 14 quotes ("every lane credential is single-purpose and
@@ -4479,7 +4482,7 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 |---|---|
 | Amendment 14 decision item 3, the token bullet, "A dedicated production Coolify window token (D-68 (1) B), its permissions open under D-70 ... the lane never reads that token" (lines 4166-4184) | Superseded by decision item 1: the token is D-70 A's dedicated team-wide `read`, `write` and `deploy` token without `read:sensitive`. Its last two sentences (only `http://100.92.138.19:8000`; replaces the Mac job's read of `bbd71f41-…`, which the lane never reads) stand. |
 | Amendment 14 decision item 7, "The merge authorizes exactly these, except the production Coolify window token, which it doesn't authorize" (lines 4265-4267), and its token bullet, "The production Coolify window token: not authorized by this amendment ... mints its value into BWS" (lines 4268-4273) | Superseded by decision item 2: this amendment authorizes the token, created and minted by Devon at the mint gate. |
-| Amendment 14 decision item 7, the grants bullet, "The grant on the Coolify window token waits for that token, which only D-70's recorded answer authorizes" (lines 4307-4309) | Superseded by decision item 2: the grant is authorized, as Devon's act at the identity gate. The rest of the bullet stands. |
+| Amendment 14 decision item 7, the grants bullet, "The grant on the Coolify window token waits for that token, which only D-70's recorded answer authorizes" (lines 4307-4308) | Superseded by decision item 2: the grant is authorized, as Devon's act at the identity gate. The rest of the bullet stands. |
 | Amendment 14's verify item "D-70 is open: which Coolify window token (increment 8's mint gate)" (lines 4337-4341) | Closed: D-70 is answered, and this amendment records it. |
 | Amendment 14's verify item "The Coolify window token's permissions (increment 8's mint gate)" (lines 4342-4343) | Stands, with D-70's recorded answer named: the mint gate reads the production token screen and creates only decision item 1's token. |
 | Amendment 14's verify item "D-66's revisit (Devon's; no step)" (lines 4359-4363) | Stands as a verify item with no step. Decision item 3 adds Devon's bound: the revisit lands as a pin before the security phase. |

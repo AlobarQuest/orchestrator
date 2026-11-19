@@ -7,12 +7,13 @@ call (no infraops, Coolify or BWS), no production act, no merge.
 
 ## What I built
 
-- `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md`, lines 4387-4490:
+- `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md`, lines 4387-4493:
   `## Amendment 15 (2026-11-19): change-window's production Coolify token is a dedicated
   team-wide token (D-70 A)`, appended after Amendment 14 (lines 4003-4386, unedited). It holds:
   - The D-70 question and recorded answer, quoted verbatim from sds-hq `state/decisions.md` at
     `8cc39b0`, line 13.
-  - Context: Amendment 14 left the token to D-70; the title "on its own narrow credentials" is no
+  - Context: Amendment 14 left the token to D-70 (keeping its hedge on what its sources show;
+    the flat "team-wide" premise is attributed to D-70's question); the title "on its own narrow credentials" is no
     longer accurate for the Coolify token (#750 follow-up 10). The heading isn't renamed.
   - Decision item 1, the token: dedicated, this lane only, team-wide `read`, `write`, `deploy`, no
     `read:sensitive`, with the reach ADR-0055 line 341 records and probe 1's measurement (line
@@ -23,41 +24,45 @@ call (no infraops, Coolify or BWS), no production act, no merge.
   - Decision item 3, the pin: before the security phase starts, the lane runs infraops at a
     pinned commit; D-66 B is the shape on record, the design a later decision; doesn't block
     increment 8; not a verify item; tracked in sds-hq `state/goal.md` Queued, since
-    `plan/year-plan.md` names no security phase.
+    `plan/year-plan.md` names no security phase (line 76 at sds-hq `5aede8b`).
   - Decision item 4: "Not a standing answer", quoted.
   - A "Passages this amendment changes" table superseding, by rows, Amendment 14's token
     bullet (4166-4184), item 7's preamble exception (4265-4267) and token bullet (4268-4273), the
-    grant sentence (4307-4309), the verify items "D-70 is open" (4337-4341) and "The Coolify
+    grant sentence (4307-4308), the verify items "D-70 is open" (4337-4341) and "The Coolify
     window token's permissions" (4342-4343), the D-66 revisit verify item (4359-4363, stands with
     the bound added), table rows 4372, 4373, 4375 and 4384, and the title (4003, not renamed).
-- `docs/operations/deploy.md`, change-window cut-over step 2 (lines 1258-1269): names D-70 A's
+- `docs/operations/deploy.md`, change-window cut-over step 2 (lines 1258-1271): names D-70 A's
   token in place of "a dedicated Coolify window token (D-68 B)" (#750 follow-up 8; the D-70 hold
   is moot now that the token is authorized), and adds the session's `M2M_TOKEN_EXECUTE` hash
-  write, the change-manager restart and its verification, from Amendment 14 decision item 7
+  write (the JSON entry holding the hash, per change-manager `docs/operations/bearer-settings.md`),
+  the change-manager restart and its verification, from Amendment 14 decision item 7
   (#750 follow-up 2). It fit in the same step.
 - This report.
 
 ## Tests and checks
 
-- `make check` against `orchestrator_test_hq_w_234` (`PGTZ=UTC`, fixture
+- `make check` (full) against `orchestrator_test_hq_w_234`, on the first draft before the report
+  existed and before the review fixes (`PGTZ=UTC`, fixture
   `SECURITY_STANDARDS_DIR`): exit 0. Lint "All checks passed", pyright 0 errors, pytest 15,832
   passed, 1 skipped, 15,833 items collected.
 - Security scanner from the repo root (`--category security`): 0 BLOCK, 2 WARN, 1 INFO.
 - Line and quote checks, each at the commit named:
-  - D-70 at sds-hq `8cc39b0` line 13: quoted verbatim, including option (C) "Something else"
+  - D-70 at sds-hq `8cc39b0` line 13: quoted verbatim (compared mechanically, whitespace
+    collapsed), including option (C) "Something else"
     (closing #750 follow-up 12's paraphrase gap for this amendment).
   - ADR-0055 lines 341 and 525 are identical at `3585b4f9` and `67e8d959`; both say what the
     amendment cites.
   - Every Amendment 14 line in the table was read at `67e8d959` (Amendment 14 relative line + 4002).
     Two ranges differ slightly from the handoff's "about" figures: item 7's exception starts at
-    4265 (the handoff said 4266) and the grant sentence starts at 4307 (handoff 4306). Both say
-    what the handoff says.
+    4265 (the handoff said 4266), and the grant sentence is 4307-4308 (handoff 4306-4309; 4309
+    is a different sentence that stands). Both say what the handoff says. Every quoted fragment
+    in the table was matched mechanically against lines 4003-4386 (whitespace collapsed).
   - D-66's question and option B: Amendment 14 lines 4011-4023.
 
 ## Files changed
 
 - `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` (+104)
-- `docs/operations/deploy.md` (+10, -3)
+- `docs/operations/deploy.md` (+12, -3)
 - `docs/superpowers/reports/adr-0059-a15-d70-report.md` (new)
 
 ## Self-review
@@ -73,9 +78,8 @@ call (no infraops, Coolify or BWS), no production act, no merge.
 
 ## Concerns
 
-- The pin's Queued entry exists only in sds-hq's working copy of `state/goal.md` (uncommitted
-  when I read it; the last commit touching the file, `cc70fa2`, has no such entry). The amendment
-  cites `state/goal.md` Queued without a commit for that reason.
+- The pin's Queued entry was uncommitted when I first read it; HQ committed it at sds-hq
+  `5aede8b` (line 76) before I opened the PR, and the amendment cites that commit.
 - #750 follow-ups 1, 3 to 7, 9 and 11 are outside this handoff and remain open.
 - Amendment 14's verify item "D-66's revisit" cites sds-hq `state/goal.md` at `68466c01` line 45
   for option B; I didn't re-read that commit, and Amendment 15 doesn't rely on it.
@@ -86,7 +90,7 @@ call (no infraops, Coolify or BWS), no production act, no merge.
 - orchestrator `67e8d959`: ADR-0059 Amendment 14 (lines 4003-4386); ADR-0055 lines 341 and 525
   (same text at `3585b4f9`); `docs/operations/deploy.md` change-window step 2.
 - orchestrator PR #750 body, follow-ups 2, 8, 10 and 12.
-- sds-hq `state/goal.md` Queued (working copy, uncommitted); sds-hq `plan/year-plan.md` at
+- sds-hq `state/goal.md` at `5aede8b`, line 76 (Queued); sds-hq `plan/year-plan.md` at
   `8d6899a` (no security phase).
 
 ## Standards followed
