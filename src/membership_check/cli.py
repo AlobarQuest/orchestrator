@@ -16,9 +16,6 @@ from bump_proposer.landing_policy import LandingPolicyError, read_landing_policy
 from bump_proposer.standing import StandingError, discover
 from change_proposer.criteria import _ROLLBACKS as ROLLBACKS
 from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
-from fork_harden.rules import FORKS
-from fork_sync.gh import CommandFailed, subprocess_runner
-from fork_sync.watch import Unreadable, forks
 from membership_check.auto_merge import AutoMergeState, GitHubAutoMergeSource
 from membership_check.consistency import Scope, canonical, check, factory_targets
 from membership_check.declaration import GitHubDeclarationSource
@@ -33,7 +30,6 @@ from rotation_worker.registry import (
 from rotation_worker.types import of_a_type
 from sds_members.client import Member, MembersUnreadable, read_members
 from sds_members.populations import observed
-from tool_installer.tools import TOOLS
 
 OBSERVER_TOKEN_VARIABLE: Final = "SDS_MEMBERS_OBSERVER_TOKEN"
 OBSERVER_KEY_ID: Final = "orchestrator-observer"
@@ -169,11 +165,6 @@ def main() -> None:
         raise typer.Exit(EXIT_INCOMPLETE) from None
     declarations, owned = _declarations(tokens[GITHUB_TOKEN_VARIABLE], observed(members))
     inert, deploying, gaps, landing_decided = _landing(tokens[CHANGE_MANAGER_TOKEN_VARIABLE], owned)
-    synced: list[str] = []
-    try:
-        synced = forks(subprocess_runner)
-    except (Unreadable, CommandFailed) as error:
-        gaps.append(f"the fork-sync fork list couldn't be read: {error}")
     standing, standing_gaps = _standing_update_repositories()
     gaps += standing_gaps
     flagged, flagged_gaps = _flagged_repositories()
@@ -187,9 +178,6 @@ def main() -> None:
         deploying=deploying,
         landing_decided=landing_decided,
         rollout_repositories=_spelled(ROLLOUT_WORKFLOWS, owned),
-        tool_repositories=_spelled([tool.repository for tool in TOOLS], owned),
-        hardened_forks=_spelled([fork.repository for fork in FORKS], owned),
-        synced_forks=_spelled(synced, owned),
         registry_repositories=_spelled(REGISTRY_REPOSITORIES, owned),
         rollbacks=_spelled(ROLLBACKS, owned),
         standing_update_repositories=_spelled(standing, owned),

@@ -83,11 +83,6 @@ revision-watcher = "revision_watcher.cli:app"
 # machine will execute at its next start, and whether that is what was merged. It is also
 # the only control over ADR-0031, whose activation helper returns 0 whatever it finds.
 activation-sweep = "activation_sweep.cli:app"
-# ADR-0042. The tool installer: the last step of the rtk fork-sync lane, which until now was a
-# person. The factory cannot do this -- its runners are hosted and cannot touch this machine --
-# so it is a local scheduled pass, and it acts only with `--install` inside the operator
-# machine's change window.
-tool-installer = "tool_installer.cli:app"
 # SDS 1.1 item 5a, ADR-0039 amendment 2026-10-05. The orchestrator's deploy step: bind every
 # completed factory unit the deployed image carries, file the container-image deployment
 # observation, and verify the post-deploy unit it mints. Operator-run, never scheduled.
@@ -95,12 +90,6 @@ image-release = "image_release.cli:app"
 # ADR-0055. The credential-rotation executor. Its one command so far is read-only: the approval
 # runbook's comparison of a credential's registry destinations with its standing package's.
 rotation-worker = "rotation_worker.cli:main"
-# Onboards a fork onto the upstream sync lane (docs/operations/onboarding-a-fork.md).
-# Operator-run, never scheduled.
-fork-sync = "fork_sync.cli:app"
-# ADR-0057. Writes each fork's `hardened` branch: its landed `main` with every hardening rule's fix
-# applied. A scheduled local pass, daily before the tool installer.
-fork-harden = "fork_harden.cli:app"
 # ADR-0058. Stage a change to the SDS member record for a person to confirm on /review.
 sds-members = "sds_members.cli:app"
 # ADR-0058. Daily: does the member record agree with the declarations and the lanes' lists.
@@ -123,10 +112,6 @@ dev = [
   "pyright==1.1.414",
   "httpx2>=2.10.0",
 ]
-
-[tool.setuptools.package-data]
-# The workflow templates `fork-sync scaffold` renders into a fork.
-fork_sync = ["templates/*.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

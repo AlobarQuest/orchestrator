@@ -1,4 +1,4 @@
-"""The three bridge launchers ping an OUTCOME, as `run-fork-sync-watch.sh` does: on an acting run,
+"""The three bridge launchers ping an OUTCOME (ADR-0021 amendment 2): on an acting run,
 `/start` before the program, then success on exit 0 or `/fail` with the report as its body on
 anything else. A finding (3) pages; it is no longer a dead-man success.
 

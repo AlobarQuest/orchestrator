@@ -865,8 +865,8 @@ def test_the_repositorys_registry_registers_the_twelve_moved_lanes() -> None:
 
 # ---- the tables, held to their sources ------------------------------------------------------
 
-# The launchers that stay on the Mac (ADR-0059 decision 4) and so are no lane.
-STAYS_ON_THE_MAC = {"activation-sweep", "tool-installer"}
+# The launcher that stays on the Mac (ADR-0059 decision 4) and so is no lane.
+STAYS_ON_THE_MAC = {"activation-sweep"}
 # A check name as a launcher spells it: quoted (`"Change Manager OPs Check"`, the change window's,
 # which keeps the Mac job's check) or bare (`sds-landing-ledger`). Never a `$` expansion.
 _NAME = r'(?:"([^"$\n]+)"|([A-Za-z0-9][A-Za-z0-9._-]*)(?!\S))'

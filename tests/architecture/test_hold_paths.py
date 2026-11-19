@@ -92,18 +92,6 @@ HOLD_PATHS: dict[Path, Honours | CoveredBy | NotABump] = {
         "publishes a commit of a standing package revision to intent-packages: the revision "
         "describes a bump, and the bump itself lands only through the factory merge"
     ),
-    SRC / "tool_installer/plugin.py": NotABump(
-        "moves one `version` line of one plugin in Devon's marketplace manifest to what the "
-        "reviewed fork's serving clone declares; no dependency of a member changes"
-    ),
-    SRC / "fork_sync/acknowledge.py": NotABump(
-        "an operator-run admin merge of its own pull request, whose diff is the fork's "
-        "acknowledgements file alone"
-    ),
-    SRC / "fork_sync/onboarding.py": NotABump(
-        "an operator-run merge of the three pull requests onboarding one fork opens itself: the "
-        "fork's scaffold, factory-runner's registry entry and change-manager's policy version"
-    ),
     # Propose paths: no list names them, so each is named here.
     SRC / "bump_proposer/cli.py": Honours(SRC / "bump_proposer/cli.py", "_held"),
     CARRIER: Honours(SRC / "work_carrier/prepare.py", "held_refusal"),

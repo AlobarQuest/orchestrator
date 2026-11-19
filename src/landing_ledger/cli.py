@@ -159,7 +159,7 @@ def record_landings(
         # and six rows are the least of what is missing, so the check is deliberately not built:
         # it would make "audit this repository" assert a global property of the ledger.
         #
-        # THE FOUR ROWS STORED WITH THEIR CHECKS UNDERCOUNTED are declined for the same reason and
+        # THE ROWS STORED WITH THEIR CHECKS UNDERCOUNTED are declined for the same reason and
         # on the same premise, measured on 2026-10-27: the reader now derives checks those rows
         # lack (`record.py::KNOWN_UNDERCOUNTED_CHECK_LANDINGS`).
         if is_known_defective_metadata_landing(repository, sha) or (

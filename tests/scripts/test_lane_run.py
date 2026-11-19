@@ -258,9 +258,9 @@ def test_the_schedule_switch_and_lane_tokens_are_not_in_the_list() -> None:
 
 def test_the_state_list_is_every_state_variable_a_moving_lane_reads() -> None:
     """A state variable missing from the list is stripped, and its lane writes its state outside
-    its volume. The activation sweep and the tool installer stay on the Mac (ADR-0059), so their
-    variables are the only ones the list leaves out."""
-    staying = {"ACTIVATION_SWEEP_STATE_DIR", "TOOL_INSTALLER_STATE_DIR"}
+    its volume. The activation sweep stays on the Mac (ADR-0059), so its variable is the only one
+    the list leaves out."""
+    staying = {"ACTIVATION_SWEEP_STATE_DIR"}
     read = set()
     for path in Path("src").rglob("*.py"):
         read |= set(re.findall(r'"([A-Z_]+_STATE_DIR)"', path.read_text()))

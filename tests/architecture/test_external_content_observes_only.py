@@ -244,11 +244,6 @@ CLASSIFICATION: dict[str, Row] = {
         OBSERVE,
         foreign={"/api/v1/applications": "Coolify's application listing (GET)"},
     ),
-    "tool_installer": Row(
-        Role.OBSERVE_ONLY,
-        "ADR-0039 criterion-5 re-run 2026-09-10: observation-only; reads /api/v1/factory-policy",
-        OBSERVE,
-    ),
     # ---- INTERNAL LANE ACTORS: they act by design, under their own ADRs. --------------------
     "estate_lander": Row(
         Role.INTERNAL_LANE_ACTOR,
@@ -437,16 +432,6 @@ CLASSIFICATION: dict[str, Row] = {
         "goes through the confined client a lane passes in, and that lane's row declares it. Its "
         "own isolation row lets it import one client, `alert_hub_client` (`held_alerts` sends a "
         "keyed alert-hub alert), and no orchestrator or GitHub client, so it cannot acquire one",
-    ),
-    "fork_sync": Row(
-        Role.NOT_AN_ORCHESTRATOR_WRITER,
-        "ADR-0042's fork-sync lane: onboards a fork with the operator's gh credentials; reads "
-        "change-manager's landing policy and App Brain, and never names an orchestrator path",
-    ),
-    "fork_harden": Row(
-        Role.NOT_AN_ORCHESTRATOR_WRITER,
-        "ADR-0057: writes a fork's `hardened` branch with the operator's git credentials, and "
-        "never names an orchestrator path",
     ),
     "work_watcher": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,

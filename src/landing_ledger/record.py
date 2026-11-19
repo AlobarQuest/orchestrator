@@ -179,7 +179,7 @@ def is_known_defective_metadata_landing(repository: Any, commit: Any) -> bool:
     return (repository, commit) in KNOWN_DEFECTIVE_METADATA_LANDINGS
 
 
-# THE FOUR LANDINGS STORED WITH THEIR CHECKS UNDERCOUNTED.
+# THE LANDINGS STORED WITH THEIR CHECKS UNDERCOUNTED.
 #
 # Until 2026-10-27 `_checks_and_gate` kept a check only if its RUN's `updated_at` preceded the
 # landing. GitHub moves a completed run's `updated_at` after the fact with no re-run, so a run whose
@@ -193,18 +193,21 @@ def is_known_defective_metadata_landing(repository: Any, commit: Any) -> bool:
 # ledger repositories under the job-completion rule: it reproduced 254 of 258 stored rows, and
 # these are the other four.
 #
+# TWO OF THE FOUR LEFT THE LIST WITH THE FORK CHAIN (ADR-0059 Amendment 16): the claude-octopus and
+# n8n-as-code rows, both landed by 2026-10-27. The scheduled pass reads seven days back
+# (`run-landing-ledger.sh`), so it never yields them again, and the forks leave the ledger's
+# population when they leave the member record.
+#
 # THIS LIST CAN NEVER BE SPENT, exactly as the list above cannot: the rows are immutable and
 # content-addressed, with no supersession path and no delete route.
 #
 # IT HAS ONE CONSUMER, `cli.py`'s record pass, which declines to re-record them -- a re-record
 # derives three more checks, a different fact digest at an identity that cannot move, and so an
 # `observation_conflict` and exit 3 every pass while they sit inside the window. THE AUDIT HAS
-# NOTHING TO WITHHOLD: all four rows have a `human` basis, which no detector re-reads for checks,
-# and a zero-check row raises no finding on any basis (only a failing check does).
+# NOTHING TO WITHHOLD: all four stored rows have a `human` basis, which no detector re-reads for
+# checks, and a zero-check row raises no finding on any basis (only a failing check does).
 KNOWN_UNDERCOUNTED_CHECK_LANDINGS = frozenset(
     {
-        ("AlobarQuest/claude-octopus", "42c195ad83cc2074417f20663b32c2281b0e8b9a"),
-        ("AlobarQuest/n8n-as-code", "605d6b17e79a9341104701f077610ca7dc72f18b"),
         ("AlobarQuest/orchestrator", "41b46cb81f0ea923b76b4fb7a41372093f27ec3a"),
         ("AlobarQuest/orchestrator", "b658776895139bb5382adde11ce00b1f6a4374b8"),
     }
@@ -212,7 +215,7 @@ KNOWN_UNDERCOUNTED_CHECK_LANDINGS = frozenset(
 
 
 def is_known_undercounted_check_landing(repository: Any, commit: Any) -> bool:
-    """Whether this exact landing is one of the four stored with its checks undercounted.
+    """Whether this exact landing is one of those stored with its checks undercounted.
 
     `Any` and the `isinstance` pair for the reasons `is_known_defective_metadata_landing` gives.
     """

@@ -11,19 +11,13 @@ import tomllib
 from pathlib import Path
 
 from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
-from fork_harden.rules import FORKS
 from orchestrator.services.membership.changes import MemberChange, MemberProposalBody
 from rotation_worker.registry import REGISTRY_REPOSITORIES
 from sds_members import populations
 from sds_members.client import SERVICES, App, Member
-from tool_installer.tools import TOOLS
 
 ROOT = Path(__file__).resolve().parents[2]
 SEED = ROOT / "docs/operations/membership-seed.toml"
-
-ADDED_AFTER_THE_SEED = frozenset({"alobarquest/modern-web-guidance"})
-"""Repositories the lists gained after the seed was applied (2026-11-16): the seed is history, so
-they are granted by their own member proposal, which `membership_check` holds to the lists."""
 
 
 def _body() -> MemberProposalBody:
@@ -56,10 +50,6 @@ def test_seed_parses_and_matches_todays_lists() -> None:
     assert len({m.repository for m in members}) == 13
     assert all(m.owner == "devon" and m.state == "member" for m in members)
 
-    assert {r.lower() for r in populations.granted(members, "security_patches")} >= {
-        f.repository.lower() for f in FORKS
-    } - ADDED_AFTER_THE_SEED
-
 
 def test_every_named_grant_states_its_source() -> None:
     for change in _body().changes:
@@ -74,9 +64,7 @@ def test_seed_grants_match_their_code_sources() -> None:
     def granted(service: str) -> set[str]:
         return {r.lower() for r in populations.granted(members, service)}
 
-    assert ({r.lower() for r in ROLLOUT_WORKFLOWS} | {t.repository.lower() for t in TOOLS}) - (
-        ADDED_AFTER_THE_SEED
-    ) <= granted("rollouts")
+    assert {r.lower() for r in ROLLOUT_WORKFLOWS} <= granted("rollouts")
     assert {r.lower() for r in REGISTRY_REPOSITORIES} <= granted("credential_rotation")
     forks = {
         f"alobarquest/{n}" for n in ("rtk", "claude-octopus", "rea", "n8n-as-code", "n8n-manager")

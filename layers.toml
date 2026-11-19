@@ -144,6 +144,12 @@ paths = [
   "docs/decisions/0050-*.md",
   "docs/decisions/0059-*.md",
   ".github/workflows/release-image.yml",
+  # The fork chain left SDS for localops (ADR-0059 Amendment 16); its records stay here.
+  "docs/operations/fork-hardening.md",
+  "docs/operations/onboarding-a-fork.md",
+  "docs/decisions/0042-*.md",
+  "docs/decisions/0056-*.md",
+  "docs/decisions/0057-*.md",
 ]
 
 [intent]
@@ -702,34 +708,6 @@ paths = [
   "tests/api/test_rotation_proposer_observation_ingest.py",
   "tests/api/test_rotation_worker_flow.py",
   ".github/workflows/secret-fingerprint.yml",
-]
-
-[fork]
-name = "Fork sync and tool install"
-description = "Keeping forks in step with upstream, hardening them, and installing landed tools on the operator machine."
-paths = [
-  "src/tool_installer/**",
-  "tests/tool_installer/**",
-  "src/fork_sync/**",
-  "tests/fork_sync/**",
-  "src/fork_harden/**",
-  "tests/fork_harden/**",
-  "scripts/run-tool-installer.sh",
-  "scripts/install-tool-installer-launchd.sh",
-  "scripts/com.devon.tool-installer.plist",
-  "scripts/run-fork-sync-watch.sh",
-  "scripts/install-fork-sync-watch-launchd.sh",
-  "scripts/com.devon.fork-sync-watch.plist",
-  "scripts/run-fork-harden.sh",
-  "scripts/install-fork-harden-launchd.sh",
-  "scripts/com.devon.fork-harden.plist",
-  "tests/scripts/test_run_fork_sync_watch.py",
-  "tests/scripts/test_run_tool_installer.py",
-  "docs/operations/fork-hardening.md",
-  "docs/operations/onboarding-a-fork.md",
-  "docs/decisions/0042-*.md",
-  "docs/decisions/0056-*.md",
-  "docs/decisions/0057-*.md",
 ]
 
 [tooling]
