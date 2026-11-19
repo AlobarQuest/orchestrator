@@ -12,12 +12,12 @@ import pytest
 from typer.testing import CliRunner
 
 from bump_proposer.landing_policy import LandingPolicy, LandingPolicyError
-from fork_sync.watch import Unreadable
 from membership_check import cli
 from membership_check.auto_merge import AutoMergeState
 from membership_check.consistency import Report, Scope, canonical, check, factory_targets
 from membership_check.declaration import Declaration
 from pin_watcher.github import PinWatcherError
+from rotation_worker.git_mirror import MirrorError
 from rotation_worker.registry import RegistryEntry
 from sds_members.client import SERVICES, Member
 
@@ -109,9 +109,6 @@ class _Sources(TypedDict, total=False):
     inert: frozenset[str]
     deploying: frozenset[str]
     rollout_repositories: list[str]
-    tool_repositories: list[str]
-    hardened_forks: list[str]
-    synced_forks: list[str]
     registry_repositories: list[str]
     rollbacks: list[str]
     standing_update_repositories: list[str]
@@ -131,9 +128,6 @@ def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
         "inert": frozenset(),
         "deploying": frozenset(),
         "rollout_repositories": [],
-        "tool_repositories": [],
-        "hardened_forks": [],
-        "synced_forks": [],
         "registry_repositories": [],
         "rollbacks": [],
         "standing_update_repositories": [],
@@ -161,9 +155,6 @@ def test_an_agreeing_estate_is_clean():
         inert=frozenset({"a/one"}),
         deploying=frozenset({"A/one"}),
         rollout_repositories=["a/one"],
-        tool_repositories=["A/ONE"],
-        hardened_forks=["A/one"],
-        synced_forks=["A/one"],
         registry_repositories=["A/one"],
         rollbacks=["a/one"],
         standing_update_repositories=["A/ONE"],
@@ -178,10 +169,6 @@ RULES = [
     ("inert", "dependency_updates"),
     ("deploying", "dependency_updates"),
     ("rollout_repositories", "rollouts"),
-    ("tool_repositories", "rollouts"),
-    ("hardened_forks", "security_patches"),
-    ("synced_forks", "dependency_updates"),
-    ("synced_forks", "security_patches"),
     ("registry_repositories", "credential_rotation"),
     ("rollbacks", "rollouts"),
     ("standing_update_repositories", "dependency_updates"),
@@ -311,14 +298,14 @@ def test_a_member_with_auto_merge_off_and_no_arming_workflow_agrees():
     assert report == Report([], [])
 
 
-def test_fork_sync_needs_both_grants():
+def test_a_granted_fork_agrees_with_no_fork_list_to_compare():
+    """The forks stay members, with their grants, until the member-record change applies
+    (ADR-0059 Amendment 16): a fork in the inert population raises no line on its own."""
     report = _check(
-        [_member("A/fork", "dependency_updates")],
+        [_member("A/fork", "dependency_updates", "security_patches", "rollouts")],
         inert=frozenset({"a/fork"}),
-        synced_forks=["A/fork"],
     )
-    [line] = report.disagreements
-    assert "security_patches" in line
+    assert report == Report([], [])
 
 
 # --- the Typer entry point -------------------------------------------------------------------
@@ -332,8 +319,6 @@ def _wire(
     policy=("a/one",),
     deploying=("a/one",),
     policy_error=None,
-    fork_list=(),
-    fork_error=None,
     listing_error=None,
     rollbacks=None,
     auto_merge=None,
@@ -400,15 +385,7 @@ def _wire(
     monkeypatch.setattr(cli, "read_landing_policy", read_policy)
     monkeypatch.setattr(cli, "GitHubAutoMergeSource", lambda token: AutoMerge(auto_merge or {}))
 
-    def read_forks(_run):
-        if fork_error:
-            raise fork_error
-        return list(fork_list)
-
-    monkeypatch.setattr(cli, "forks", read_forks)
     monkeypatch.setattr(cli, "ROLLOUT_WORKFLOWS", {})
-    monkeypatch.setattr(cli, "TOOLS", ())
-    monkeypatch.setattr(cli, "FORKS", ())
     monkeypatch.setattr(cli, "REGISTRY_REPOSITORIES", ())
     monkeypatch.setattr(cli, "ROLLBACKS", rollbacks or {})
 
@@ -453,15 +430,10 @@ def test_a_disagreement_outranks_a_gap(monkeypatch):
     _wire(
         monkeypatch,
         members=[_member("A/one", "app_changes")],
-        fork_error=Unreadable("no registry"),
+        mirror_error=MirrorError("no mirror"),
     )
-    assert _invoke().exit_code == 2
-
-
-def test_an_unreadable_fork_list_is_a_gap(monkeypatch):
-    _wire(monkeypatch, members=CLEAN, fork_error=Unreadable("no registry"))
     result = _invoke()
-    assert result.exit_code == 3 and "fork-sync fork list" in result.stderr
+    assert result.exit_code == 2 and result.stderr
 
 
 def test_an_unlisted_account_is_a_gap_not_a_disagreement(monkeypatch):
@@ -510,8 +482,12 @@ def test_a_missing_token_is_the_tool_failing(monkeypatch):
 
 
 def test_every_rules_lines_spell_a_repository_as_github_does(monkeypatch):
-    _wire(monkeypatch, members=[_member("A/one", "app_changes")], policy=("a/one",))
-    monkeypatch.setattr(cli, "TOOLS", (type("T", (), {"repository": "a/ONE"})(),))
+    _wire(
+        monkeypatch,
+        members=[_member("A/one", "app_changes")],
+        policy=("a/one",),
+        rollbacks={"a/ONE": None},
+    )
     result = _invoke()
     assert result.exit_code == 2
     assert "a/one" not in result.stdout.replace("A/one", "") and "a/ONE" not in result.stdout

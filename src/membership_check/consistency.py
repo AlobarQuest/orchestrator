@@ -1,13 +1,13 @@
 """Does the member record agree with the declarations and the per-repository configuration lists?
 
-The record says which repositories the SDS maintains and which services each is granted. Thirteen
+The record says which repositories the SDS maintains and which services each is granted. Ten
 other sources still say the same thing in their own words, the inputs of `check`: each
 repository's `factory-target.toml`, change-manager's inert and deploying landing populations, the
-rollout workflows, the tool list, the hardened forks, fork-sync's fork list, the rotation registry
-repositories, the rollback table, the standing dependency-update packages, the `rotated_by_sds`
-registry rows, the repositories whose `.cred-consumers.toml` hands the SDS a credential, and each
-member's auto-merge state (ADR-0038). This module compares them, so a repository added to one and
-not the other is a line in a report rather than a lane that quietly does the wrong thing.
+rollout workflows, the rotation registry repositories, the rollback table, the standing
+dependency-update packages, the `rotated_by_sds` registry rows, the repositories whose
+`.cred-consumers.toml` hands the SDS a credential, and each member's auto-merge state (ADR-0038).
+This module compares them, so a repository added to one and not the other is a line in a report
+rather than a lane that quietly does the wrong thing.
 
 `check` is pure: every input is a plain collection. Reading the sources is `cli.py`'s job.
 Repository names compare ignoring case (GitHub spells them one way, the lists another), and a
@@ -95,9 +95,6 @@ def check(
     inert: frozenset[str],
     deploying: frozenset[str],
     rollout_repositories: Iterable[str],
-    tool_repositories: Iterable[str],
-    hardened_forks: Iterable[str],
-    synced_forks: Iterable[str],
     registry_repositories: Iterable[str],
     rollbacks: Iterable[str],
     standing_update_repositories: Iterable[str],
@@ -110,7 +107,6 @@ def check(
     members = list(members)
     app_changes = _granted(members, "app_changes")
     updates = _granted(members, "dependency_updates")
-    patches = _granted(members, "security_patches")
     disagreements: list[str] = []
 
     disagreements += _require(
@@ -142,10 +138,6 @@ def check(
     disagreements += _require(
         "deploy_watcher ROLLOUT_WORKFLOWS", rollout_repositories, rollouts, "rollouts"
     )
-    disagreements += _require("tool_installer TOOLS", tool_repositories, rollouts, "rollouts")
-    disagreements += _require("fork_harden FORKS", hardened_forks, patches, "security_patches")
-    disagreements += _require("fork-sync's fork list", synced_forks, updates, "dependency_updates")
-    disagreements += _require("fork-sync's fork list", synced_forks, patches, "security_patches")
     disagreements += _require(
         "rotation_worker REGISTRY_REPOSITORIES",
         registry_repositories,

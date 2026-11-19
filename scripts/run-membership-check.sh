@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One consistency pass over the SDS member record: `membership-check` compares the record with
 # every repository's `factory-target.toml`, change-manager's inert and deploying landing
-# populations, the lists the rollout, tool, hardening, fork-sync and rotation lanes carry, the
+# populations, the lists the rollout and rotation lanes carry, the
 # rollback table, the standing dependency-update packages, the registry rows and files, and each
 # member's auto-merge state (ADR-0058; the full list is `membership_check/consistency.py`).
 #
@@ -9,7 +9,7 @@
 # (`lanes/membership-check/crontab`). The lanes take their scope from the record; this is what
 # notices that a list somewhere still says something else.
 #
-# THIS CHECK IS AN OUTCOME ALARM, AS `sds-fork-sync-watch` AND `sds-fork-hardening` ARE. A
+# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2). A
 # disagreement is a lane about to act on a population the record doesn't hold, so every non-zero
 # exit pings `/fail` with the report as the body. A pass that stops pinging goes down after the
 # grace, so while the check is up it is a liveness check too (ADR-0021 amendment 2). The shared

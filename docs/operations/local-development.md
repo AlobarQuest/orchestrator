@@ -358,17 +358,15 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   not do its job. Its state is in `~/Library/Application Support/sds/execution-watch`; run `--seed`
   once before the first scheduled pass.
   Armed lanes that read **2 = could not use its INPUTS**, 3 = something was found:
-  `run-estate-landing.sh`, `run-inert-landing.sh`, `run-rotation-proposer.sh` and
-  `run-tool-installer.sh`.
+  `run-estate-landing.sh`, `run-inert-landing.sh` and `run-rotation-proposer.sh`.
   The outcome alarms arm no dead-man switch (ADR-0021 amendments 2 and 3): `run-bump-driver.sh`,
-  `run-bump-proposer.sh`, `run-change-proposer.sh`, `run-fork-harden.sh`,
-  `run-fork-sync-watch.sh`, `run-membership-check.sh`, `run-rotation-decomposer.sh` and
-  `run-work-carrier.sh`. Each pings `/start`, then success on 0 or `/fail` with the report on any
-  other code, except the one code a launcher passes as `--told` (only `run-bump-driver.sh`, 2),
-  which pings success with the report because a keyed alert already told a person. Their codes
-  still differ: the proposers, the carrier, `run-fork-harden.sh` and `run-fork-sync-watch.sh` read
-  2 as unusable inputs and 3 as found; `run-membership-check.sh` reads 2 as a disagreement and 3 as
-  an unread source; `run-bump-driver.sh` and `run-rotation-decomposer.sh` read 2 as a person
+  `run-bump-proposer.sh`, `run-change-proposer.sh`, `run-membership-check.sh`,
+  `run-rotation-decomposer.sh` and `run-work-carrier.sh`. Each pings `/start`, then success on 0
+  or `/fail` with the report on any other code, except the one code a launcher passes as `--told`
+  (only `run-bump-driver.sh`, 2), which pings success with the report because a keyed alert
+  already told a person. Their codes still differ: the proposers and the carrier read 2 as
+  unusable inputs and 3 as found; `run-membership-check.sh` reads 2 as a disagreement and 3 as an
+  unread source; `run-bump-driver.sh` and `run-rotation-decomposer.sh` read 2 as a person
   decides and 3 as unread. The bump driver, the two bridge proposers, the carrier and the rotation
   decomposer ping only on their acting run; a run a person makes to look pings nothing.
   0 and 1 agree everywhere (nothing found; the tool itself failed). So a consumer that treats
@@ -418,8 +416,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **AN ARMED LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so
   "a standing finding drives a permanently-red control" is false of every lane that arms the
   switch.** The outcome-alarm lanes are the exception and work the other way: `run-bump-driver.sh`,
-  `run-bump-proposer.sh`, `run-change-proposer.sh`, `run-fork-harden.sh`, `run-fork-sync-watch.sh`,
-  `run-membership-check.sh`, `run-rotation-decomposer.sh` and `run-work-carrier.sh` ping `/fail` on
+  `run-bump-proposer.sh`, `run-change-proposer.sh`, `run-membership-check.sh`, `run-rotation-decomposer.sh` and `run-work-carrier.sh` ping `/fail` on
   every non-zero exit, so a standing finding keeps their check down and pages once (ADR-0021
   amendment 2). The one exception is a code a launcher passes as `--told`: `run-bump-driver.sh`'s
   2 pings success with the report, because each such finding was already delivered as a keyed

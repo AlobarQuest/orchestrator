@@ -946,9 +946,9 @@ TOKEN_VARIABLE = "BWS_ACCESS_TOKEN"
 
 # Each moving lane's Healthchecks check, as its launcher names it in its dead-man ping
 # (`sds_deadman_arm <name>` or `CHECK_NAME=`); `test_the_check_names_are_the_launchers` holds the
-# table to `scripts/run-*.sh`. A table, not a derivation: fork hardening pings
-# `sds-fork-hardening`, and the change window keeps the Mac job's check, `Change Manager OPs
-# Check`. The two launchers that stay on the Mac (ADR-0059 decision 4) have no row.
+# table to `scripts/run-*.sh`. A table, not a derivation: the change window keeps the Mac job's
+# check, `Change Manager OPs Check`. The launcher that stays on the Mac (ADR-0059 decision 4) has
+# no row.
 LANE_CHECKS: dict[str, str] = {
     "bump-driver": "sds-bump-driver",
     "bump-proposer": "sds-bump-proposer",
@@ -958,8 +958,6 @@ LANE_CHECKS: dict[str, str] = {
     "estate-landing": "sds-estate-landing",
     "execution-watch": "sds-execution-watch",
     "follow-up-mint": "sds-follow-up-mint",
-    "fork-harden": "sds-fork-hardening",
-    "fork-sync-watch": "sds-fork-sync-watch",
     "inert-landing": "sds-inert-landing",
     "landing-ledger": "sds-landing-ledger",
     "membership-check": "sds-membership-check",

@@ -106,7 +106,7 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # names the lane that asserts what a WORKING COPY will execute at its next start, where this
     # asserts what a compiled BINARY on that machine IS. Two claims about two artifacts, and
     # reusing one would be false provenance in a table with no supersession model and no delete
-    # route.
+    # route. Its writer left SDS for localops (D-71 A); the stored rows stay, so the name stays.
     "tool_installer",
     # The bump proposer: a dependency update is open on a repository, and these are its two
     # versions. One member for the lane, following its siblings; `subject_reference` names the
@@ -203,7 +203,8 @@ OBSERVATION_TYPES = (
     # the revision its fork's branch holds. Deliberately neither `activation`, which is the
     # working-copy sweep's and asserts what a checkout will run, nor `inventory`, which asserts
     # only that something was enumerated: this asserts something specific and falsifiable about
-    # a binary that filters every command on that machine.
+    # a binary that filters every command on that machine. Its writer left SDS for localops (D-71
+    # A); the stored rows stay, so the type stays.
     "tool_revision",
     # An open dependency update on a repository, and the two versions it names. It asserts that
     # the update EXISTS and nothing about what should happen to it: whether the estate lands it

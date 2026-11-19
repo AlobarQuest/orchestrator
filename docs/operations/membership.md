@@ -181,8 +181,8 @@ services. Any authenticated role may read it, OBSERVER included.
 The record is the scope authority for every lane (ADR-0058 amendments 1 and 3). Outside the
 orchestrator, these read it through `sds_members.client`: the bump driver, bump proposer, change
 proposer, estate lander, membership check, revision watcher, rotation proposer, unit verifier and
-work carrier. Fork hardening, the landing ledger and the activation sweep read it through
-`scripts/sds_scope.py` (`run-fork-harden.sh`, `run-landing-ledger.sh`, `run-activation-sweep.sh`),
+work carrier. The landing ledger and the activation sweep read it through `scripts/sds_scope.py`
+(`run-landing-ledger.sh`, `run-activation-sweep.sh`),
 which prints nothing and exits 3 on an unreadable record, an empty one included. In its lane's
 container, `run-revision-watcher.sh` also reads it through `sds_scope apps`, for the repositories
 its GitHub token is minted for, and `run-pin-watcher.sh` and `run-membership-check.sh` through

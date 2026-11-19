@@ -152,54 +152,6 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # does. The gateway method is named for the spelling the guard reads, deliberately, so that
     # the exemption is taken openly rather than avoided by a verb the scanner does not cover.
     Path("src/orchestrator/services/landing/inert_pr_merge.py"),
-    # ADR-0042's plugin row, the FIFTH entry, and the second that publishes a commit to a default
-    # branch rather than landing a pull request -- so ADR-0033's entry above is the only one whose
-    # justification is even the same shape, and it does not carry over unexamined. There is no work
-    # unit here, no criteria the orchestrator resolved from evidence, no envelope a human approved,
-    # and no change record. The repository is not `intent-packages` and the commit is not a package
-    # revision, so every clause of that entry is about a different act.
-    #
-    # What stands in its place is that the commit can only ever be ONE line of ONE file: the
-    # `version` value of ONE named entry in the marketplace manifest, moved to the version the
-    # serving clone's own manifest declares after a fast-forward-only pull from the reviewed fork.
-    # The write is selected by REPARSING every candidate and keeping only the one whose document
-    # equals the original with nothing else changed, so an edit that touched a second plugin could
-    # not be produced. The producer refuses to begin on a hub carrying uncommitted changes, on a hub
-    # on any branch but the one the push names, or on a hub already holding a commit origin does not
-    # -- which is what keeps this entry to the one act it names rather than to whatever else has
-    # accumulated there. It publishes only after the install has been proven, and any failure of
-    # the publish rolls the whole act back locally, so nothing this lane cannot verify is ever
-    # pushed. The repository is a marketplace manifest for plugins on Devon's own machine; nothing
-    # already serving changes, and the change window governs when it may happen at all.
-    Path("src/tool_installer/plugin.py"),
-    # ADR-0056 amendment 4, the SIXTH entry: `fork-sync ack`, an operator-run command that is never
-    # scheduled. It merged with an argv list from the day it shipped (2026-10-24), which the text
-    # scan could not see, and is named here since the list-form scan above found it. It admin-merges
-    # one pull request of its own (ADR-0056 decision 7): the acknowledgements a person approved by
-    # naming each fingerprint (`--yes --expect`) after reading the dry run. It merges only when that
-    # pull request's diff is the acknowledgements file alone at the commit it pushed, the fork's
-    # latest CI run at that head passed `build and test` and reached a verdict in `security review`,
-    # and that review fails only on the acknowledgements file; otherwise it leaves the pull request
-    # open. It never merges the held sync itself: the inert landing lane does, under policy.
-    Path("src/fork_sync/acknowledge.py"),
-    # ADR-0056 amendment 5, the SEVENTH entry: `fork-sync onboard`, an operator-run command that is
-    # never scheduled, merges three pull requests it opened itself while onboarding one fork, on
-    # Devon's 2026-10-24 decision that onboarding is one command. No justification above carries
-    # over: there is no work unit, no change record and no policy version, and one of the three
-    # repositories redeploys on landing. What bounds each merge is its content and its checks.
-    # The fork's scaffold pull request is admin-merged (ADR-0056 decision 7) only when its diff is
-    # exactly the files `fork-sync scaffold` renders, with the bytes it renders (a declared
-    # lockfile only when it is what the baseline tag resolves to, resolved again here), after
-    # `build and test` passed. factory-runner's registry pull request is squash-merged only when
-    # it adds exactly the fork's two Actions-secret consumers and parses as the old registry plus
-    # them,
-    # and change-manager's only when it is the release script's next policy version naming the
-    # fork, read from its one JSON line, and its diff (in the clone, then on the pull request) is
-    # only the files that script writes; each only after every check that repository's `main`
-    # requires passed at the commit the command pushed, and each refuses unless the fork has
-    # committed its declaration and has the App installed. The first review's findings are never
-    # accepted here: that stays a person's, through `fork-sync ack`.
-    Path("src/fork_sync/onboarding.py"),
 }
 
 
@@ -894,18 +846,6 @@ OUTBOUND_ALLOWLIST = {
     # tests/pin_watcher/test_client_surface.py.
     # Its egress is not the orchestrator's.
     Path("src/pin_watcher/orchestrator_client.py"),
-    # ADR-0042. The tool installer is a SEPARATE program (ADR-0002's shape), out of process and
-    # on a clock, and the only lane whose subject is a compiled binary on the operator machine
-    # rather than a repository or a record. THREE files, one route each, and every split is a
-    # credential boundary rather than a tidiness one. `github.py` READS the fork's revision with a
-    # credential that must never write, and refuses any method but GET. `policy_client.py` reads
-    # the DEPLOYED change window with the SYSTEM bearer -- forced by the endpoint, which answers
-    # 403 to the observer role and 200 to system, measured 2026-09-06 -- and may reach that one
-    # route and nothing else, which is what keeps the bearer that can drive a work unit's
-    # lifecycle inside the half that can only read a policy. `orchestrator_client.py` WRITES with
-    # the OBSERVER bearer to one endpoint, that role's whole write surface. All three are enforced
-    # in code by `is_allowed_read` / `is_allowed_write` / a GET-only entry point, and pinned by
-    # tests/tool_installer/test_client_surface.py. Its egress is not the orchestrator's.
     # The revision watcher. Three readers and one writer, all out of process (ADR-0002's shape),
     # because the question is about applications this repository does not run and the answer is
     # filed rather than acted on. `estate.py` performs one GET per declared application against
@@ -916,23 +856,8 @@ OUTBOUND_ALLOWLIST = {
     Path("src/revision_watcher/estate.py"),
     Path("src/revision_watcher/github.py"),
     Path("src/revision_watcher/orchestrator_client.py"),
-    # The fork onboarding tool (docs/operations/onboarding-a-fork.md). `estate.py` makes four
-    # reads, each one GET on one path through the confined transport: change-manager's landing
-    # policy and its health route's revision, App Brain's landing (through `revision_watcher`),
-    # and, signed as the sync App, GitHub's answer to whether that App is installed on a fork.
-    # `fork_sync_review.py` is the script `fork-sync scaffold` copies into each fork: it calls the
-    # Anthropic API and edits one pull-request comment, on the fork's Actions runner, never from
-    # this machine or the orchestrator.
-    Path("src/fork_sync/estate.py"),
-    Path("src/fork_sync/fork_sync_review.py"),
-    Path("src/tool_installer/github.py"),
-    Path("src/tool_installer/policy_client.py"),
-    Path("src/tool_installer/orchestrator_client.py"),
-    # Part 1a. Tell a person through the shared alert client, which owns the transport; these two
-    # import only its names and make no request of their own.
-    Path("src/tool_installer/alerts.py"),
-    Path("src/tool_installer/cli.py"),
-    # Part 1a, the same: the sweep tells through the shared alert client and makes no request here.
+    # Part 1a. The sweep tells a person through the shared alert client, which owns the transport;
+    # these two import only its names and make no request of their own.
     Path("src/activation_sweep/alerts.py"),
     Path("src/activation_sweep/cli.py"),
     # Part 1a, the same for the two watchers.

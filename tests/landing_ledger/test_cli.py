@@ -309,13 +309,12 @@ def test_an_undercounted_check_landing_is_not_re_recorded(repository: str, commi
     ]
 
 
-def test_the_undercounted_population_is_exactly_four_named_landings() -> None:
+def test_the_undercounted_population_is_exactly_two_named_landings() -> None:
     """A LITERAL ASSERTION, because the list IS the judgment: the parametrized test above derives
-    itself from the constant. Four rows, measured against production on 2026-10-27."""
+    itself from the constant. Four rows, measured against production on 2026-10-27; the two fork
+    rows left with the fork chain (ADR-0059 Amendment 16)."""
     assert KNOWN_UNDERCOUNTED_CHECK_LANDINGS == frozenset(
         {
-            ("AlobarQuest/claude-octopus", "42c195ad83cc2074417f20663b32c2281b0e8b9a"),
-            ("AlobarQuest/n8n-as-code", "605d6b17e79a9341104701f077610ca7dc72f18b"),
             ("AlobarQuest/orchestrator", "41b46cb81f0ea923b76b4fb7a41372093f27ec3a"),
             ("AlobarQuest/orchestrator", "b658776895139bb5382adde11ce00b1f6a4374b8"),
         }

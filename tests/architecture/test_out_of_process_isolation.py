@@ -583,70 +583,6 @@ TABLE: dict[str, Row] = {
         # Rotation Part 2: the credential_rotation grant, through its confined reader.
         "sds_members",
     ),
-    # The fork onboarding tool. Operator-run, never scheduled. It reuses two sibling readers rather
-    # than writing third copies (`revision_watcher`'s App Brain landing reader, and
-    # `tool_installer`'s TOOLS table, which it only reads), so it does not carry
-    # `no_sibling_lanes`. `urllib` is `urllib.request` in `fork_sync_review.py`, the script it
-    # copies into each fork: that file runs on the fork's Actions runner, never here. `time` is
-    # `fork-sync ack`'s pause between polls of its pull request's checks, and `math` is the
-    # review script's CVSS roundup. `fork-sync onboard` (ADR-0056 amendment 5) adds five:
-    # `jwt` and `cryptography` sign the one JWT it asks GitHub with, as the sync App, whether the
-    # App is installed on a fork; `base64` and `binascii` decode that App's PEM from its BWS
-    # keeper; and `shutil` finds the `bws` and `uv` executables, which launchd's PATH may miss.
-    "fork_sync": _row(
-        "__future__",
-        "base64",
-        "binascii",
-        "collections",
-        "cryptography",
-        "dataclasses",
-        "datetime",
-        "estate_clients",
-        "fnmatch",
-        "hashlib",
-        "httpx",
-        "importlib",
-        "json",
-        "jwt",
-        "math",
-        "os",
-        "pathlib",
-        "re",
-        "revision_watcher",
-        "shlex",
-        "shutil",
-        "subprocess",
-        "sys",
-        "tempfile",
-        "time",
-        "tomllib",
-        "tool_installer",
-        "typer",
-        "typing",
-        "urllib",
-    ),
-    # ADR-0057. The fork-hardening pass: reads and pushes a fork with the operator's own git
-    # credentials, through `subprocess` alone, and imports no sibling lane. `tempfile` holds the
-    # private index a hardened tree is built in; `fnmatch` matches a rule's paths; `hashlib` is
-    # the sha256 a read line is keyed by; `sys` is `sys.stdlib_module_names`, which decides
-    # whether `python3 -m <module>` survives `-I`.
-    "fork_harden": _row(
-        "__future__",
-        "collections",
-        "dataclasses",
-        "fnmatch",
-        "hashlib",
-        "json",
-        "os",
-        "pathlib",
-        "re",
-        "subprocess",
-        "sys",
-        "tempfile",
-        "typer",
-        "typing",
-        no_sibling_lanes=True,
-    ),
     "sds_members": _row(
         "__future__",
         "collections",
@@ -667,7 +603,7 @@ TABLE: dict[str, Row] = {
     ),
     # ADR-0058. Compares the member record with the lists the other lanes carry, so it imports
     # those lanes' own data and readers (standing packages, landing policy, rollout
-    # workflows, fork list, rotation registry) rather than keeping a third copy of each. It
+    # workflows, rotation registry) rather than keeping a third copy of each. It
     # reads the record through `sds_members`' confined client. That makes it a program that
     # reuses siblings, so it does not carry `no_sibling_lanes`.
     "membership_check": _row(
@@ -677,8 +613,6 @@ TABLE: dict[str, Row] = {
         "collections",
         "dataclasses",
         "deploy_watcher",
-        "fork_harden",
-        "fork_sync",
         # `declaration.py`, moved here from the carrier: it reads each repository's
         # `factory-target.toml` from GitHub, which this program compares with the record.
         "httpx",
@@ -690,37 +624,8 @@ TABLE: dict[str, Row] = {
         "rotation_worker",
         "sds_members",
         "tomllib",
-        "tool_installer",
         "typer",
         "typing",
-    ),
-    "tool_installer": _row(
-        "__future__",
-        "alert_hub_client",
-        "collections",
-        "dataclasses",
-        "datetime",
-        "estate_clients",
-        "hashlib",
-        "httpx",
-        "json",
-        "os",
-        "pathlib",
-        "re",
-        # `registry.py` quotes the paths and values it writes into the `bin/` wrapper script.
-        "shlex",
-        "shutil",
-        "subprocess",
-        # `npm.py` unpacks the tarball `npm pack` produced, with the `data` extraction filter.
-        "tarfile",
-        # `npm.py` builds in a temporary directory inside the install root.
-        "tempfile",
-        "typer",
-        "typing",
-        # `urllib.parse` only, for the base-URL shape check.
-        "urllib",
-        "zoneinfo",
-        no_sibling_lanes=True,
     ),
     # The carry builds its intake payload by running `orchestrator emit-intake-payload`, not by
     # importing the function that backs it -- running the command is what makes its output

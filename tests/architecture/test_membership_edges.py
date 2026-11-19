@@ -1,7 +1,7 @@
 """Architecture guard: one test states what the Membership layer reaches and with which credential.
 
-* `membership-check`: the orchestrator and change-manager routes, the GitHub reads, the `gh` and
-  `git` commands it runs, and the credentials its launcher fetches.
+* `membership-check`: the orchestrator and change-manager routes, the GitHub reads, the `git`
+  commands it runs, and the credentials its launcher fetches.
 * `sds-members`: the one read route (observer) and the one stage route (SYSTEM).
 
 Each row is held to the code: the client's own predicate where it has one, the recorded requests
@@ -31,7 +31,6 @@ import httpx
 import pytest
 
 from bump_proposer import landing_policy
-from fork_sync import watch as fork_watch
 from membership_check import auto_merge, declaration
 from membership_check import cli as check_cli
 from pin_watcher import github as pin_github
@@ -79,7 +78,7 @@ CHECK_EDGE = Edge(
     # `auto_merge` (the repository, the workflows directory and each workflow file, and the one
     # GraphQL query for the auto-merge setting). The listing
     # (the members and their accounts' public repositories) goes by the pin reader, and the
-    # registry files by `gh` and `git`: see below.
+    # registry files by `git`: see below.
     github=frozenset(
         {
             ("GET", FACTORY_TARGET),
@@ -332,9 +331,6 @@ CLI_IMPORTS = {
     "bump_proposer.standing": {"StandingError", "discover"},
     "change_proposer.criteria": {"_ROLLBACKS"},
     "deploy_watcher.workflows": {"ROLLOUT_WORKFLOWS"},
-    "fork_harden.rules": {"FORKS"},
-    "fork_sync.gh": {"CommandFailed", "subprocess_runner"},
-    "fork_sync.watch": {"Unreadable", "forks"},
     "membership_check.auto_merge": {"AutoMergeState", "GitHubAutoMergeSource"},
     "membership_check.consistency": {"Scope", "canonical", "check", "factory_targets"},
     "membership_check.declaration": {"GitHubDeclarationSource"},
@@ -349,7 +345,6 @@ CLI_IMPORTS = {
     "rotation_worker.types": {"of_a_type"},
     "sds_members.client": {"Member", "MembersUnreadable", "read_members"},
     "sds_members.populations": {"observed"},
-    "tool_installer.tools": {"TOOLS"},
 }
 LIBRARY_ROOTS = ("collections", "typing", "os", "__future__", "typer")
 
@@ -372,8 +367,9 @@ def test_the_cli_takes_exactly_the_names_the_table_states() -> None:
 def test_control_a_new_import_changes_what_the_cli_reaches() -> None:
     source = Path("src/membership_check/cli.py").read_text("utf-8")
     added = source.replace(
-        "from tool_installer.tools import TOOLS",
-        "from tool_installer.tools import TOOLS\nfrom alert_hub_client import KeyedAlerts",
+        "from deploy_watcher.workflows import ROLLOUT_WORKFLOWS",
+        "from deploy_watcher.workflows import ROLLOUT_WORKFLOWS\n"
+        "from alert_hub_client import KeyedAlerts",
     )
     wider = source.replace(
         "from pin_watcher.github import GitHubReader,",
@@ -497,50 +493,6 @@ def test_control_a_widened_listing_changes_the_requests(monkeypatch: pytest.Monk
         ("GET", "/users/o"),
         ("GET", "/users/o/repos"),
     ]
-
-
-# ---- The fork list: `gh api` on one file ----------------------------------------------------
-
-REGISTRY_REPO = "AlobarQuest/factory-runner"
-FORK_LIST_COMMANDS = [
-    [
-        "gh",
-        "api",
-        "-H",
-        "Accept: application/vnd.github.raw",
-        f"repos/{REGISTRY_REPO}/contents/.cred-consumers.toml?ref=main",
-    ]
-]
-
-
-def fork_list_commands() -> list[list[str]]:
-    commands: list[list[str]] = []
-
-    def run(argv: Sequence[str], stdin: str | None, cwd: Path | None) -> str:
-        commands.append(list(argv))
-        return f'[[credential]]\nid = "{fork_watch.REGISTRY_CREDENTIAL}"\n'
-
-    check_cli.forks(run)
-    return commands
-
-
-def test_the_fork_list_is_one_gh_read_of_the_factory_runner_registry() -> None:
-    assert check_cli.forks is fork_watch.forks
-    assert check_cli.subprocess_runner.__module__ == "fork_sync.gh"
-    assert fork_list_commands() == FORK_LIST_COMMANDS
-
-
-def test_control_an_extra_gh_command_changes_the_fork_list(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original = fork_watch.gh_api
-
-    def wider(run: Callable[..., str], path: str, *, raw: bool = False) -> object:
-        run(["gh", "api", "-X", "DELETE", "repos/o/r"], None, None)
-        return original(run, path, raw=raw)
-
-    monkeypatch.setattr(fork_watch, "gh_api", wider)
-    assert fork_list_commands() != FORK_LIST_COMMANDS
 
 
 # ---- The registry mirrors: `git` against four public repositories ---------------------------
