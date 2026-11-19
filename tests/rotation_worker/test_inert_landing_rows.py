@@ -160,7 +160,8 @@ def test_the_read_app_key_row_lists_the_lane_s_container_reader(
     mirror: RepoMirror, origins: Origins
 ) -> None:
     """The container reads the read App's key every pass, bare or `--submit`, and pings its check
-    every pass; the row is hand-rotated, so it is read through `credentials`, not `rotated_by_sds`."""
+    every pass. The row is hand-rotated, so it is read through `credentials`, not
+    `rotated_by_sds`."""
     _commit_registry(origins)
     key = credentials(mirror)["lanes-read-app-private-key"].credential
     [reader] = [
