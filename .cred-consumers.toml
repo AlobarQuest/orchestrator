@@ -1347,6 +1347,58 @@ healthchecks_check = "sds-rotation-proposer"
   uuid = "506a5436-4643-4040-8a8b-b50601312be2"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The inert-landing lane's token and ping URL (ADR-0059 increment 5) ───────────
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
+# for its first issue by `rotate_requested`; a later change dates the ping URL's row, once the
+# token's `store` unit completes, so the two issue units never wait on a mint at once. Both keepers
+# were created in Rotation / Keepers at HQ gate G-78, which also created the `inert-landing` machine
+# account. Its grants on the lane's secrets are a later act (deploy.md, the inert lander's cut-over
+# item 4). The account has no other token, so this is its only token row.
+# Neither row carries `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "inert-landing-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "2e6d746e-603c-4ab7-b3bc-b50701315811"
+rotated_by_sds = true
+rotate_requested = "2026-11-19"
+# What the lane's account sees, exactly: .bws-secrets.toml's inert-landing secrets
+# (ORCHESTRATOR_M2M_CREDENTIALS, change-manager/M2M_TOKEN_READ, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE,
+# lanes-read-app-private-key) and the ping URL's keeper.
+reach_secrets = ["221a48d5-3f29-4898-b300-b4820140c880", "314f276d-55ca-4ddc-a24d-b4a3013508cd", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "314a966c-5654-4e3c-8358-b4fd01268775", "35557473-f80c-44e3-892a-b507013158b1"]
+reach_projects = []
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "2e6d746e-603c-4ab7-b3bc-b50701315811"
+  note = "the keeper, in Rotation / Keepers; only the executor reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "w1ujl75mr0sqdrtur294ldrk"
+  key = "INERT_LANDING_BWS_ACCESS_TOKEN"
+  redeploy = false
+  note = "the sds-lane-inert-landing service's variable; the lane phases redeploy it, never the executor"
+
+# Not yet due: a later change adds `rotate_requested`, once the token's `store` unit completes.
+# No `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "inert-landing-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "35557473-f80c-44e3-892a-b507013158b1"
+rotated_by_sds = true
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-inert-landing"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "35557473-f80c-44e3-892a-b507013158b1"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
@@ -1365,7 +1417,9 @@ healthchecks_check = "sds-rotation-proposer"
 # bump-proposer and rotation-proposer lanes' readers land with their registry rows (deploy.md, the
 # bump proposer's cut-over item 3 and the rotation proposer's item 4): the bump proposer reads both
 # keys, the rotation proposer the push App's alone. Their accounts' grants, the first on the push
-# App's keeper, came at HQ gate G-75.
+# App's keeper, came at HQ gate G-75. The inert-landing lane's reader of the read App's key lands
+# with its registry rows (deploy.md, the inert lander's cut-over item 3), ahead of its account's
+# grant (item 4).
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -1443,6 +1497,13 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   ref = "scripts/run-bump-proposer.sh"
   healthchecks_check = "sds-bump-proposer"
   note = "read in the sds-lane-bump-proposer container with the lane's own token, each pass (dry run or --submit), and piped straight into sds-github-mint; pings sds-bump-proposer on --submit passes only"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-inert-landing.sh"
+  healthchecks_check = "sds-inert-landing"
+  note = "read in the sds-lane-inert-landing container with the lane's own token, each pass (bare or --submit), and piped straight into sds-github-mint; pings sds-inert-landing every pass"
 
 [[credential]]
 id = "lanes-push-app-private-key"
