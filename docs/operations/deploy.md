@@ -686,9 +686,10 @@ minute 50 is the rotation decomposer's, so the lane takes 55, which no other lan
 which still runs before the carry's 07:05. The flag is in the crontab line, so a scheduled pass
 writes, and the bare `lane-run bump-proposer` is the dry run, which writes and pings nothing.
 
-Its `.bws-secrets.toml` secrets are the following seven, all read with the lane's one token. Its
-ping-URL secret joins them when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
-empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following seven, all read with the
+lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`bump-proposer-ping-url`, which the container's dead-man helper reads the URL from with the lane's
+own token (`scripts/sds-deadman.sh`).
 
 - On every pass: the change-manager READ bearer, the orchestrator OBSERVER bearer, the
   `sds-bridge` alert sender, and the read-only App's key.
@@ -788,10 +789,10 @@ open in the container (Amendment 12's verify item "an open exposure survives the
 exposure is declared in a registry the list names, and the cut-over copy carries the state that
 shows it unresolved.
 
-Its `.bws-secrets.toml` secrets are the following four, all read with the lane's one token on
-`--submit` only; a dry run reads none. Its ping-URL secret joins them when it exists; until then the
-compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane is in `test_deploy_lanes.py`'s
-`placeholders`.
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following four, all read with the
+lane's one token. The launcher reads the four on `--submit` only; a dry run reads none of them. Its
+compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `rotation-proposer-ping-url`, which
+the container's dead-man helper reads the URL from on every pass (`scripts/sds-deadman.sh`).
 
 - The change-manager PROPOSE bearer.
 - The orchestrator OBSERVER bearer.

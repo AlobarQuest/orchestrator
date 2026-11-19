@@ -16,10 +16,12 @@
 # The lane's token is the resource's own `ROTATION_PROPOSER_BWS_ACCESS_TOKEN` variable, which the VM
 # rotation executor writes; this file names it and never holds a value. With it the launcher reads
 # every secret the pass needs (`scripts/run-rotation-proposer.sh`, "TWO HOSTS, ONE LAUNCHER").
-# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
-# secret, `rotation-proposer-ping-url` in `Rotation / Keepers`, created at HQ gate G-75: an id, not a secret
-# and not the ping URL. While it's empty the dead-man helper
-# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `rotation-proposer-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
+# the lane's own token on every pass, the bare one included (`scripts/sds-deadman.sh`). The VM
+# rotation executor writes the URL there from its inbox; while the secret holds the inbox's empty
+# marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:
   rotation-proposer:
@@ -29,7 +31,7 @@ services:
       BWS_ACCESS_TOKEN: ${ROTATION_PROPOSER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       ROTATION_PROPOSER_STATE_DIR: /var/lib/sds/rotation-proposer
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 506a5436-4643-4040-8a8b-b50601312be2
       INFRADRIFT_CONFIG_DIR: /var/tmp/sds-rotation-proposer/infra-drift
       SECURITY_DRIFT_STATE_DIR: /var/lib/sds/rotation-proposer/security-drift
     volumes:

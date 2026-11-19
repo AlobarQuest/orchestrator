@@ -1195,16 +1195,13 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     its compose names but the manifest doesn't list would go unproved until its first ping. An
     empty value is a placeholder until the lane's ping-URL secret exists, allowed only for a lane
     named in `placeholders`; a lane added before its ping-URL secret exists is named there until a
-    later change writes the id. The bump and rotation proposers' keepers were created at HQ gate
-    G-75; a later change writes each id."""
+    later change writes the id."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
     placeholders = {
         "bump-driver",
-        "bump-proposer",
         "estate-landing",
         "follow-up-mint",
         "inert-landing",
-        "rotation-proposer",
     }
     named = {}
     blank = set()
@@ -1217,6 +1214,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
             named[lane] = environment["SDS_DEADMAN_PING_URL_UUID"]
     assert blank == placeholders
     assert {
+        "bump-proposer",
         "change-proposer",
         "deploy-watcher",
         "execution-watch",
@@ -1225,6 +1223,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         "pin-watcher",
         "revision-watcher",
         "rotation-decomposer",
+        "rotation-proposer",
         "unit-verifier",
         "work-carrier",
     } <= set(named), named

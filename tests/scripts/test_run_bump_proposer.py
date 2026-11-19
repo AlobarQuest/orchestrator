@@ -550,8 +550,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BWS_ACCESS_TOKEN": "${BUMP_PROPOSER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "BUMP_PROPOSER_STATE_DIR": "/var/lib/sds/bump-proposer",
-            # A placeholder until the lane's ping-URL secret exists.
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `bump-proposer-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "786f75e2-3d02-4667-8607-b50601312a9d",
             **CHAIN,
         },
         "volumes": ["sds-lanes-bump-proposer-state:/var/lib/sds/bump-proposer"],
@@ -599,11 +599,13 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 
 def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it: its seven secrets. Its
-    ping-URL secret joins them when it exists. The launcher names each secret it reads."""
+    """The lane's `--token` proof reads what the manifest lists for it: its seven secrets and its
+    ping-URL secret. The launcher names each secret it reads, except the ping-URL secret, whose id
+    reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "786f75e2-3d02-4667-8607-b50601312a9d"
     secrets = deploy.lane_secrets(manifest, "bump-proposer")
-    assert sorted(secrets) == sorted(LANE_SECRETS)
+    assert sorted(secrets) == sorted([*LANE_SECRETS, ping_url_secret])
     launcher = LAUNCHER.read_text()
     for uuid in secrets:
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid
