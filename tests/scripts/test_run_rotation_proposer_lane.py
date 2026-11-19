@@ -225,6 +225,13 @@ def test_a_submitting_pass_reads_its_four_secrets_with_the_lanes_one_token(
     assert LANE_TOKEN not in run.output
 
 
+def test_a_container_pass_asks_git_for_no_worktree(tmp_path: Path) -> None:
+    """`/app` is no checkout, so the Mac's worktree refusal is skipped, not run to fail twice."""
+    run = _run(tmp_path)
+    assert run.code == 0, run.output
+    assert "not a git repository" not in run.result.stderr
+
+
 def test_a_dry_run_reads_no_secret_and_mints_nothing(tmp_path: Path) -> None:
     run = _run(tmp_path)
     assert run.code == 0, run.output

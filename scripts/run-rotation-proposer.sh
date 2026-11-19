@@ -112,10 +112,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # RUN FROM THE MAIN TREE, NEVER FROM A BUILD WORKTREE. This pass commits to and publishes from the
 # packages checkout, and a scheduled lane runs the main tree's working copy and `.venv` by absolute
 # path; a pass started from a worktree runs code that was never merged against a checkout every
-# lane shares.
+# lane shares. The Mac alone runs this check: the lane's container (a set `BWS_ACCESS_TOKEN`, as in
+# the container block below) runs the image's own code from `/app`, which is no git checkout, so
+# there is no worktree to refuse and both `git rev-parse` calls would fail.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-install.sh"
-sds_refuse_linked_worktree "$REPO_ROOT"
+if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+  sds_refuse_linked_worktree "$REPO_ROOT"
+fi
 
 export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME/Projects/intent-packages}"
 export ROTATION_PROPOSER_INFRAOPS_CHECKOUT="${ROTATION_PROPOSER_INFRAOPS_CHECKOUT:-$HOME/Projects/infraops-mcp-server}"
