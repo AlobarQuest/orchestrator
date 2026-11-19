@@ -41,7 +41,7 @@ def trees(tmp_path: Path) -> tuple[Path, Path]:
     return main, linked
 
 
-def _run(root: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+def _run(root: Path, tmp_path: Path, **extra: str) -> subprocess.CompletedProcess[str]:
     (root / "scripts").mkdir(exist_ok=True)
     shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
     for helper in HELPERS:
@@ -51,7 +51,7 @@ def _run(root: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
     # `--dry-run` keeps the dead-man switch from arming, so no case here reaches the Keychain.
     return subprocess.run(
         ["/bin/bash", str(root / "scripts" / LAUNCHER.name), "--dry-run"],
-        env={"PATH": "/usr/bin:/bin", "HOME": str(home)},
+        env={"PATH": "/usr/bin:/bin", "HOME": str(home), **extra},
         capture_output=True,
         text=True,
         check=False,
@@ -60,8 +60,11 @@ def _run(root: Path, tmp_path: Path) -> subprocess.CompletedProcess[str]:
 
 def test_the_refusal_comes_before_any_credential_or_switch() -> None:
     lines = LAUNCHER.read_text().splitlines()
-    call = lines.index('sds_refuse_linked_worktree "$REPO_ROOT"')
+    call = lines.index('  sds_refuse_linked_worktree "$REPO_ROOT"')
     assert lines.index('source "$REPO_ROOT/scripts/sds-install.sh"') < call
+    # The check runs on the Mac alone: a set `BWS_ACCESS_TOKEN` is the lane's container.
+    assert lines[call - 1] == 'if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then'
+    assert lines[call + 1] == "fi"
     for later in ("sds_deadman_arm ", "sds_bws_value ", "find-generic-password", ".venv/bin/"):
         first = next(i for i, line in enumerate(lines) if later in line and "#" not in line[:2])
         assert call < first, later
@@ -81,6 +84,17 @@ def test_control_from_a_main_tree_it_gets_past_the_refusal(trees, tmp_path) -> N
     assert "linked worktree" not in result.stderr
     assert result.returncode == 1
     assert "no rotation-proposer" in result.stderr
+
+
+def test_in_the_lanes_container_it_skips_the_refusal(trees, tmp_path) -> None:
+    """A set `BWS_ACCESS_TOKEN` is the container, whose `/app` is no checkout: the pass goes on to
+    the container block, whose fence stops it (exit 2) for want of infraops' directories. Run from
+    a linked worktree so that a check that still ran would refuse, and be seen."""
+    _main, linked = trees
+    result = _run(linked, tmp_path, BWS_ACCESS_TOKEN="placeholder-lane-token")
+    assert "linked worktree" not in result.stderr
+    assert result.returncode == 2
+    assert "INFRADRIFT_CONFIG_DIR is not set" in result.stderr
 
 
 def test_the_launcher_reads_the_bridge_token_only_on_submit() -> None:
