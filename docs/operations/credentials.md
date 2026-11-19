@@ -430,6 +430,19 @@ After ADR-0059 step 3g-3's cut-over, the `bump-driver` lane account alone reads 
 read-only App's key (`314a966c-…`), with the lane's own token in its container (no Keychain item),
 and the lane mints its GitHub token from that App each pass.
 
+`scripts/run-change-window.sh` holds no chain password either, and it has no Mac branch: the Mac's
+window stays infraops-mcp-server's `scripts/change-window.sh` until the lane's rollback ends. After
+ADR-0059 increment 8's cut-over, the `change-window` lane account is the future holder of four
+secrets that don't exist yet, each read with the lane's own token in its container (no Keychain
+item): a dedicated Coolify window token for production Coolify (D-68 B), change-manager's narrow
+`execute` bearer (`M2M_TOKEN_EXECUTE`, change-manager #168), an Anthropic API key, and an
+alert-hub sender token for the digest. The lane account reads nothing else but its own ping-URL
+secret. A bare pass reads the `execute` bearer alone. The Mac job's full change-manager bearer
+and its prod and dev Coolify tokens aren't among them: the lane never holds a
+credential that can approve a change record, and it never reaches dev Coolify (D-67 C). Each
+secret's id is empty in the launcher until its identity and mint gates create it
+(`docs/operations/deploy.md`, the change-window lane's cut-over).
+
 Devon mints both new Keychain items at act step 0. Neither item has an environment override: a
 launcher reads it from the Keychain directly, so a caller's environment can't put the token in
 the children's environment. `sds_bws_value` passes a token to `bws` as an assignment prefix, so it

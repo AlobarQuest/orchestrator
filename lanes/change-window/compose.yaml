@@ -1,0 +1,27 @@
+# sds-lane-change-window (ADR-0059 row 822, increment 8): the change-window lane. HQ creates the
+# resource from this file. It serves nothing: no port, no domain, so no Traefik labels.
+# It joins no network beyond the resource's own, the `coolify` network included: it reaches no
+# separate Coolify database resource. change-manager, alert-hub and the Anthropic API are HTTPS
+# URLs, and production Coolify is the tailnet address `http://100.92.138.19:8000`, which a
+# container on its resource's default network reaches (HQ G-73), as estate landing reaches it.
+# It never reaches dev Coolify (D-67 C).
+# It keeps no state (decision 1, "Lane state"), so it mounts no volume: each pass clones
+# infraops-mcp-server into a directory it removes, and writes the window's report there.
+# The lane's token is the resource's own `CHANGE_WINDOW_BWS_ACCESS_TOKEN` variable, which the VM
+# rotation executor writes; this file names it and never holds a value. With it the launcher reads
+# the secrets the pass needs (`scripts/run-change-window.sh`, "CREDENTIALS"); their ids live in
+# the launcher, not here, because `lane-run` passes the launcher a fixed list of variables.
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
+# and not the ping URL, which a later change writes here. While it's empty the outcome alarm
+# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on
+# (`docs/operations/deploy.md`, the change-window lane's cut-over).
+services:
+  change-window:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["change-window"]
+    environment:
+      BWS_ACCESS_TOKEN: ${CHANGE_WINDOW_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      SDS_DEADMAN_PING_URL_UUID: ""
+    restart: unless-stopped
