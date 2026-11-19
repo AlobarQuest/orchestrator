@@ -1,10 +1,9 @@
 """The repository's bump-proposer and rotation-proposer registry rows, read by the code that acts
 on them.
 
-ADR-0055 amendment 19 item 8 and ADR-0059 increment 4: each lane's two rows are handed to the SDS,
-and only its token's row is due for its first issue; a later change dates each ping URL's row. The
-rows are read here as the executor reads them, at `main` through `RepoMirror`, from this
-repository's own `.cred-consumers.toml`.
+ADR-0055 amendment 19 item 8 and ADR-0059 increment 4: each lane's two rows are handed to the SDS
+and due for their first issue. The rows are read here as the executor reads them, at `main`
+through `RepoMirror`, from this repository's own `.cred-consumers.toml`.
 """
 
 from __future__ import annotations
@@ -191,11 +190,11 @@ def test_the_ping_url_row_names_only_its_keeper(rows: dict[str, RegistryEntry], 
 
 
 @BY_NAME
-def test_only_the_token_row_is_due(rows: dict[str, RegistryEntry], lane: Lane) -> None:
-    """The ping URL's row is dated only after the token's `store` unit completes, so the two issue
-    units never wait on a mint at once."""
+def test_both_rows_are_due(rows: dict[str, RegistryEntry], lane: Lane) -> None:
+    """The ping URL's row is dated only after the token's `store` unit completed, so the two issue
+    units never waited on a mint at once."""
     assert rows[lane.token].credential["rotate_requested"] == "2026-11-18"
-    assert "rotate_requested" not in rows[lane.ping_url].credential
+    assert rows[lane.ping_url].credential["rotate_requested"] == "2026-11-19"
 
 
 @BY_NAME
