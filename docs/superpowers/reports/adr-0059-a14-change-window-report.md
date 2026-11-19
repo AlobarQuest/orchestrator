@@ -9,7 +9,7 @@ docs only. I made no live call and no production act, and edited no other reposi
 - **Content commits:** `2467c8bc` (the amendment), `f3fb27df` (self-review corrections) and
   `68c395ccbb9acf910c7692e5fb9d4edc38f864c4` (HQ's answer on the `execute` bearer, the last
   content commit).
-- **Head:** this report's commit, the one after `68c395cc` (`git log -1` on the branch).
+- **Head:** PR #750's head. After `68c395cc` come only docs commits under `docs/superpowers/reports/`: this report and HQ's answered question.
 - **Amendment's line range:** lines 4003-4362 of
   `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md`. Line 4002 is the
   blank separator after Amendment 13. Against the base `3585b4f9`, the diff adds 361 lines and
