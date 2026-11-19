@@ -251,6 +251,18 @@ be used.
   the prod Coolify window token, the Anthropic key and the `execute` bearer in its environment, so
   `main`'s branch protection is the trust boundary. That's D-66 A's design and the rotation
   proposer's clone model, recorded here for the mint gates.
+- **The digest sender is hand-written.** It uses curl with the token on stdin, as
+  `sds_outcome_ping` and `sds_upsert_check` do. It doesn't use alert-hub's `alert-hub-send.sh`,
+  which this repository doesn't carry, or `alert_hub_client`, which sends alerts only and is in
+  `src/`, outside my fence. The handoff's Standards section has no rule for notification senders.
+  If Code Brain has a notifications road, check this sender against it.
+- **A stopped pass strands claimed items** (W-223, section 6). A pass stopped midway, by a
+  redeploy or a bootout, leaves each claimed item `in_progress` for a person: nothing in
+  change-manager returns one. The quiet slot's `started` read of `Change Manager OPs Check` and the
+  cut-over's "confirm no pass is running" prevent it. So the check-uniqueness verify item gates a
+  safe redeploy, not just the lag check.
+- **`com.devon.infra-reports` is unaffected** (W-223, section 5). It still sends infra-drift's
+  queued digest at 07:30. Once the Mac job retires, change-window stops adding to that queue.
 - **Shared minute 0.** The 04:00 line shares minute 0 with execution-watch's `*/15`. Every other
   lane took a minute no lane starts on, and each lane's own test asserts that its minute is unique.
   This lane's test doesn't, because the time is HQ's configuration. The two containers share no
