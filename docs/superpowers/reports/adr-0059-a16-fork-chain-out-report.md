@@ -101,9 +101,8 @@ I also checked the following, and none covers the forks as members:
 ## Tests and checks
 
 - `make check` with `TEST_DATABASE_URL` pointing at `orchestrator_test_hq_w_235`: ruff "All
-  checks passed!", pyright "0 errors", and pytest "15832 passed, 1 skipped". This ran on the first
-  version of the amendment. After the review edits I reran it; that result is in the following
-  section.
+  checks passed!", pyright "0 errors", and pytest "15832 passed, 1 skipped". It ran twice: on the
+  first draft, and again on the committed amendments and this report (exit 0, same counts).
 - Security scanner from the repo root: 0 BLOCK, 2 WARN and 1 INFO.
 
 ## Files changed
