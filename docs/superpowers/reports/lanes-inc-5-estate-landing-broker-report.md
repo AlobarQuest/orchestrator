@@ -60,16 +60,22 @@ The estate-landing copy of #758's inert-landing change, file by file.
      `compose_broker_refusals`, and checks the new volume list and the absence of a token.
    - No estate-landing registry-row test exists. `grep -rn ESTATE_LANDING_BWS_ACCESS_TOKEN tests`
      matched only this file's compose test, so I changed no rows test.
-5. `docs/operations/deploy.md`, estate landing's section (stale lines only):
-   - The `.bws-secrets.toml` paragraph said the secrets were "all read with the lane's one token".
-     It now says the broker reads them.
-   - Cut-over item 2 dropped the lane token's keeper and keeps the ping URL's.
-   - Item 3 dropped the token's registry row.
-   - Item 4 replaced the lane account's grants with the broker account's project reads.
-   - Item 5 dropped the token's mint and write.
-   - Item 7 now starts with moving the broker to a release that lists the lane, and its
-     `listening` line, as the "Add a lane" procedure in `docs/operations/secrets-broker.md`
-     requires.
+5. `docs/operations/deploy.md`, estate landing's section. Line numbers are at the branch head.
+   - Lines 1000 to 1004: the `.bws-secrets.toml` paragraph said the secrets were "all read with the
+     lane's one token". It now says the broker reads them.
+   - Lines 1026 and 1027 (cut-over item 2): the lane token's keeper is dropped, and the ping URL's
+     is kept.
+   - Lines 1028 and 1029 (item 3): the token's registry row is dropped.
+   - Lines 1030 to 1035 (item 4): the lane account's grants are replaced by the broker account's
+     reads. The item names each secret's project, from `.bws-secrets.toml`, and says to check the
+     broker's read of the ping-URL secret at that step.
+   - Line 1036 (item 5): the token's mint and write are dropped.
+   - Lines 1039 to 1041 (item 7): the item now starts by moving the broker to a release whose
+     allowlist lists the lane, and checking its `listening` line. This is new procedure text, not
+     only a stale-line fix. It copies the "Add a lane" order in `docs/operations/secrets-broker.md`,
+     so HQ can judge whether it belongs here.
+   - I found nothing stale in `lanes/estate-landing/crontab`, and ADR-0059 has no step 3g-2 text
+     about the lane's own token.
 
 ## Confirmations (handoff item 6)
 
@@ -89,11 +95,11 @@ The estate-landing copy of #758's inert-landing change, file by file.
   - `314a966c-…` (line 369) is in `SDS / Lane Apps`.
   - `314f276d-…` (line 202) is in `Rotation / Keepers`.
 
-  The broker's grants are "project by project" (ADR-0055 amendment 30, Devon's answer). Inert
-  landing's entry already needs `SDS Operator`, `SDS / Lane Apps`, and `Rotation / Keepers`, so
-  the only secret this change adds over inert's list is `f9f59233-…`, which is in `SDS Operator`.
-  The repo doesn't record the broker's grants themselves, and I made no BWS call, so this check
-  goes as far as the manifest's projects.
+  Inert landing's broker entry already reads `221a48d5-…` and `b415d03b-…` in `SDS Operator`,
+  `314a966c-…` in `SDS / Lane Apps`, and `314f276d-…`. The only secret this change adds over
+  inert's list is `f9f59233-…`, which is in `SDS Operator`, the project of two secrets inert
+  already reads. The repo doesn't record the broker's grants, and I made no BWS call, so this
+  check goes as far as the manifest's projects.
 
 ## Tests and checks
 
@@ -106,7 +112,14 @@ The estate-landing copy of #758's inert-landing change, file by file.
   older than this branch: the `*-migration/` gitignore glob, and the undeclared UUID
   `aaff45ca-…`, which appears only in older reports and not in this diff. It also reported 1 INFO
   judgment item.
-- `/code-review` low on `origin/main...HEAD` found nothing.
+- `/code-review` low on `origin/main...HEAD` returned no output, `Result: (none)`. That isn't a
+  shown zero-findings review, so I'm not counting it as approval.
+- `code-standards risk` gave `high-risk`, matching secrets in `lanes/secrets-broker/allowlist.toml`
+  and `scripts/run-estate-landing.sh`. I ran `vendor-review` on the diff from `1447b3da` to head
+  `4503ef0f`: claude ok (approve), codex ok (approve), agy off by configuration. The review is
+  complete: 0 findings, 0 dropped.
+- CI on the PR: when I last checked, `Rollout transcription currency` and
+  `Runner consumer compatibility` had passed, and `Quality` was pending.
 
 ## Files changed
 
@@ -126,6 +139,12 @@ The estate-landing copy of #758's inert-landing change, file by file.
   says. The tests keep the broad stand-in so that no test reads the real Keychain.
 
 ## Concerns
+
+- **The broker's read on `Rotation / Keepers` is unconfirmed.** ADR-0055 amendment 30 records the
+  broker's grants as "project by project". The handoff names a single-secret grant on
+  `314f276d-…`. If the broker reads `Rotation / Keepers` one secret at a time, the future
+  `estate-landing-ping-url` secret needs its own grant. Cut-over item 4 says to check it, and the
+  five secrets listed in this change are covered either way.
 
 - **Comments outside my scope still say "the lane's own token".** `.bws-secrets.toml` comments
   (around lines 20 to 24, 190 to 193, 296 to 297, and 317 to 320) say estate landing reads in
