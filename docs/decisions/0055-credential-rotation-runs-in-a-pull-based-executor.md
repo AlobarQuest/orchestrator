@@ -4335,20 +4335,25 @@ Devon answered two questions on 2026-11-20, in an interactive HQ session. They a
    UUID and a newline. The reply is one JSON line, `bws secret get --output json`'s shape or
    `{"error": "<code>"}` with `not_allowed`, `bad_request` or `bws_failed`. Each read is fresh, under
    a new empty `HOME` and with `--color no` (workspace invariants 22 and 23). The broker caches and
-   writes nothing, and logs one line per request: lane, UUID and outcome, never a value.
-5. **The broker refuses to start without its token.** With `BWS_ACCESS_TOKEN` unset or empty, or a bad
-   allowlist, it prints one JSON error line and exits 2. The host directory `/data/sds/broker` must
-   exist, owned by the image's `orchestrator` user, before the broker's first start: Docker would
-   create it root-owned, and the broker couldn't make its lanes' directories.
+   writes nothing, and logs one line per lane once its socket listens (outcome `listening`) and one
+   per request: lane, UUID and outcome, never a value.
+5. **The broker refuses to start without its token.** With `BWS_ACCESS_TOKEN` unset or empty, a bad
+   allowlist, or a lane whose directory or socket can't be set up (named with its errno's name, and
+   fail-fast), it prints one JSON error line and exits 2. Before the broker's first start, the
+   deploy creates `/data/sds/broker`, or chowns it, to the image's `orchestrator` uid and gid and
+   checks it with `ls -ln`: Coolify or Docker may create a bind directory root-owned, and the broker
+   couldn't make its lanes' directories.
 6. **The lane side.** `sds_bws_value` and `lane-run --read` read through `/run/sds-broker/broker.sock`
    when `lane-run` finds it mounted, and set `SDS_SECRETS_SOCKET` to name it. A brokered read never
    falls back to `bws`. A launcher's "am I in my container" test is `sds_in_lane_container`, true on
    a token or a socket. The two-argument form of `sds_bws_value` names an identity and always runs
    `bws`. The 12 lanes already on the VPS and every Mac launcher run unchanged.
 7. **The deploy checks know a broker lane.** A lane is a broker lane when its compose maps no
-   `BWS_ACCESS_TOKEN`, mounts exactly `/data/sds/broker/<lane>:/run/sds-broker:ro`, and the
-   allowlist at the run's commit lists the lane. A lane that only lost its token is none. A broker
-   lane's `--add` or `--token` run finishes with `--token-present false`; a token lane's with `true`.
+   `BWS_ACCESS_TOKEN`, mounts exactly `/data/sds/broker/<lane>:/run/sds-broker:ro` and nothing else
+   at, under or above `/data/sds/broker`, and the allowlist at the run's commit lists the lane. Any
+   other such mount is refused at `--add`, on a token lane too. A lane that only lost its token is
+   none. A broker lane's `--add` or `--token` run finishes with `--token-present false`; a token
+   lane's with `true`.
 8. **The unlock tier.** Anything holding the broker's token, or the broker's mount, can read for any
    lane, so the broker's token is in the unlock tier: the one BWS token that stays manual. Phase C
    settles how it rotates. The token lives in the resource's Coolify variable and its keeper secret in
