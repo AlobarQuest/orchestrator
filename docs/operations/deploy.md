@@ -1134,8 +1134,8 @@ its own change or act.
    it. A `--dry-run` pass never runs the generator, so the paired reporting runs of cut-over step 2
    can't show this. Amendment 13 needs these, as step 3g-3-inputs, before the acting pass:
    - Devon's acts: the read-only App installed on `AlobarQuest/code-standards` (`contents: read`),
-     and a read grant on the factory-events read password (`2f708d08-…`) to the broker's account
-     (step 5).
+     and a read grant on the factory-events read password (`2f708d08-…`). The amendment names the
+     lane account as its holder; on the broker the broker's account reads it (step 5).
    - security-standards: the nightly's adapter for the new event in `adapt --source all`, its
      `source.system` value in the event schema, and one credential-less registry agent. The names
      are HQ's proposals in the amendment (`mac_conformance.reported`, `mac-conformance-facts`).
@@ -1161,8 +1161,8 @@ its own change or act.
    all as for inert landing's entry. The two Brain keys (`750f737f-…`, `da8134b0-…`,
    `Brains - Contributor`) and the factory-events read password (`2f708d08-…`, `Factory Events`)
    are outside what the broker's account reads (`.cred-consumers.toml`, the
-   `secrets-broker-bws-token` row's reach), so each needs a grant to it, Devon's act at the lane's
-   cut-over gate (for the read password, Amendment 13 decision item 7): until each is made,
+   `secrets-broker-bws-token` row's reach), so each needs a grant to the broker's account, Devon's
+   act at the lane's cut-over gate: until each is made,
    `lane-run --read` refuses that UUID and every container pass fails on it. The ping-URL secret is
    in `Rotation / Keepers` too: check that the broker's account reads it at this step.
    Devon's other act comes before step 8's dry run: the read-only App's installation on

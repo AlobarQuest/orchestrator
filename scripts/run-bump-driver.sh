@@ -344,8 +344,6 @@ print(summary)
 fi
 
 # ---- THE MAC, unchanged until increment 6 ------------------------------------------------------
-# The container block above exits. These reads test the identities themselves, not
-# `sds_in_lane_container`: a socket's marker must never pass for the Mac's narrow identity.
 NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
 [ -n "$NARROW_IDENTITY" ] || sds_outcome_fail \
