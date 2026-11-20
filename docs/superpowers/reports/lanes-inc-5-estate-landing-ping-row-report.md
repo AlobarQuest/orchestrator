@@ -3,11 +3,11 @@ Outcome: done
 # Report: estate landing's ping-URL registry row (W-250)
 
 PR: #765, branch `hq/lanes-inc-5-estate-landing-ping-row`, base `origin/main` at `262cc34c`
-(confirmed at dispatch: `git fetch` then `git log -1 origin/main`). Opened ready for review, not merged. The code head is `2e294d96`; this report commit follows it.
+(confirmed at dispatch: `git fetch` then `git log -1 origin/main`). Opened ready for review, not merged. The last code commit is `fdfc8551`; report-only commits follow it.
 
 ## What I built
 
-deploy.md, estate landing's cut-over item 3 (lines 1031-1032):
+deploy.md, estate landing's cut-over item 3 (line 1028):
 
 - `.cred-consumers.toml` line 1411: the `estate-landing-ping-url` row, after the inert lander's
   blocks. Class and provider `healthchecks-ping-url`, `bws_uuid = "11e940d7-…"`,
@@ -48,7 +48,7 @@ the broker allowlist, `test_deploy_lanes.py`, or any other repository.
 #755's registry diff touched one consumer row only, the read App key's. So I added no container
 reader on any of these four:
 
-- SYSTEM bearer (`orchestrator-system-bearer`, line 192): #755 added no inert container reader.
+- SYSTEM bearer (`orchestrator-system-bearer`, line 191): #755 added no inert container reader.
   The row's one orchestrator `runtime-fetch` (line 216) already names both `run-estate-landing.sh`
   and `run-inert-landing.sh` without saying which host, so it covers the container read as written.
 - change-manager READ bearer (`314f276d-…`) and `sds-bridge` alert sender (`b415d03b-…`): this
@@ -120,6 +120,13 @@ reader on any of these four:
      observation, no `rotation-estate-landing-ping-url` package, no change record. Once item 5 adds
      `rotate_requested`, the pass generates revision 1, a first issue, because `last_rotated` is
      `null` (`cli._first_issue`, line 436).
+   - A second reader acts at merge. `worker._other_keepers` (line 824) reads the keeper of every
+     other `rotated_by_sds` row of the same provider before a ping-URL mint (`_read_mint_waits`,
+     lines 712-719). `inert-landing-ping-url` is due, so its next pre-claim read reads `11e940d7-…`
+     too. That keeper holds the keeper command's empty marker, which never equals a ping URL, so it
+     doesn't refuse the inert unit. If the executor can't read the keeper, `StoreError` makes the
+     inert unit wait, not refuse (lines 720-729). The handoff says the executor reads it. I couldn't
+     confirm the grant, because the handoff rules out BWS calls.
 5. **Fixtures and existing tests.**
    - `registered_lanes` (`scripts/deploy_orchestrator.py` line 1308) calls `lanes_in_registry`
      (line 1252). That function counts a lane only through a `coolify-env` service consumer whose
@@ -130,12 +137,20 @@ reader on any of these four:
      of every broker lane with no token row, and the bump driver is in the same position.
    - `brokered` (line 1715) is derived from the compose and the broker allowlist, not the registry,
      so nothing expects a token row for the lane.
-   - `test_every_lanes_ping_url_secret_is_listed_for_that_lane` (line 1380) reads the compose
+   - `test_every_lanes_ping_url_secret_is_listed_for_that_lane` (line 1381) reads the compose
      values and `.bws-secrets.toml`, not the registry. `placeholders` still holds `estate-landing`,
      and it passes.
    - `test_secrets_broker_row.py` pins the broker row to its own constant set, not to live grants,
      and passes.
-   - `test_run_estate_landing.py` doesn't read `.cred-consumers.toml`.
+   - `test_run_estate_landing.py` doesn't read the registry: `grep "cred-consumers\|REGISTRY"` over
+     it returns no match.
+   - The other readers are the files `grep -rln "cred-consumers\|REGISTRY_PATH" tests scripts src`
+     lists: each lane's `test_*_rows.py`, `test_registry_and_compare.py`,
+     `test_registry_array_strings.py`, `test_sds_cred_registries.py`, `test_deploy_orchestrator.py`,
+     the membership-check and rotation-proposer tests, and the package fixtures
+     (`tests/fixtures/rotation_package_issue_healthchecks-ping-url.json` and others). The fixtures
+     are package bodies, not copies of the registry. I didn't read every body; all of them ran in
+     `make check` and passed.
 6. **Membership check.** `src/membership_check/declaration.py::hands_over` (line 177) reads a
    member's `.cred-consumers.toml` only to ask whether any row is `rotated_by_sds = true`, and only
    for members outside `REGISTRY_REPOSITORIES` (`cli.py` line 126). The orchestrator is in
@@ -151,9 +166,13 @@ reader on any of these four:
 - Security scan from the repo root: 0 BLOCK, 2 WARN, 1 INFO.
   - `bws.secret-files-gitignored` (`*-migration/` glob) is about `.gitignore`.
   - `bws.manifest-matches-usage` (`aaff45ca-…`) is in `scripts/install-rotation-worker-launchd.sh`.
-  - My diff touches neither file, and both are identical on `origin/main`.
+  - My diff touches neither file, and both are identical on `origin/main`. I couldn't establish a
+    baseline: a scan of a `git archive` of `origin/main` showed 0 WARN, so it doesn't compare.
+  - Re-run at HEAD `c30a96e6`, with the same result.
+  - `11e940d7-…` isn't in `.bws-secrets.toml` until item 6, and the scan didn't flag it.
 - `code-standards risk`: `normal`, so `vendor-review` isn't required.
-- `/code-review` (low) on `origin/main...HEAD`: no findings.
+- `/code-review` (low) on `origin/main...HEAD`: the skill returned `(none)` twice. I can't confirm
+  from that output that a review ran, so treat the review gate as unconfirmed.
 
 ## Files changed
 
@@ -180,6 +199,8 @@ reader on any of these four:
   `inert-landing-ping-url` keeper's note (line 1399) and the token row's account comment.
   They predate the broker, and the handoff allowed only the read-key note.
 - **Container reader on `coolify-estate-lander-token`:** a follow-up, with the shape given earlier.
+- **The inert ping-URL unit now reads the new keeper** before its mint (check 4). If the
+  executor's account lacks the read on `11e940d7-…`, the inert unit waits until it has one.
 - **The release hold doesn't cover broker lanes with no token row** (check 5). That's the existing
   design for the bump driver too, and this change doesn't alter it.
 
