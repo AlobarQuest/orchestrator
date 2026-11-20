@@ -290,8 +290,9 @@ def test_an_unreadable_coolify_token_is_logged_and_the_pass_still_runs(tmp_path:
     """As on the Mac: the program refuses every re-point by name, so the pass runs without it."""
     run = _run(tmp_path, "--submit", BWS_REFUSES=COOLIFY_UUID)
     assert run.code == 0, run.output
-    assert "the Coolify token could not be read (the lane's socket or token): re-points are refused" in (
-        run.output
+    assert (
+        "the Coolify token could not be read (the lane's socket or token): re-points are refused"
+        in run.output
     )
     assert run.passes() == ["lander args=--submit"]
     assert "ESTATE_LANDING_COOLIFY_TOKEN" not in run.env()
