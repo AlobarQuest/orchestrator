@@ -4309,7 +4309,8 @@ Devon answered two questions on 2026-11-20, in an interactive HQ session. They a
   each BWS project that holds a lane-read secret, not on each secret.
 - **How the broker's first token reaches its resource.** Devon: "past straight into the broker's
   coolify variable". Devon mints the token and pastes it into the broker resource's
-  `SECRETS_BROKER_BWS_ACCESS_TOKEN` variable in Coolify, in the same browser sitting. The executor
+  `SECRETS_BROKER_BWS_ACCESS_TOKEN` variable in Coolify, in the same browser sitting, and stores the same token in a keeper secret in
+  the BWS project `Rotation / Keepers`, as every lane token keeps a stored copy. The executor
   writes none of it, so the first token needs no package, approval or mint gate.
 
 ### Decision
@@ -4350,7 +4351,9 @@ Devon answered two questions on 2026-11-20, in an interactive HQ session. They a
    lane's `--add` or `--token` run finishes with `--token-present false`; a token lane's with `true`.
 8. **The unlock tier.** Anything holding the broker's token, or the broker's mount, can read for any
    lane, so the broker's token is in the unlock tier: the one BWS token that stays manual. Phase C
-   settles how it rotates. Until then its registry row is `rotated_by_sds = false`.
+   settles how it rotates. The token lives in the resource's Coolify variable and its keeper secret in
+   `Rotation / Keepers`. Its registry row, added at the deploy step once the resource and the keeper
+   exist, is `rotated_by_sds = false` until then.
 9. **Accepted exposure.** A mounted socket stays reachable to a lane's child process after the
    launcher drops the marker or unsets `BWS_ACCESS_TOKEN`. This is no new exposure: the child
    already could read the launcher's starting environment, token included, through `/proc`, and the

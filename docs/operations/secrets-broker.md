@@ -22,7 +22,9 @@ request arrives on is the lane's identity.
    lane's resource is created (ADR-0059, "Cut-over for one lane").
 4. **Devon pastes the token.** Devon mints the account's access token in the BWS web app and pastes
    it into the resource's `SECRETS_BROKER_BWS_ACCESS_TOKEN` variable in Coolify, in the same sitting.
-   The executor writes none of it, and the token appears in no transcript. Set the image tag
+   Devon also stores the same token in a keeper secret in the BWS project `Rotation / Keepers`, as
+   every lane token keeps a stored copy. The executor writes none of it, and the token appears in
+   no transcript. Set the image tag
    variable `SDS_LANES_IMAGE_TAG` to the release that carries the allowlist.
 5. **Start it and read its log.** Each lane in the allowlist gets a directory and a socket at start.
 
@@ -64,7 +66,9 @@ broker shows as `refused`.
 ## Read its log
 
 The broker writes one JSON line per request to stdout: `lane`, `uuid` and `outcome`, never a value.
-Read it through the resource's logs. An outcome other than success names the refusal.
+Read it through the resource's logs. The outcome is `ok` for a served read, and otherwise
+`not_allowed`, `bad_request` or `bws_failed` (the codes a lane sees) or `internal` (the broker failed
+on a connection, and the lane sees no reply).
 
 ## Failure modes
 
@@ -85,5 +89,5 @@ Read it through the resource's logs. An outcome other than success names the ref
 ## What the broker doesn't change
 
 The 12 lanes already on the VPS, and every Mac launcher, keep their tokens and run unchanged. The
-broker's own token is the one BWS token that stays manual until Phase C; its registry row isn't
-rotated by the SDS until then.
+broker's own token is the one BWS token that stays manual until Phase C; its registry row, added at
+the deploy step once the resource and its keeper secret exist, is `rotated_by_sds = false` until then.

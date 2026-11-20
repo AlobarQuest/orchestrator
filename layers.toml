@@ -143,6 +143,7 @@ paths = [
   "tests/scripts/test_sds_deadman.py",
   "tests/scripts/test_shape_registry_context.py",
   "docs/operations/credentials.md",
+  "docs/operations/secrets-broker.md",
   "docs/operations/deploy.md",
   "docs/decisions/0046-*.md",
   "docs/decisions/0050-*.md",
