@@ -1160,23 +1160,101 @@ def test_a_malformed_token_command_is_usage(lanes: Lanes, argv: list[str]) -> No
     assert not (lanes.tmp / "deploy-lanes" / "execution-watch").exists()
 
 
-def test_add_takes_a_lane_on_the_secrets_broker_in_place_of_a_token() -> None:
-    """A tokenless compose passes only with the lane's own socket bind (ADR-0055 amendment 30)."""
-    compose = (ROOT / "lanes/execution-watch/compose.yaml").read_text()
-    service = deploy.lane_service(compose, "execution-watch")
-    del service["environment"]["BWS_ACCESS_TOKEN"]
-    [refusal] = deploy.add_refusals(service, "execution-watch")
-    assert "BWS_ACCESS_TOKEN" in refusal and "/data/sds/broker/execution-watch" in refusal
+# ---- a lane on the secrets broker (ADR-0055 amendment 30) -------------------------------------
+
+BROKER_BIND = "/data/sds/broker/execution-watch:/run/sds-broker:ro"
+TOKEN_LINE = "      BWS_ACCESS_TOKEN: ${EXECUTION_WATCH_BWS_ACCESS_TOKEN}\n"
+STATE_LINE = "      - sds-lanes-execution-watch-state:/var/lib/sds/execution-watch\n"
+BROKER_COMPOSE = WATCH_COMPOSE.replace(TOKEN_LINE, "").replace(
+    STATE_LINE, STATE_LINE + f"      - {BROKER_BIND}\n"
+)
+ALLOWLIST = f'[lanes.execution-watch]\nread = ["{OBSERVER}"]\n'
+OTHER_ALLOWLIST = f'[lanes.inert-landing]\nread = ["{OBSERVER}"]\n'
+
+
+def test_a_broker_lane_needs_its_own_bind_and_an_allowlist_entry() -> None:
+    service = deploy.lane_service(BROKER_COMPOSE, "execution-watch")
+    allowlist = {"execution-watch": frozenset({OBSERVER})}
+    assert deploy.broker_lane(service, "execution-watch", allowlist)
+    assert deploy.add_refusals(service, "execution-watch", allowlist) == []
+    # No allowlist entry: a lane that only lost its token.
+    [refusal] = deploy.add_refusals(service, "execution-watch", {"inert-landing": frozenset()})
+    assert "BWS_ACCESS_TOKEN" in refusal and deploy.BROKER_ALLOWLIST in refusal
+    assert deploy.add_refusals(service, "execution-watch") == [refusal]
     for wrong in (
         "/data/sds/broker/inert-landing:/run/sds-broker:ro",
         "/data/sds/broker/execution-watch:/run/sds-broker",
         "/data/sds/broker:/run/sds-broker:ro",
     ):
-        mounted = {**service, "volumes": [*service["volumes"], wrong]}
-        assert deploy.add_refusals(mounted, "execution-watch") == [refusal], wrong
-    bound = "/data/sds/broker/execution-watch:/run/sds-broker:ro"
-    brokered = {**service, "volumes": [*service["volumes"], bound]}
-    assert deploy.add_refusals(brokered, "execution-watch") == []
+        mounted = {
+            **service,
+            "volumes": [v if v != BROKER_BIND else wrong for v in service["volumes"]],
+        }
+        assert not deploy.broker_lane(mounted, "execution-watch", allowlist), wrong
+        assert deploy.add_refusals(mounted, "execution-watch", allowlist) == [refusal], wrong
+    # A compose that maps its token is a token lane, whatever the allowlist says.
+    token_lane = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
+    assert not deploy.broker_lane(token_lane, "execution-watch", allowlist)
+
+
+def _broker_commit(lanes: Lanes, compose: str, allowlist: str | None) -> str:
+    files = {"lanes/execution-watch/compose.yaml": compose}
+    if allowlist is not None:
+        files[deploy.BROKER_ALLOWLIST] = allowlist
+    sha = _commit(lanes.work, files, "execution watch on the broker")
+    _git(lanes.work, "push", "-q", "origin", "main")
+    lanes.served = lanes.later = sha
+    return sha
+
+
+def test_a_broker_lanes_add_finishes_without_a_token_and_never_with_one(lanes: Lanes) -> None:
+    sha = _broker_commit(lanes, BROKER_COMPOSE, ALLOWLIST)
+    change = ("--add", "--tag", tag(sha))
+    assert lanes.add("execution-watch", sha) == EXIT_OK
+    assert lanes.runs("execution-watch")[-1].brokered
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    reads = _watch_reads(sha)
+    assert lanes.finish("execution-watch", *change, *reads) == EXIT_USAGE
+    # Its compose maps no token, so a container holding one runs something else.
+    assert lanes.finish("execution-watch", *change, *reads, "--token-present", "true") == (
+        EXIT_CONDITION
+    )
+    assert "reads through the broker" in lanes.runs("execution-watch")[-1].reason
+    assert lanes.finish("execution-watch", *change, *reads, "--token-present", "false") == EXIT_OK
+    assert _status(lanes, "execution-watch") == ["finished"]
+
+
+def test_a_token_lanes_add_still_needs_its_token(lanes: Lanes) -> None:
+    """The allowlist naming a lane changes nothing while its compose maps its token."""
+    sha = _broker_commit(lanes, WATCH_COMPOSE, ALLOWLIST)
+    change = ("--add", "--tag", tag(sha))
+    assert lanes.add("execution-watch", sha) == EXIT_OK
+    assert not lanes.runs("execution-watch")[-1].brokered
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    reads = _watch_reads(sha)
+    assert lanes.finish("execution-watch", *change, *reads, "--token-present", "false") == (
+        EXIT_CONDITION
+    )
+    assert lanes.runs("execution-watch")[-1].reason.endswith("it holds no BWS_ACCESS_TOKEN")
+
+
+@pytest.mark.parametrize(
+    ("compose", "allowlist"),
+    [
+        (BROKER_COMPOSE, OTHER_ALLOWLIST),
+        (BROKER_COMPOSE, None),
+        (BROKER_COMPOSE.replace(f"      - {BROKER_BIND}\n", ""), ALLOWLIST),
+    ],
+    ids=["not-allowlisted", "no-allowlist-file", "no-bind"],
+)
+def test_a_tokenless_lane_that_isnt_set_up_on_the_broker_is_refused(
+    lanes: Lanes, compose: str, allowlist: str | None
+) -> None:
+    if allowlist is None:
+        _git(lanes.work, "rm", "-q", "--ignore-unmatch", deploy.BROKER_ALLOWLIST)
+    sha = _broker_commit(lanes, compose, allowlist)
+    assert lanes.add("execution-watch", sha) == EXIT_REFUSED
+    assert "is no broker lane" in lanes.runs("execution-watch")[-1].reason
 
 
 # ---- the execution-watch lane's tracked files ----------------------------------------------

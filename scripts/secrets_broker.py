@@ -72,10 +72,20 @@ class AllowlistError(Exception):
 
 
 def load_allowlist(path: Path) -> dict[str, frozenset[str]]:
-    """Each lane's readable UUIDs. `tomllib` itself refuses a lane named twice."""
+    """Each lane's readable UUIDs, from the file at `path`."""
     try:
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise AllowlistError(f"the allowlist {path} can't be read: {error}") from error
+    return parse_allowlist(text, path)
+
+
+def parse_allowlist(text: str, path: Path | str) -> dict[str, frozenset[str]]:
+    """Each lane's readable UUIDs, from the allowlist's text (`path` names it in a refusal).
+    `tomllib` itself refuses a lane named twice."""
+    try:
+        document = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
         raise AllowlistError(f"the allowlist {path} can't be read: {error}") from error
     lanes = document.get("lanes")
     if not isinstance(lanes, dict) or set(document) != {"lanes"}:

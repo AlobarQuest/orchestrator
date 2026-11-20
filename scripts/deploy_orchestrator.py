@@ -78,6 +78,7 @@ import httpx
 import yaml
 
 from scripts.compute_image_tags import LANE_IMAGE, derivable_tag, readable_tag
+from scripts.secrets_broker import AllowlistError, parse_allowlist
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -936,9 +937,10 @@ LANES_STATE_DIR = Path.home() / "Library" / "Application Support" / "sds" / "dep
 LANE_RESOURCE_PREFIX = "sds-lane-"
 LANE_COMPOSE = "lanes/{lane}/compose.yaml"
 LANE_STATE_MOUNT = "/var/lib/sds/{lane}"
-# A lane on the secrets broker (ADR-0055 amendment 30) maps no token and mounts its own socket
-# directory read-only instead.
+# A lane on the secrets broker (ADR-0055 amendment 30) maps no token: it mounts its own socket
+# directory read-only, and the broker's allowlist names it.
 LANE_BROKER_BIND = "/data/sds/broker/{lane}:/run/sds-broker:ro"
+BROKER_ALLOWLIST = "lanes/secrets-broker/allowlist.toml"
 CRED_CONSUMERS = ".cred-consumers.toml"
 SECRETS_MANIFEST = ".bws-secrets.toml"
 COOLIFY_INSTANCE = "prod"
@@ -1111,6 +1113,9 @@ class LaneRun:
     # A `--token` run's secrets, as `.bws-secrets.toml` at its commit lists them for the lane:
     # what `lane-run --read` must read `ok` (ADR-0059 Amendment 2).
     read_uuids: list[str] = field(default_factory=list)
+    # The lane reads through the secrets broker at the run's commit (`broker_lane`), so its
+    # container must hold no token.
+    brokered: bool = False
     run_id: str = ""
     # The run's place in its lane's chain, assigned under the lane's lock: the order, even for two
     # runs created in the same instant.
@@ -1393,7 +1398,36 @@ def lane_service(compose: str, lane: str) -> dict[str, Any]:
     return service
 
 
-def add_refusals(service: dict[str, Any], lane: str) -> list[str]:
+def broker_lane(service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]]) -> bool:
+    """The lane reads through the secrets broker: its compose maps no token, it mounts its own
+    socket directory, and the allowlist names it. A lane that only lost its token is none."""
+    return (
+        TOKEN_VARIABLE not in _environment(service)
+        and LANE_BROKER_BIND.format(lane=lane) in (service.get("volumes") or [])
+        and lane in allowlist
+    )
+
+
+def _broker_allowlist(
+    world: World, commit: str, service: dict[str, Any]
+) -> dict[str, frozenset[str]]:
+    """The allowlist at `commit`, read only for a compose that maps no token. A commit without
+    one names no broker lane, so that compose is refused as a lane with no token is."""
+    if TOKEN_VARIABLE in _environment(service):
+        return {}
+    try:
+        text = _git(world, "show", f"{commit}:{BROKER_ALLOWLIST}")
+    except Refused:
+        return {}
+    try:
+        return parse_allowlist(text, f"{BROKER_ALLOWLIST} at {commit}")
+    except AllowlistError as error:
+        raise Refused(str(error)) from error
+
+
+def add_refusals(
+    service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]] | None = None
+) -> list[str]:
     """What an `--add`'s tracked compose entry must hold before its container may start."""
     refusals = []
     environment = _environment(service)
@@ -1403,12 +1437,14 @@ def add_refusals(service: dict[str, Any], lane: str) -> list[str]:
             f"not {SCHEDULE_MAPPING!r}"
         )
     mapped = "${" + lane.upper().replace("-", "_") + "_BWS_ACCESS_TOKEN}"
-    bind = LANE_BROKER_BIND.format(lane=lane)
     if TOKEN_VARIABLE in environment:
         if environment[TOKEN_VARIABLE] != mapped:
             refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
-    elif bind not in (service.get("volumes") or []):
-        refusals.append(f"it maps no {TOKEN_VARIABLE} as {mapped!r} and mounts no {bind!r}")
+    elif not broker_lane(service, lane, allowlist or {}):
+        refusals.append(
+            f"it maps no {TOKEN_VARIABLE} as {mapped!r}, and it is no broker lane: one that "
+            f"mounts {LANE_BROKER_BIND.format(lane=lane)!r} and that {BROKER_ALLOWLIST} lists"
+        )
     if lane in STATEFUL_LANES and _state_volume(service, lane) is None:
         refusals.append(f"it mounts no named volume at {LANE_STATE_MOUNT.format(lane=lane)}")
     return refusals
@@ -1512,8 +1548,10 @@ def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneR
         _plan_change(world, args, run, change, runs)
     run.compose_sent = _git(world, "show", f"{run.commit}:{LANE_COMPOSE.format(lane=lane)}")
     service = lane_service(run.compose_sent, lane)
+    allowlist = _broker_allowlist(world, run.commit, service)
+    run.brokered = broker_lane(service, lane, allowlist)
     if change.kind == "add":
-        refusals = add_refusals(service, lane)
+        refusals = add_refusals(service, lane, allowlist)
         if refusals:
             raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
         run.volume_slug = _state_volume(service, lane) or ""
@@ -1855,9 +1893,12 @@ def finish_mismatches(args: argparse.Namespace, run: LaneRun) -> list[str]:
         found.append(f"it runs {args.observed_digest}, not the release's {run.lane_digest}")
     if args.observed_schedule != run.schedule:
         found.append(f"its {SCHEDULE_VARIABLE} is {args.observed_schedule}, not {run.schedule}")
-    holds_token = run.change in ("add", "token")
-    if holds_token and args.token_present != "true":
-        found.append(f"it holds no {TOKEN_VARIABLE}")
+    if run.change in ("add", "token"):
+        # A broker lane's compose maps no token, so its container must hold none.
+        if run.brokered and args.token_present != "false":
+            found.append(f"it holds a {TOKEN_VARIABLE}, though it reads through the broker")
+        elif not run.brokered and args.token_present != "true":
+            found.append(f"it holds no {TOKEN_VARIABLE}")
     if run.lane in STATEFUL_LANES:
         refusal = volume_refusal(run, args.observed_volume)
         if refusal:

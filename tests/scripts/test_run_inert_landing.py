@@ -21,6 +21,7 @@ import yaml
 
 from scripts import deploy_orchestrator as deploy
 from scripts import lane_run
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-inert-landing.sh")
@@ -515,7 +516,10 @@ def test_on_the_mac_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> N
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "inert-landing")
-    assert deploy.add_refusals(service, "inert-landing") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "inert-landing", allowlist)
+    assert deploy.add_refusals(service, "inert-landing", allowlist) == []
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["inert-landing"],
