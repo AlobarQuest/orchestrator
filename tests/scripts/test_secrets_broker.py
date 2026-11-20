@@ -8,6 +8,7 @@ can fail, print non-JSON, or hang on request.
 from __future__ import annotations
 
 import json
+import select
 import shutil
 import signal
 import socket
@@ -339,6 +340,20 @@ def test_an_empty_allowlist_binds_nothing_and_still_serves() -> None:
         assert list(root.iterdir()) == []
 
 
+def _first_line(process: subprocess.Popen[str], timeout_s: float) -> str:
+    """The process's first stdout line, waited for at most `timeout_s`. A process that exits or
+    stays silent first fails the test with its stderr, not with a JSON error on ""."""
+    assert process.stdout is not None
+    ready, _, _ = select.select([process.stdout], [], [], timeout_s)
+    line = process.stdout.readline() if ready else ""
+    if not line:
+        if process.poll() is None:
+            process.kill()
+        _, err = process.communicate(timeout=10)
+        pytest.fail(f"the broker printed no first line (exit {process.returncode}): {err}")
+    return line
+
+
 def test_the_broker_logs_each_listening_lane_and_stops_on_sigterm(bws: Bws) -> None:
     """Run as the image runs it. Not `tmp_path`, for the socket path's length limit."""
     root = Path(tempfile.mkdtemp(prefix="broker-", dir="/tmp"))
@@ -360,14 +375,13 @@ def test_the_broker_logs_each_listening_lane_and_stops_on_sigterm(bws: Bws) -> N
         text=True,
     )
     try:
-        assert process.stdout is not None
+        listening = _first_line(process, timeout_s=10)
         # Printed once the socket listens, so the connect below can't be refused.
-        listening = process.stdout.readline()
         assert json.loads(listening) == {
             "lane": "inert-landing",
             "uuid": None,
             "outcome": "listening",
-        }, process.communicate()
+        }
         socket_path = root / "broker" / "inert-landing" / "broker.sock"
         assert json.loads(_ask(socket_path, f"{GOOD}\n".encode())) == {"id": GOOD, "value": SECRET}
         process.send_signal(signal.SIGTERM)
