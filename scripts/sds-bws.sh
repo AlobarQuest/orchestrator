@@ -11,6 +11,7 @@
 # Then:
 #     sds_bws_value <secret-uuid>            # uses the BWS_ACCESS_TOKEN already in the environment
 #     sds_bws_value <secret-uuid> <token>    # uses <token> for this one fetch, and nothing else
+#     sds_in_lane_container                  # true when the lane can read: a token or a socket
 #
 # Prints the value on stdout and nothing else. On any failure it prints NOTHING on stdout and
 # returns non-zero, so a caller's `X="$(sds_bws_value …)"` followed by its own `[ -z "$X" ]` check
@@ -47,6 +48,19 @@
 #
 # SHARED: `sds-deadman.sh` parses the Healthchecks check listing with `$_SDS_BWS_PYTHON` too, so
 # renaming it or changing what it points at changes that parse as well.
+#
+# THE SECRETS BROKER'S SOCKET (ADR-0055 amendment 30). A lane cut over to the broker has no token;
+# `lane-run` sets `SDS_SECRETS_SOCKET` to its mounted socket instead. When that names a socket, the
+# ONE-ARGUMENT form reads the value from it: one connection, `<uuid>\n` out, one JSON line back
+# (`{"id": ..., "value": ...}` or `{"error": "<code>"}`). The two-argument form names an identity,
+# so it always runs `bws`; and with no socket the one-argument form runs `bws` as it always has.
+# A brokered read that fails prints nothing on stdout, returns non-zero, and puts one line on stderr
+# naming the UUID and a code from a closed list: the broker's `not_allowed`, `bad_request` or
+# `bws_failed`, or `no_reply` (no connection, no answer, or a timeout) or `bad_reply`. It never
+# prints what the broker sent, and it never falls back to `bws`: a lane with a socket and a token
+# reads through the socket, so a broken broker shows as a failed read, not as a quiet detour.
+# The client is a short inline program run by the venv's interpreter, so the image gains no tool.
+# Its 60 s timeout outlasts the broker's 15 s fetch and a wait behind its 8 concurrent fetches.
 
 _SDS_BWS_PYTHON="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.venv/bin/python"
 
@@ -60,11 +74,44 @@ sds_bws_value() {
     BWS_ACCESS_TOKEN="$2" env -u FORCE_COLOR -u CLICOLOR_FORCE \
       bws secret get "$1" --output json --color no \
       | "$_SDS_BWS_PYTHON" -c 'import sys, json; print(json.load(sys.stdin)["value"])'
+  elif [ -S "${SDS_SECRETS_SOCKET:-}" ]; then
+    "$_SDS_BWS_PYTHON" -I -c '
+import json, socket, sys
+path, uuid = sys.argv[1], sys.argv[2]
+reason = "no_reply"
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(60)
+        connection.connect(path)
+        connection.sendall((uuid + "\n").encode())
+        reply = b""
+        while chunk := connection.recv(65536):
+            reply += chunk
+    if reply:
+        reason = "bad_reply"
+        answer = json.loads(reply)
+        if answer.get("id") == uuid and isinstance(answer.get("value"), str):
+            print(answer["value"])
+            sys.exit(0)
+        if answer.get("error") in ("not_allowed", "bad_request", "bws_failed"):
+            reason = answer["error"]
+except Exception:
+    pass
+print(f"sds_bws_value: the secrets broker gave no value for {uuid}: {reason}", file=sys.stderr)
+sys.exit(1)
+' "$SDS_SECRETS_SOCKET" "$1"
   else
     env -u FORCE_COLOR -u CLICOLOR_FORCE \
       bws secret get "$1" --output json --color no \
       | "$_SDS_BWS_PYTHON" -c 'import sys, json; print(json.load(sys.stdin)["value"])'
   fi
+}
+
+# True when this lane can read its secrets in its container: it holds a token, or `lane-run` named
+# the broker's mounted socket. A launcher's "am I in my container" check calls this rather than
+# testing `BWS_ACCESS_TOKEN` alone, since a broker lane has no token.
+sds_in_lane_container() {
+  [ -n "${BWS_ACCESS_TOKEN:-}" ] || [ -S "${SDS_SECRETS_SOCKET:-}" ]
 }
 
 # ── The factory-events chain switch (FE-5 cut-over plan, "The switch") ─────────────────────────

@@ -127,6 +127,7 @@ paths = [
   "tests/scripts/test_lane_run.py",
   "scripts/secrets_broker.py",
   "tests/scripts/test_secrets_broker.py",
+  "tests/scripts/conftest.py",
   "lanes/**",
   "tests/architecture/test_lane_image.py",
   ".bws-secrets.toml",

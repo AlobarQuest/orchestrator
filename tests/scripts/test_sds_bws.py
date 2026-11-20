@@ -521,3 +521,137 @@ def test_with_no_path_both_functions_read_the_switch_the_plan_names(
         tmp_path,
     )
     assert result.stdout == "postgres"
+
+
+# ---- the lane secrets broker's socket (ADR-0055 amendment 30) -----------------------------------
+# The one-argument form reads from the socket `SDS_SECRETS_SOCKET` names when it is a socket; every
+# other call runs `bws` exactly as above. `broker` and `dead_socket` are `conftest.py`'s.
+
+BROKERED = "11111111-1111-4111-8111-111111111111"
+UNLISTED = "22222222-2222-4222-8222-222222222222"
+BROKER_VALUE = "broker-secret-value-never-logged"
+ERROR_CODES = ("not_allowed", "bad_request", "bws_failed")
+
+
+def test_socket_read_prints_only_the_value(stubs: Path, tmp_path: Path, broker) -> None:
+    socket_path = broker({BROKERED: BROKER_VALUE})
+    result = _helper(stubs, tmp_path, BROKERED, extra_env={"SDS_SECRETS_SOCKET": str(socket_path)})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{BROKER_VALUE}\n"
+    assert result.stderr == ""
+    assert not (tmp_path / "bws.log").exists(), "a brokered read never runs bws"
+
+
+def _raises(uuid: str) -> str | None:
+    raise RuntimeError(BROKER_VALUE)
+
+
+@pytest.mark.parametrize("case", ["dead", "not_allowed", "bws_failed", "no reply"])
+def test_dead_socket_fails_like_a_failed_bws_read(
+    stubs: Path, tmp_path: Path, broker, dead_socket: Path, case: str
+) -> None:
+    """Non-zero, nothing on stdout, only an error code on stderr, and no fallback to `bws`, even
+    with a token in the environment that `bws` could use."""
+    if case == "dead":
+        socket_path = dead_socket
+    elif case == "not_allowed":
+        socket_path = broker({UNLISTED: BROKER_VALUE})
+    elif case == "bws_failed":
+        socket_path = broker({BROKERED: None})
+    else:
+        socket_path = broker({BROKERED: BROKER_VALUE}, fetcher=_raises)
+    result = _helper(
+        stubs,
+        tmp_path,
+        BROKERED,
+        extra_env={"SDS_SECRETS_SOCKET": str(socket_path), "BWS_ACCESS_TOKEN": "ambient"},
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert BROKER_VALUE not in result.stderr
+    assert VALUE not in result.stderr
+    assert not (tmp_path / "bws.log").exists(), "a failed brokered read never falls back to bws"
+    [line] = result.stderr.splitlines()
+    assert line.startswith(f"sds_bws_value: the secrets broker gave no value for {BROKERED}: ")
+    reason = line.rsplit(": ", 1)[1]
+    assert reason == (case if case in ERROR_CODES else "no_reply")
+
+
+# Records its argv and its whole environment but the marker, whose value the caller set, and its
+# own log's path, which differs per call.
+_RECORDING_BWS = r"""#!/bin/sh
+printf 'args=%s\n' "$*" >> "$STUB_LOG"
+/usr/bin/env | /usr/bin/grep -v -e '^SDS_SECRETS_SOCKET=' -e '^STUB_LOG=' \
+    | /usr/bin/sort >> "$STUB_LOG"
+printf '%s\n' '{"id": "x", "key": "k", "value": "stub-secret-value"}'
+"""
+
+
+def test_token_path_and_two_argument_form_are_unchanged(
+    stubs: Path, tmp_path: Path, broker
+) -> None:
+    """Each call `bws` serves sees the argv and environment it saw with no marker at all: the two-
+    argument form with a live socket named, and the one-argument form with the marker naming a
+    missing path or a regular file."""
+    _executable(stubs / "bws", _RECORDING_BWS)
+    live = broker({BROKERED: BROKER_VALUE})
+    regular = tmp_path / "not-a-socket"
+    regular.write_text("")
+
+    def seen(name: str, *args: str, **extra: str) -> tuple[str, str]:
+        log = tmp_path / f"{name}.log"
+        environment = {"STUB_LOG": str(log), "BWS_ACCESS_TOKEN": "amb", **extra}
+        result = _helper(stubs, tmp_path, *args, extra_env=environment)
+        assert result.returncode == 0, result.stderr
+        return result.stdout, log.read_text()
+
+    two_before = seen("two-before", BROKERED, "narrow")
+    one_before = seen("one-before", BROKERED)
+    assert two_before[0] == one_before[0] == f"{VALUE}\n"
+    assert "BWS_ACCESS_TOKEN=narrow" in two_before[1]
+    assert seen("two-live", BROKERED, "narrow", SDS_SECRETS_SOCKET=str(live)) == two_before
+    for name, marker in (("missing", tmp_path / "missing.sock"), ("regular", regular)):
+        assert seen(f"one-{name}", BROKERED, SDS_SECRETS_SOCKET=str(marker)) == one_before
+
+
+@pytest.mark.parametrize(
+    ("token", "marker", "inside"),
+    [
+        ("lane-token", None, True),
+        ("", "socket", True),
+        (None, "socket", True),
+        ("lane-token", "socket", True),
+        (None, None, False),
+        ("", None, False),
+        ("", "missing", False),
+        ("", "regular", False),
+        ("", "empty", False),
+    ],
+)
+def test_in_lane_container_is_true_for_token_or_socket_and_false_for_neither(
+    stubs: Path,
+    tmp_path: Path,
+    dead_socket: Path,
+    token: str | None,
+    marker: str | None,
+    inside: bool,
+) -> None:
+    regular = tmp_path / "regular"
+    regular.write_text("")
+    markers = {
+        "socket": str(dead_socket),
+        "missing": str(tmp_path / "missing.sock"),
+        "regular": str(regular),
+        "empty": "",
+    }
+    extra = {} if token is None else {"BWS_ACCESS_TOKEN": token}
+    if marker is not None:
+        extra["SDS_SECRETS_SOCKET"] = markers[marker]
+    result = _run(
+        'source "$PWD/scripts/sds-bws.sh"; sds_in_lane_container',
+        stubs,
+        tmp_path,
+        extra_env=extra,
+    )
+    assert (result.returncode == 0) is inside
+    assert result.stdout == result.stderr == ""

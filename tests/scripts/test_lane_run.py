@@ -266,3 +266,81 @@ def test_the_state_list_is_every_state_variable_a_moving_lane_reads() -> None:
         read |= set(re.findall(r'"([A-Z_]+_STATE_DIR)"', path.read_text()))
 
     assert read - staying == set(lane_run.STATE_VARIABLES)
+
+
+# ---- the lane secrets broker's socket (ADR-0055 amendment 30) -----------------------------------
+# `broker` and `dead_socket` are `conftest.py`'s. These run `main` in-process, so the socket path
+# is the test's own rather than `/run/sds-broker/broker.sock`.
+
+
+def test_the_broker_socket_is_the_one_the_lane_composes_mount() -> None:
+    assert Path("/run/sds-broker/broker.sock") == lane_run.BROKER_SOCKET
+    assert lane_run.SOCKET_MARKER == "SDS_SECRETS_SOCKET"
+    assert lane_run.SOCKET_MARKER not in lane_run.COPIED, "set from the socket, never copied"
+
+
+def test_lane_run_sets_the_marker_only_when_the_socket_exists(
+    lane: Lane, dead_socket: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(lane_run, "LAUNCHER_DIR", lane.scripts)
+    regular = lane.root / "regular"
+    regular.write_text("")
+    # A marker in the container's own environment is never what decides.
+    source = {"BWS_ACCESS_TOKEN": TOKEN_VALUE, "SDS_SECRETS_SOCKET": str(dead_socket)}
+
+    seen = {}
+    for name, path in (
+        ("socket", dead_socket),
+        ("missing", lane.root / "missing.sock"),
+        ("regular", regular),
+    ):
+        assert lane_run.main(["example"], source, broker=path) == 7
+        seen[name] = lane.launcher_saw()["env"]
+
+    assert seen["socket"]["SDS_SECRETS_SOCKET"] == str(dead_socket)
+    assert "SDS_SECRETS_SOCKET" not in seen["missing"]
+    assert "SDS_SECRETS_SOCKET" not in seen["regular"]
+    assert seen["socket"]["BWS_ACCESS_TOKEN"] == TOKEN_VALUE
+
+
+@pytest.mark.parametrize("token", [None, TOKEN_VALUE])
+def test_read_proof_uses_the_socket_and_never_prints_a_value(
+    lane: Lane, broker, capsys: pytest.CaptureFixture[str], token: str | None
+) -> None:
+    """No token is needed, and with one set the socket still wins: `bws` never runs."""
+    socket_path = broker({GOOD: SECRET_VALUE})
+    source = {"PATH": f"{lane.bin}:/usr/bin:/bin"}
+    if token is not None:
+        source["BWS_ACCESS_TOKEN"] = token
+
+    code = lane_run.main(["--read", GOOD, BAD, GOOD], source, broker=socket_path)
+    out, err = capsys.readouterr()
+
+    # The in-process broker logs its own JSON lines to the same stdout.
+    printed = [line for line in out.splitlines() if not line.startswith("{")]
+    assert code == lane_run.EXIT_REFUSED
+    assert printed == [f"{GOOD} ok", f"{BAD} refused", f"{GOOD} ok"]
+    assert f"no value from the secrets broker for {BAD}" in err
+    assert SECRET_VALUE not in out + err and TOKEN_VALUE not in out + err
+    assert not (lane.record / "bws-argv").exists()
+
+
+def test_read_proof_on_a_dead_socket_refuses_every_uuid_without_bws(
+    lane: Lane, dead_socket: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = {"PATH": f"{lane.bin}:/usr/bin:/bin", "BWS_ACCESS_TOKEN": TOKEN_VALUE}
+
+    code = lane_run.main(["--read", GOOD], source, broker=dead_socket)
+    out, _ = capsys.readouterr()
+
+    assert code == lane_run.EXIT_REFUSED
+    assert out.splitlines() == [f"{GOOD} refused"]
+    assert not (lane.record / "bws-argv").exists()
+
+
+def test_read_from_socket_returns_the_value_or_none(broker) -> None:
+    socket_path = broker({GOOD: SECRET_VALUE, BAD: None})
+
+    assert lane_run.read_from_socket(socket_path, GOOD) == SECRET_VALUE
+    assert lane_run.read_from_socket(socket_path, BAD) is None
+    assert lane_run.read_from_socket(socket_path.parent / "missing.sock", GOOD) is None

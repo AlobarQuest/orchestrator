@@ -97,12 +97,13 @@ sds_deadman_log() {
     echo "[deadman] $*"
 }
 
-# The lane's ping URL from its own ping-URL secret, `SDS_DEADMAN_PING_URL_UUID`, read with the
-# lane's `BWS_ACCESS_TOKEN` in the one-argument form, so the token stays in the environment and
-# never becomes a process argument. Never fails the caller; never prints the URL.
+# The lane's ping URL from its own ping-URL secret, `SDS_DEADMAN_PING_URL_UUID`, read in the
+# one-argument form: through the lane's mounted secrets-broker socket when `lane-run` named one,
+# otherwise with the lane's `BWS_ACCESS_TOKEN`, so the token stays in the environment and never
+# becomes a process argument. Never fails the caller; never prints the URL.
 sds_deadman_resolve_by_uuid() {
     local url secret="the ping-URL secret $SDS_DEADMAN_PING_URL_UUID"
-    if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+    if ! sds_in_lane_container; then
         SDS_DEADMAN_REASON="SDS_DEADMAN_PING_URL_UUID is set but BWS_ACCESS_TOKEN is not"
         return 0
     fi

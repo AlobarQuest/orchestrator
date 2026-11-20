@@ -701,3 +701,18 @@ def test_a_ping_url_uuid_without_a_lane_token_disables_the_pings(
     rc, pings, output, bws = _by_uuid(tmp_path, bin_stubs, exit_code=0, BWS_ACCESS_TOKEN="")
     assert (rc, pings, bws) == (0, [], "")
     assert "SDS_DEADMAN_PING_URL_UUID is set but BWS_ACCESS_TOKEN is not" in output
+
+
+def test_deadman_resolves_through_the_socket_without_a_token(
+    tmp_path: Path, bin_stubs: Path, broker
+) -> None:
+    """A broker lane has no token: the mounted socket alone puts it in its container, and the
+    ping-URL secret is read through the socket, never by `bws` (ADR-0055 amendment 30)."""
+    socket_path = broker({PING_URL_UUID: PING_URL})
+    rc, pings, output, bws = _by_uuid(
+        tmp_path, bin_stubs, exit_code=0, BWS_ACCESS_TOKEN="", SDS_SECRETS_SOCKET=str(socket_path)
+    )
+
+    assert (rc, bws) == (0, "")
+    assert pings == [f"{PING_URL}/start", PING_URL]
+    assert "armed (sds-execution-watch)" in output
