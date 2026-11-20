@@ -215,6 +215,10 @@ class _Handler(socketserver.BaseRequestHandler):
             _close_gently(self.request)
         except OSError:
             pass
+        except Exception:
+            # Logged without its text, which could carry what the request or `bws` held. The
+            # client gets no reply, as when the broker is down.
+            _log(server.lane, None, "internal")
 
 
 def _bind(root: Path, lane: str, allowed: frozenset[str], fetcher: Fetcher) -> _Server:
@@ -252,17 +256,25 @@ def serve(
         with gate:
             return fetcher(uuid)
 
+    # Each server's loop starts as soon as it is bound, so every server listed here is running
+    # and `shutdown` (which waits for the loop to stop) returns, even when a later bind fails.
     servers = []
     try:
         for lane, allowed in sorted(allowlist.items()):
-            servers.append(_bind(root, lane, allowed, limited))
-        for server in servers:
+            server = _bind(root, lane, allowed, limited)
             threading.Thread(target=server.serve_forever, daemon=True).start()
+            servers.append(server)
         stop.wait()
     finally:
         for server in servers:
             server.shutdown()
             server.server_close()
+
+
+def _refuse(message: str) -> int:
+    """One JSON error line on stderr for a refusal to start."""
+    print(json.dumps({"error": message}), file=sys.stderr)
+    return EXIT_USAGE
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -273,16 +285,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         allowlist = load_allowlist(arguments.allowlist)
     except AllowlistError as error:
-        print(f"secrets-broker: {error}", file=sys.stderr)
-        return EXIT_USAGE
+        return _refuse(str(error))
     bws = shutil.which("bws")
     if bws is None:
-        print("secrets-broker: bws is not on PATH", file=sys.stderr)
-        return EXIT_USAGE
+        return _refuse("bws is not on PATH")
     # Without its token every fetch would fail; refuse to start, so the resource shows the cause.
     if not os.environ.get(TOKEN):
-        print(json.dumps({"error": f"{TOKEN} is not set"}), file=sys.stderr)
-        return EXIT_USAGE
+        return _refuse(f"{TOKEN} is not set")
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: stop.set())
     serve(allowlist, arguments.root, partial(fetch, bws=bws, timeout_s=FETCH_TIMEOUT_S), stop=stop)

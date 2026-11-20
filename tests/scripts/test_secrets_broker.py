@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
@@ -199,18 +200,16 @@ def test_each_fetch_gets_an_empty_home_and_no_colour(
     assert not any(Path(home).exists() for home in homes), "each HOME is removed afterwards"
 
 
-@pytest.fixture
-def served(bws: Bws) -> Iterator[Path]:
-    """`serve` for two lanes on a root under `/tmp`, stopped after the test. Not `tmp_path`: on
-    macOS its socket paths pass the 104-byte limit on a Unix socket's address."""
+@contextmanager
+def _serving(allowlist: dict[str, frozenset[str]], fetcher, prepare=None) -> Iterator[Path]:
+    """`serve` on a root under `/tmp`, stopped afterwards. Not `tmp_path`: on macOS its socket
+    paths pass the 104-byte limit on a Unix socket's address. `prepare(root)` runs first."""
     root = Path(tempfile.mkdtemp(prefix="broker-", dir="/tmp"))
-    # A stale socket file from an earlier run, in a directory with the wrong mode.
-    (root / "inert-landing").mkdir(mode=0o777)
-    (root / "inert-landing" / "broker.sock").write_text("stale")
+    if prepare is not None:
+        prepare(root)
     stop = threading.Event()
-    allowlist = {"inert-landing": frozenset({GOOD}), "unit-verifier": frozenset({OTHER})}
     thread = threading.Thread(
-        target=secrets_broker.serve, args=(allowlist, root, _fetcher(bws)), kwargs={"stop": stop}
+        target=secrets_broker.serve, args=(allowlist, root, fetcher), kwargs={"stop": stop}
     )
     thread.start()
     deadline = time.monotonic() + 5
@@ -224,6 +223,20 @@ def served(bws: Bws) -> Iterator[Path]:
         thread.join(timeout=5)
         shutil.rmtree(root)
     assert not thread.is_alive()
+
+
+def _stale(root: Path) -> None:
+    """A stale socket file from an earlier run, in a directory with the wrong mode."""
+    (root / "inert-landing").mkdir(mode=0o777)
+    (root / "inert-landing" / "broker.sock").write_text("stale")
+
+
+@pytest.fixture
+def served(bws: Bws) -> Iterator[Path]:
+    """`serve` for two lanes, one with a stale socket file to replace."""
+    allowlist = {"inert-landing": frozenset({GOOD}), "unit-verifier": frozenset({OTHER})}
+    with _serving(allowlist, _fetcher(bws), _stale) as root:
+        yield root
 
 
 def _listening(path: Path) -> bool:
@@ -328,13 +341,76 @@ def test_an_empty_allowlist_binds_nothing_and_stops_on_sigterm(tmp_path: Path, b
     assert "token" not in out + err
 
 
-def test_main_refuses_a_bad_allowlist(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_main_refuses_a_bad_allowlist_or_a_missing_bws(
+    tmp_path: Path, bws: Bws, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture
+) -> None:
     root = tmp_path / "broker"
-    code = secrets_broker.main(["--allowlist", str(tmp_path / "missing.toml"), "--root", str(root)])
+    monkeypatch.setenv("BWS_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("PATH", str(bws.bin))
+    missing = ["--allowlist", str(tmp_path / "missing.toml"), "--root", str(root)]
+    assert secrets_broker.main(missing) == 2
+    refusal = capfd.readouterr()
+    assert refusal.out == ""
+    [line] = refusal.err.splitlines()
+    assert "allowlist" in json.loads(line)["error"]
 
-    assert code == 2
-    assert "allowlist" in capsys.readouterr().err
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    listed = ["--allowlist", str(_allowlist(tmp_path, "[lanes]\n")), "--root", str(root)]
+    assert secrets_broker.main(listed) == 2
+    refusal = capfd.readouterr()
+    assert refusal.out == ""
+    assert [json.loads(line) for line in refusal.err.splitlines()] == [
+        {"error": "bws is not on PATH"}
+    ]
     assert not root.exists()
+
+
+def test_a_lane_that_fails_to_bind_stops_serve_promptly() -> None:
+    """The second lane's socket path is a directory, so its bind fails after the first lane's
+    succeeded: `serve` raises at once and closes the first lane's socket, and doesn't hang."""
+    root = Path(tempfile.mkdtemp(prefix="broker-", dir="/tmp"))
+    (root / "unit-verifier" / "broker.sock").mkdir(parents=True)
+    raised: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            secrets_broker.serve(
+                {"inert-landing": frozenset({GOOD}), "unit-verifier": frozenset({OTHER})},
+                root,
+                lambda _uuid: None,
+                stop=threading.Event(),
+            )
+        except BaseException as error:  # the assertion below names what was raised
+            raised.append(error)
+
+    thread = threading.Thread(target=run, daemon=True)
+    try:
+        thread.start()
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "serve hung after a failed bind"
+        assert len(raised) == 1 and isinstance(raised[0], OSError), raised
+        with pytest.raises(OSError):
+            _connect(root / "inert-landing" / "broker.sock")
+    finally:
+        shutil.rmtree(root)
+
+
+def test_an_unexpected_handler_error_is_logged_without_its_text(
+    capfd: pytest.CaptureFixture,
+) -> None:
+    def broken(_uuid: str) -> str | None:
+        raise RuntimeError(SECRET)
+
+    with _serving({"inert-landing": frozenset({GOOD})}, broken) as root:
+        assert _ask(root / "inert-landing" / "broker.sock", f"{GOOD}\n".encode()) == b""
+        deadline = time.monotonic() + 5
+        while '"internal"' not in (seen := capfd.readouterr()).out:
+            assert time.monotonic() < deadline, "no internal line was logged"
+            time.sleep(0.02)
+    assert [json.loads(line) for line in seen.out.splitlines()] == [
+        {"lane": "inert-landing", "uuid": None, "outcome": "internal"}
+    ]
+    assert SECRET not in seen.out + seen.err
 
 
 @pytest.mark.parametrize("token", [None, ""])
