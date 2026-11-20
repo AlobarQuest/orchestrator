@@ -66,13 +66,15 @@ resource only after that, so Docker never creates the bind directory as root. Ea
 re-binds the sockets, and a lane pass that runs while the broker is stopped fails one read and runs
 again on its next schedule.
 
-A broker lane's `--add` or `--token` run finishes with `--token-present false`; the deploy checks
-read the lane as one only when its compose maps no token, mounts the exact bind above and nothing
-else of the broker's directory, and the allowlist at the run's commit lists it (`broker_lane` in
-`scripts/deploy_orchestrator.py`). An `--add` refuses any other mount reaching `/data/sds/broker`,
-on a token lane or a broker lane (`stray_broker_mounts`), and a test holds every tracked lane
-compose to the same rule. A `--token` run on a broker lane still assumes a token
-(`.bws-secrets.toml` reads and a `--read` proof). That is open until Phase B.
+A broker lane's `--add` run finishes with `--token-present false`; the deploy checks read the lane
+as one only when its compose maps no token, mounts the exact bind above and nothing else of the
+broker's directory, and the allowlist at the run's commit lists it (`broker_lane` in
+`scripts/deploy_orchestrator.py`). Every planned change (`--add`, `--tag`, `--token`) refuses a
+compose with any other route to `/data/sds/broker` on any service: a stray mount, `volumes_from`,
+a privileged service, a mount of the Docker socket, or a named volume whose `driver_opts` device
+reaches it (`compose_broker_refusals`). A test holds every tracked lane compose to the same rule.
+A `--token` run on a broker lane is refused at plan time: the lane has no token to redeploy on,
+and Phase B settles what the run does for one.
 
 ## Prove a lane's reads
 
@@ -108,6 +110,9 @@ broker failed on a connection, and the lane sees no reply).
 - **A lane read fails `no_reply`.** The socket file is there but stale (nothing listens: the broker
   is down or restarting), or the read timed out. Check that the broker is running and has logged the
   lane's `listening` line.
+- **The dead-man log says "could not be read through the secrets broker (<code>)".** The lane's
+  ping-URL read failed through the socket with that code (`not_allowed`, `bws_failed`, `no_reply`
+  and so on); read it as the matching entry above.
 - **lane-run fails "broker socket missing".** The lane's mount directory holds no socket: the
   broker hasn't set up that lane (it isn't in the allowlist of the broker's running release, or the
   broker hasn't started). No launcher runs. Move the broker to the release that lists the lane.

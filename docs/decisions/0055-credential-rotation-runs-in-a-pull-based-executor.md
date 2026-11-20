@@ -4350,10 +4350,11 @@ Devon answered two questions on 2026-11-20, in an interactive HQ session. They a
    `bws`. The 12 lanes already on the VPS and every Mac launcher run unchanged.
 7. **The deploy checks know a broker lane.** A lane is a broker lane when its compose maps no
    `BWS_ACCESS_TOKEN`, mounts exactly `/data/sds/broker/<lane>:/run/sds-broker:ro` and nothing else
-   at, under or above `/data/sds/broker`, and the allowlist at the run's commit lists the lane. Any
-   other such mount is refused at `--add`, on a token lane too. A lane that only lost its token is
-   none. A broker lane's `--add` or `--token` run finishes with `--token-present false`; a token
-   lane's with `true`.
+   at, under or above `/data/sds/broker`, and the allowlist at the run's commit lists the lane.
+   Every planned change refuses a compose with any other route to that directory on any service
+   (a stray mount, `volumes_from`, a privileged service, the Docker socket, or a named volume's
+   device), on a token lane too. A lane that only lost its token is none. A broker lane's `--add`
+   run finishes with `--token-present false`; a token lane's with `true`.
 8. **The unlock tier.** Anything holding the broker's token, or the broker's mount, can read for any
    lane, so the broker's token is in the unlock tier: the one BWS token that stays manual. Phase C
    settles how it rotates. The token lives in the resource's Coolify variable and its keeper secret in
@@ -4363,9 +4364,8 @@ Devon answered two questions on 2026-11-20, in an interactive HQ session. They a
    launcher drops the marker or unsets `BWS_ACCESS_TOKEN`. This is no new exposure: the child
    already could read the launcher's starting environment, token included, through `/proc`, and the
    lane's allowlist bounds what it gets.
-10. **Open: a `--token` run on a broker lane.** It still assumes a token: it reads
-    `.bws-secrets.toml` and runs a `--read` proof. A broker lane has no token to issue, so Phase B
-    settles what the run does for one.
+10. **Open: a `--token` run on a broker lane.** A broker lane has no token to issue, so its
+    `--token` run is refused at plan time, and Phase B settles what the run does for one.
 
 ### Phases
 
