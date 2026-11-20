@@ -41,10 +41,18 @@ broker, so the lanes before it (they start in sorted order) log `listening` and 
 ## Move the broker to a new release
 
 `deploy_orchestrator.py` has no `--lane secrets-broker`: the broker is no scheduled lane. Moving it
-to a new image tag is a session act through infraops: set `SDS_LANES_IMAGE_TAG` on the resource,
-then stop it, `docker pull` the new tag, and start it. Never change the tag with a restart, which
-prunes images while starting (workspace invariant #3); a rollback re-pulls the old tag the same way.
-Read its log for each lane's `listening` line afterwards.
+to a new image tag is one announced act through infraops, with the same two calls a lane's re-tag
+writes: `coolify_update_service_env` setting `SDS_LANES_IMAGE_TAG` on `sds-lane-secrets-broker`
+(`wogvks6obmvv9fdotlgnw7r3`), then `coolify_deploy` on it. `coolify_deploy` pulls the new tag
+itself, and the deploy gate pass admits it on the broker, which `.claude/hq-gate-pass.json` lists
+(sds-hq #124), so an HQ cycle can run it. Never use `coolify_control` `restart` to change the tag:
+a restart prunes images while starting (workspace invariant #3). A rollback is the same two calls
+with the old tag.
+
+While the broker restarts, which takes seconds, its lanes have no socket. A lane pass that starts in
+that gap fails its read and runs again on its next schedule. Afterwards, check the broker's log for
+one `listening` line per allowlisted lane, and run one lane's `lane-run --read` before you call the
+move verified.
 
 ## Add a lane
 
