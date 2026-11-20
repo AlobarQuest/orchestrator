@@ -18,8 +18,8 @@ One service on `prod-vps` holds one BWS identity and serves every lane in the al
   `--color no` and no colour variables (workspace invariants 22 and 23). Nothing is cached or
   written to disk.
 - An error carries no value and none of `bws`'s output: its stderr is discarded, and its stdout is
-  only parsed. The broker logs one JSON line per request to stdout, `lane`, `uuid` and `outcome`,
-  never a value.
+  only parsed. The broker logs one JSON line to stdout per lane once its socket listens (outcome
+  `listening`) and one per request, `lane`, `uuid` and `outcome`, never a value.
 
 Usage:
     secrets_broker.py --allowlist <path> --root <directory>
@@ -247,6 +247,7 @@ def _bind(root: Path, lane: str, allowed: frozenset[str], fetcher: Fetcher) -> _
     except OSError:
         server.server_close()
         raise
+    _log(lane, None, "listening")
     return server
 
 
@@ -256,9 +257,12 @@ def serve(
     fetcher: Fetcher,
     *,
     stop: threading.Event | None = None,
+    ready: threading.Event | None = None,
 ) -> None:
-    """Serve each lane on its own socket until `stop` is set; `main` sets it on SIGTERM. An empty
-    allowlist binds nothing and waits all the same."""
+    """Serve each lane on its own socket until `stop` is set; `main` sets it on SIGTERM. `ready`
+    is set once every lane's socket listens: a socket file exists from its bind, before it
+    listens, so its presence isn't readiness. An empty allowlist binds nothing and waits all the
+    same."""
     stop = threading.Event() if stop is None else stop
     gate = threading.BoundedSemaphore(MAX_FETCHES)
 
@@ -274,6 +278,8 @@ def serve(
             server = _bind(root, lane, allowed, limited)
             threading.Thread(target=server.serve_forever, daemon=True).start()
             servers.append(server)
+        if ready is not None:
+            ready.set()
         stop.wait()
     finally:
         for server in servers:

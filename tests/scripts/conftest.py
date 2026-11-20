@@ -26,15 +26,6 @@ class Broker(Protocol):
     def __call__(self, values: dict[str, str | None], fetcher: Fetcher | None = None) -> Path: ...
 
 
-def _listening(path: Path) -> bool:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
-        try:
-            probe.connect(str(path))
-        except OSError:
-            return False
-    return True
-
-
 @pytest.fixture
 def broker() -> Iterator[Broker]:
     """`broker(values)` serves one lane whose allowlist is `values`' keys, and returns its socket.
@@ -47,19 +38,19 @@ def broker() -> Iterator[Broker]:
 
     def start(values: dict[str, str | None], fetcher: Fetcher | None = None) -> Path:
         assert not threads, "one broker per test"
+        ready = threading.Event()
         thread = threading.Thread(
             target=secrets_broker.serve,
             args=({LANE: frozenset(values)}, root, fetcher or values.get),
-            kwargs={"stop": stop},
+            kwargs={"stop": stop, "ready": ready},
         )
         thread.start()
         threads.append(thread)
-        path = root / LANE / secrets_broker.SOCKET_NAME
         deadline = time.monotonic() + 5
-        while not _listening(path):
-            assert time.monotonic() < deadline, "the broker never bound its socket"
-            time.sleep(0.02)
-        return path
+        while not ready.wait(0.02):
+            assert thread.is_alive(), "the broker stopped before its socket listened"
+            assert time.monotonic() < deadline, "the broker never listened on its socket"
+        return root / LANE / secrets_broker.SOCKET_NAME
 
     try:
         yield start

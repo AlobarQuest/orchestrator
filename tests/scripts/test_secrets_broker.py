@@ -207,15 +207,17 @@ def _serving(allowlist: dict[str, frozenset[str]], fetcher, prepare=None) -> Ite
     root = Path(tempfile.mkdtemp(prefix="broker-", dir="/tmp"))
     if prepare is not None:
         prepare(root)
-    stop = threading.Event()
+    stop, ready = threading.Event(), threading.Event()
     thread = threading.Thread(
-        target=secrets_broker.serve, args=(allowlist, root, fetcher), kwargs={"stop": stop}
+        target=secrets_broker.serve,
+        args=(allowlist, root, fetcher),
+        kwargs={"stop": stop, "ready": ready},
     )
     thread.start()
     deadline = time.monotonic() + 5
-    while not all(_listening(root / lane / "broker.sock") for lane in allowlist):
-        assert time.monotonic() < deadline, "the broker never bound its sockets"
-        time.sleep(0.02)
+    while not ready.wait(0.02):
+        assert thread.is_alive(), "serve stopped before every lane listened"
+        assert time.monotonic() < deadline, "the broker never listened on its sockets"
     try:
         yield root
     finally:
@@ -237,14 +239,6 @@ def served(bws: Bws) -> Iterator[Path]:
     allowlist = {"inert-landing": frozenset({GOOD}), "unit-verifier": frozenset({OTHER})}
     with _serving(allowlist, _fetcher(bws), _stale) as root:
         yield root
-
-
-def _listening(path: Path) -> bool:
-    """True once `path` is a socket. The broker may remove the stale file between two calls."""
-    try:
-        return stat.S_ISSOCK(path.stat().st_mode)
-    except FileNotFoundError:
-        return False
 
 
 def _connect(path: Path) -> socket.socket:
@@ -278,12 +272,40 @@ def test_sockets_are_0600_in_0750_lane_directories(served: Path) -> None:
     }
 
 
-def test_oversized_and_silent_clients_dont_block_others(
-    served: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(secrets_broker, "READ_TIMEOUT_S", 2.0)
-    inert = served / "inert-landing" / "broker.sock"
-    verifier = served / "unit-verifier" / "broker.sock"
+def test_serve_is_ready_only_once_every_lane_listens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A socket file exists from its bind, before it listens: a client connecting in that gap is
+    refused. `ready` is set only after every lane listens, so a connect right after it succeeds."""
+    activate = secrets_broker._Server.server_activate
+
+    def slow_activate(server: secrets_broker._Server) -> None:
+        time.sleep(0.05)
+        activate(server)
+
+    monkeypatch.setattr(secrets_broker._Server, "server_activate", slow_activate)
+    allowlist = {"inert-landing": frozenset({GOOD}), "unit-verifier": frozenset({OTHER})}
+    with _serving(allowlist, lambda _uuid: SECRET) as root:
+        assert json.loads(_ask(root / "inert-landing" / "broker.sock", f"{GOOD}\n".encode())) == {
+            "id": GOOD,
+            "value": SECRET,
+        }
+        assert json.loads(_ask(root / "unit-verifier" / "broker.sock", f"{OTHER}\n".encode())) == {
+            "id": OTHER,
+            "value": SECRET,
+        }
+
+
+def test_oversized_and_silent_clients_dont_block_others(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fake fetcher, so the four replies come well inside the patched read timeout and the two
+    held connections still hold when checked."""
+    monkeypatch.setattr(secrets_broker, "READ_TIMEOUT_S", 3.0)
+    allowlist = {"inert-landing": frozenset({GOOD}), "unit-verifier": frozenset({OTHER})}
+    with _serving(allowlist, lambda _uuid: SECRET) as root:
+        _check_held_connections_dont_block(root)
+
+
+def _check_held_connections_dont_block(root: Path) -> None:
+    inert = root / "inert-landing" / "broker.sock"
+    verifier = root / "unit-verifier" / "broker.sock"
 
     silent = _connect(inert)
     trickle = _connect(inert)
@@ -306,16 +328,22 @@ def test_oversized_and_silent_clients_dont_block_others(
             while chunk := held.recv(4096):
                 reply += chunk
             assert json.loads(reply) == {"error": "bad_request"}
-        assert time.monotonic() - started < 4
+        assert time.monotonic() - started < 5
     finally:
         silent.close()
         trickle.close()
 
 
-def test_an_empty_allowlist_binds_nothing_and_stops_on_sigterm(tmp_path: Path, bws: Bws) -> None:
-    allowlist = _allowlist(tmp_path, "[lanes]\n")
-    root = tmp_path / "broker"
-    root.mkdir()
+def test_an_empty_allowlist_binds_nothing_and_still_serves() -> None:
+    with _serving({}, lambda _uuid: SECRET) as root:
+        assert list(root.iterdir()) == []
+
+
+def test_the_broker_logs_each_listening_lane_and_stops_on_sigterm(bws: Bws) -> None:
+    """Run as the image runs it. Not `tmp_path`, for the socket path's length limit."""
+    root = Path(tempfile.mkdtemp(prefix="broker-", dir="/tmp"))
+    (root / "broker").mkdir()
+    allowlist = _allowlist(root, f'[lanes.inert-landing]\nread = ["{GOOD}"]\n')
     process = subprocess.Popen(
         [
             sys.executable,
@@ -324,21 +352,38 @@ def test_an_empty_allowlist_binds_nothing_and_stops_on_sigterm(tmp_path: Path, b
             "--allowlist",
             str(allowlist),
             "--root",
-            str(root),
+            str(root / "broker"),
         ],
         env={"PATH": f"{bws.bin}:/usr/bin:/bin", "BWS_ACCESS_TOKEN": "token"},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    time.sleep(0.5)
-    assert process.poll() is None, process.communicate()
-    process.send_signal(signal.SIGTERM)
-    out, err = process.communicate(timeout=10)
+    try:
+        assert process.stdout is not None
+        # Printed once the socket listens, so the connect below can't be refused.
+        listening = process.stdout.readline()
+        assert json.loads(listening) == {
+            "lane": "inert-landing",
+            "uuid": None,
+            "outcome": "listening",
+        }, process.communicate()
+        socket_path = root / "broker" / "inert-landing" / "broker.sock"
+        assert json.loads(_ask(socket_path, f"{GOOD}\n".encode())) == {"id": GOOD, "value": SECRET}
+        process.send_signal(signal.SIGTERM)
+        out, err = process.communicate(timeout=10)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()
+        shutil.rmtree(root)
 
     assert process.returncode == 0, err
-    assert list(root.iterdir()) == []
-    assert "token" not in out + err
+    assert [json.loads(line) for line in out.splitlines()] == [
+        {"lane": "inert-landing", "uuid": GOOD, "outcome": "ok"}
+    ]
+    assert "token" not in listening + out + err
+    assert SECRET not in listening + out + err
 
 
 def test_main_refuses_a_bad_allowlist_or_a_missing_bws(
@@ -404,13 +449,17 @@ def test_an_unexpected_handler_error_is_logged_without_its_text(
     with _serving({"inert-landing": frozenset({GOOD})}, broken) as root:
         assert _ask(root / "inert-landing" / "broker.sock", f"{GOOD}\n".encode()) == b""
         deadline = time.monotonic() + 5
-        while '"internal"' not in (seen := capfd.readouterr()).out:
+        out = err = ""
+        while '"internal"' not in out:
             assert time.monotonic() < deadline, "no internal line was logged"
             time.sleep(0.02)
-    assert [json.loads(line) for line in seen.out.splitlines()] == [
-        {"lane": "inert-landing", "uuid": None, "outcome": "internal"}
+            seen = capfd.readouterr()
+            out, err = out + seen.out, err + seen.err
+    assert [json.loads(line) for line in out.splitlines()] == [
+        {"lane": "inert-landing", "uuid": None, "outcome": "listening"},
+        {"lane": "inert-landing", "uuid": None, "outcome": "internal"},
     ]
-    assert SECRET not in seen.out + seen.err
+    assert SECRET not in out + err
 
 
 @pytest.mark.parametrize("token", [None, ""])
