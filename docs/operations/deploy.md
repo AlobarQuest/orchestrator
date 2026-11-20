@@ -2,6 +2,31 @@
 
 How to build, migrate, swap and verify a production release, and what each check can and cannot see.
 
+## Development mode
+
+While SDS is in development, `deploy-mode.toml` at the repository root holds
+`mode = "development"`. The deploy command reads it with `git show origin/main:deploy-mode.toml`
+after a `git fetch`, so a local edit can't change it. Anything else is production: a missing or
+malformed file, another value, or a failed fetch. Every phase's result JSON carries
+`"deploy_mode"`.
+
+Development mode drops four gates:
+
+- a lane's quiet slot ("The quiet slot"): `lanes-prepare` and `lanes-recheck` read neither the
+  clock nor the Healthchecks listing;
+- the lane served-tag rule: a lane's `--tag` or `--add --tag` takes any commit on `origin/main`
+  with a successful `Release image` run, without reading `/health/live`;
+- `prepare`'s lane lag check (a registered lane running a tag other than the served one);
+- the nothing-live check in `prepare` and `recheck`, unless the deploy carries a migration. With
+  one, `prepare` runs it after listing the migrations, and the result says `nothing_live:
+  skipped` when it didn't run.
+
+It keeps everything else: commits only on `origin/main`, the readiness and health-check
+refusals, migration order and its readiness proof, `finish`'s digest checks, the broker checks,
+the unfinished-run refusals, a lane tag's descendant check, and secret handling.
+
+Switching to production is a one-line PR setting `mode = "production"`.
+
 ## The deploy command (primary procedure, SDS 1.1 item 7a)
 
 Deploy the orchestrator with `scripts/deploy_orchestrator.py`. It runs the procedure the entries
@@ -153,7 +178,8 @@ reads no alert-hub token, and creates or deletes no resource.
 Each phase takes `--lane <lane>` and exactly one change:
 
 - `--tag sha-<40 hex>`: move the lane to a release's sha tag. It must be the served orchestrator
-  tag, and its commit must descend from the commit of the lane's first passed `--add`; an older
+  tag (in production; development mode takes any released commit, "Development mode"), and its
+  commit must descend from the commit of the lane's first passed `--add`; an older
   target goes back to the Mac first ("Rollback for one lane").
 - `--schedule <true|false>`: change the lane's `LANE_SCHEDULE_ENABLED`. It keeps the running tag
   and writes the tracked compose at that tag.
@@ -195,6 +221,8 @@ diff shows the whole tracked file as new, and the compose its `lanes-finish` rec
 recorded compose from then on.
 
 ### The quiet slot
+
+Development mode has no quiet slot ("Development mode").
 
 A lane's resource is redeployed only in its quiet slot: outside estate landing's 02:00 to 06:00
 New York window, and while the lane's own Healthchecks check doesn't have `started` set to `true`.
