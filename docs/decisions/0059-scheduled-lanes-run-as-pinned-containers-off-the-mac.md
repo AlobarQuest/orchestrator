@@ -4838,7 +4838,7 @@ disagree, this amendment governs.
 Amendment 13 decision item 7 authorizes "a read grant on the chain's read password (`2f708d08-…`,
 BWS project `Factory Events`) to the bump-driver lane's BWS machine account" (lines 3898-3899).
 Under ADR-0055 amendment 30 the bump driver is a broker lane: orchestrator #762 (`c551c424`) lists
-its seven secrets in `lanes/secrets-broker/allowlist.toml` (`[lanes.bump-driver]`, lines 37-45),
+its seven secrets in `lanes/secrets-broker/allowlist.toml` (`[lanes.bump-driver]`, lines 37-46),
 and its compose maps no `BWS_ACCESS_TOKEN`. So no bump-driver lane account exists to hold that
 grant.
 
@@ -4870,9 +4870,10 @@ broker-lane paragraph (lines 1132-1133).
    project grant. For `Factory Events` the reason is shown at `262cc34c`: the project also holds
    the chain's append password (`factory-events-append-password`, `.bws-secrets.toml` line 556),
    whose holders ADR-0055 amendment 25 item 3 names, and a project grant would make the broker's
-   account one more. For `Brains - Contributor`, the single-secret form follows the broker's
-   existing grants in `Rotation / Keepers`, the form HQ's plan gives every grant outside the
-   broker's projects.
+   account one more. For `Brains - Contributor`, the single-secret form is HQ's proposal, not a
+   recorded answer of Devon's: it follows his single-secret grants in `Rotation / Keepers`, the
+   form HQ's plan gives every grant outside the broker's projects. Devon makes or withholds each
+   grant at the gate.
 3. **What changes in reach.** The broker's account reads the three secrets, so under ADR-0055
    amendment 30 item 8 anything holding the broker's token or mount can read them. The broker
    serves each only to the lanes whose allowlist entry lists it, and at `262cc34c` only
