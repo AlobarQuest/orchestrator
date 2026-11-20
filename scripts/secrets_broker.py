@@ -26,12 +26,15 @@ Usage:
 
 The image runs it as `/app/.venv/bin/python -I /app/scripts/secrets_broker.py` (standard library
 only, like `lane_run.py`), and it serves until SIGTERM. Exit codes: 0 after SIGTERM, 2 for a usage
-error, a refused allowlist, a missing `bws`, or an unset or empty `BWS_ACCESS_TOKEN`.
+error, a refused allowlist, a missing `bws`, an unset or empty `BWS_ACCESS_TOKEN`, or a lane whose
+directory or socket can't be set up (fail-fast: the first such lane stops the broker, and its
+refusal names the lane and the errno's name).
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
@@ -69,6 +72,16 @@ _LOG = threading.Lock()
 
 class AllowlistError(Exception):
     """The allowlist can't be used; the broker doesn't start."""
+
+
+class LaneStartError(OSError):
+    """A lane's socket can't be set up; the broker doesn't start. Its message names the lane and
+    the errno's name alone, not the OS's text."""
+
+    def __init__(self, lane: str, error: OSError) -> None:
+        name = errno.errorcode.get(error.errno, "unknown") if error.errno else "unknown"
+        self.message = f"lane {lane!r} can't start: {name}"
+        super().__init__(error.errno, self.message)
 
 
 def load_allowlist(path: Path) -> dict[str, frozenset[str]]:
@@ -275,7 +288,10 @@ def serve(
     servers = []
     try:
         for lane, allowed in sorted(allowlist.items()):
-            server = _bind(root, lane, allowed, limited)
+            try:
+                server = _bind(root, lane, allowed, limited)
+            except OSError as error:
+                raise LaneStartError(lane, error) from error
             threading.Thread(target=server.serve_forever, daemon=True).start()
             servers.append(server)
         if ready is not None:
@@ -310,7 +326,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _refuse(f"{TOKEN} is not set")
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: stop.set())
-    serve(allowlist, arguments.root, partial(fetch, bws=bws, timeout_s=FETCH_TIMEOUT_S), stop=stop)
+    fetcher = partial(fetch, bws=bws, timeout_s=FETCH_TIMEOUT_S)
+    try:
+        serve(allowlist, arguments.root, fetcher, stop=stop)
+    except LaneStartError as error:
+        return _refuse(error.message)
     return EXIT_OK
 
 

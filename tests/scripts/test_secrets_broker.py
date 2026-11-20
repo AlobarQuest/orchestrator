@@ -410,9 +410,41 @@ def test_main_refuses_a_bad_allowlist_or_a_missing_bws(
     assert not root.exists()
 
 
-def test_a_lane_that_fails_to_bind_stops_serve_promptly() -> None:
-    """The second lane's socket path is a directory, so its bind fails after the first lane's
-    succeeded: `serve` raises at once and closes the first lane's socket, and doesn't hang."""
+def test_main_refuses_a_lane_that_cant_start_without_a_traceback(
+    bws: Bws, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture
+) -> None:
+    """Fail-fast: the first lane that can't start stops the broker, which names the lane and the
+    errno's name in one JSON line and exits 2. Lanes start in sorted order, so the lane before
+    it has already logged its `listening` line, and is closed again."""
+    root = Path(tempfile.mkdtemp(prefix="broker-", dir="/tmp"))
+    # The second lane's directory is a file, so creating it fails.
+    (root / "unit-verifier").write_text("")
+    allowlist = _allowlist(
+        root,
+        f'[lanes.inert-landing]\nread = ["{GOOD}"]\n[lanes.unit-verifier]\nread = ["{OTHER}"]\n',
+    )
+    monkeypatch.setenv("BWS_ACCESS_TOKEN", "token")
+    monkeypatch.setenv("PATH", str(bws.bin))
+    try:
+        code = secrets_broker.main(["--allowlist", str(allowlist), "--root", str(root)])
+        out, err = capfd.readouterr()
+        assert code == 2
+        assert [json.loads(line) for line in out.splitlines()] == [
+            {"lane": "inert-landing", "uuid": None, "outcome": "listening"}
+        ]
+        assert [json.loads(line) for line in err.splitlines()] == [
+            {"error": "lane 'unit-verifier' can't start: EEXIST"}
+        ]
+        with pytest.raises(OSError):
+            _connect(root / "inert-landing" / "broker.sock")
+    finally:
+        shutil.rmtree(root)
+
+
+def test_a_lane_that_fails_to_start_stops_serve_promptly() -> None:
+    """The second lane's socket path is a directory, so removing the stale file before its bind
+    fails after the first lane listens: `serve` raises at once and closes the first lane's
+    socket, and doesn't hang."""
     root = Path(tempfile.mkdtemp(prefix="broker-", dir="/tmp"))
     (root / "unit-verifier" / "broker.sock").mkdir(parents=True)
     raised: list[BaseException] = []
