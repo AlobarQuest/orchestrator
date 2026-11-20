@@ -133,6 +133,7 @@ paths = [
   "tests/architecture/test_lane_image.py",
   ".bws-secrets.toml",
   ".cred-consumers.toml",
+  "deploy-mode.toml",
   "tests/scripts/test_compute_image_tags.py",
   "tests/scripts/test_deploy_orchestrator.py",
   "tests/scripts/test_deploy_lanes.py",
