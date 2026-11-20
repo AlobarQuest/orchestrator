@@ -91,9 +91,7 @@ def test_the_lane_has_no_token_row_and_reads_through_the_broker(
     """The lane holds no token, so no lane-token row names its variable, and the reach rule, which
     compares lane-token rows only, still passes for every one of them beside this row."""
     lane_rows = provider_entries(mirror, bws_lane_token.PROVIDER)
-    variables = {
-        c.get("key") for entry in lane_rows for c in entry.credential.get("consumer", [])
-    }
+    variables = {c.get("key") for entry in lane_rows for c in entry.credential.get("consumer", [])}
     assert "ESTATE_LANDING_BWS_ACCESS_TOKEN" not in variables
     assert f"{LANE}-bws-token" not in rows
     for entry in lane_rows:
