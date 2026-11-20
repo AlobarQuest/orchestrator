@@ -426,9 +426,9 @@ those four and the read-only App's key (`314a966c-…`), with the lane's own tok
 SYSTEM bearer and the `sds-bridge` alert sender as `sds-operator`, the change-manager READ bearer
 (`314f276d-…`) and the Code Brain and Infra Brain contributor keys (`750f737f-…`, `da8134b0-…`,
 `Brains - Contributor`) as the broad account, and takes its GitHub token from `gh auth token`.
-After ADR-0059 step 3g-3's cut-over, the `bump-driver` lane account alone reads those five and the
-read-only App's key (`314a966c-…`), with the lane's own token in its container (no Keychain item),
-and the lane mints its GitHub token from that App each pass.
+After ADR-0059 step 3g-3's cut-over, the lane reads those five and the read-only App's key
+(`314a966c-…`) through the lane secrets broker's socket in its container (ADR-0055 amendment 30; no
+token of its own, no Keychain item), and mints its GitHub token from that App each pass.
 
 `scripts/run-change-window.sh` holds no chain password either, and it has no Mac branch: the Mac's
 window stays infraops-mcp-server's `scripts/change-window.sh` until the lane's rollback ends. After

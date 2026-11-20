@@ -1,7 +1,8 @@
 """`scripts/run-bump-driver.sh` in the lane's container and on the Mac, and the lane's files.
 
 The real launcher runs under `env -i` from a throwaway tree, with what `lane-run` passes it in the
-container: the lane's token as `BWS_ACCESS_TOKEN`, the state directory, `PATH` and a new `HOME`.
+container: the lane's token as `BWS_ACCESS_TOKEN` (or, on the secrets broker, `SDS_SECRETS_SOCKET`
+naming a stand-in broker's socket, `conftest.py`'s), the state directory, `PATH` and a new `HOME`.
 `bws`, `gh`, `curl` and `git` are stubs on PATH; the `git` stub "clones" by writing a stand-in
 `intent_packages.factory_cli` and `code_standards.cli` into the destination, so the `factory` and
 `code-standards` shims run for real. In the venv, `bump-driver` and `sds-github-mint` are stubs
@@ -28,6 +29,7 @@ import yaml
 
 from scripts import deploy_orchestrator as deploy
 from scripts import lane_run
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-bump-driver.sh")
@@ -91,7 +93,8 @@ _GIT = """#!/bin/bash
 # Records whether the chain's read password is in its environment.
 echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
 echo "git args=$* count=${GIT_CONFIG_COUNT:-} key0=${GIT_CONFIG_KEY_0:-} \\
-value0=${GIT_CONFIG_VALUE_0:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$STUB_GIT_LOG"
+value0=${GIT_CONFIG_VALUE_0:-} lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set}" >> "$STUB_GIT_LOG"
 if [ -n "${GIT_REFUSES:-}" ]; then
   case "$*" in *"$GIT_REFUSES"*) echo "fatal: repository not found" >&2; exit 128 ;; esac
 fi
@@ -125,7 +128,8 @@ if [ "${1:-}" = -m ] && [ "${2:-}" = orchestrator.factory_chain_read ]; then
   echo "walk args=$* password=${FACTORY_EVENTS_READ_PASSWORD:-} \\
 host=${FACTORY_EVENTS_DB_HOST:-} port=${FACTORY_EVENTS_DB_PORT:-} \\
 name=${FACTORY_EVENTS_DB_NAME:-} pythonpath=${PYTHONPATH:-} \\
-lane_token=${BWS_ACCESS_TOKEN:+set} github=${BUMP_DRIVER_GITHUB_TOKEN:+set}" >> "$LANE_LOG"
+lane_token=${BWS_ACCESS_TOKEN:+set} socket=${SDS_SECRETS_SOCKET:+set} \\
+github=${BUMP_DRIVER_GITHUB_TOKEN:+set}" >> "$LANE_LOG"
   echo "a driver's text with connection details" >&2
   printf '%s\\n' "$FAKE_WALK"
   exit "${FAKE_WALK_RC:-0}"
@@ -140,7 +144,7 @@ _DRIVER = """#!/bin/bash
 echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
 if [ "$1" = repositories ]; then
   echo "derive args=$* lane_token=${BWS_ACCESS_TOKEN:+set} \\
-system=${ORCHESTRATOR_API_TOKEN:-} key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-}" >> "$LANE_LOG"
+socket=${SDS_SECRETS_SOCKET:+set} system=${ORCHESTRATOR_API_TOKEN:-} key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-}" >> "$LANE_LOG"
   if [ -n "${FAKE_DERIVE_RC:-}" ]; then
     echo "the member record could not be read: the orchestrator answered 503" >&2
     exit "$FAKE_DERIVE_RC"
@@ -173,7 +177,8 @@ _MINT = """#!/bin/bash
 # Records whether the chain's read password is in its environment.
 echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
 key="$(cat)"
-echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
 echo "%s"
 """
@@ -368,7 +373,8 @@ def test_credentials_already_in_the_environment_are_never_used(tmp_path: Path) -
 def test_an_unreadable_secret_fails_the_pass_before_the_driver(tmp_path: Path, uuid: str) -> None:
     run = _run(tmp_path, BWS_REFUSES=uuid)
     assert run.code == 1, run.output
-    assert "FATAL: could not read" in run.output and "(the lane's token)" in run.output
+    assert "FATAL: could not read" in run.output
+    assert "(the lane's socket or token)" in run.output
     assert run.passes() == [] and run.lines("mint") == []
 
 
@@ -425,7 +431,7 @@ def test_the_mint_names_the_derived_repositories_and_three_read_permissions(
         f"mint args=--app-id 5684758 {targets}"
         " --permission metadata=read --permission pull_requests=read --permission contents=read"
         # The key reaches the mint undecoded, in the form BWS holds it, without the lane's token.
-        f" key={value(READ_APP_KEY_UUID)} lane_token="
+        f" key={value(READ_APP_KEY_UUID)} lane_token= socket="
     ]
 
 
@@ -434,7 +440,8 @@ def test_the_list_is_derived_from_the_member_record_as_system_without_the_lanes_
 ) -> None:
     run = _run(tmp_path)
     assert run.lines("derive") == [
-        f"derive args=repositories lane_token= system={value(SYSTEM_UUID)} key=orchestrator-system"
+        f"derive args=repositories lane_token= socket= system={value(SYSTEM_UUID)}"
+        " key=orchestrator-system"
     ]
 
 
@@ -481,7 +488,7 @@ def test_the_four_clones_are_shallow_at_main_under_home_with_the_read_token(
     assert run.logs["git"] == [
         f"git args=clone --quiet --depth 1 --single-branch --branch main"
         f" https://github.com/AlobarQuest/{name}.git {destinations[name]}"
-        f" count=1 key0=http.https://github.com/.extraheader value0={header} lane_token="
+        f" count=1 key0=http.https://github.com/.extraheader value0={header} lane_token= socket="
         for name in CLONES
     ]
 
@@ -584,7 +591,7 @@ def test_every_pass_walks_the_chain_once_with_the_password_and_the_images_securi
     assert run.lines("walk") == [
         f"walk args=-m orchestrator.factory_chain_read password={value(CHAIN_READ_UUID)}"
         " host=b82fa1vg5whecgnjreuqb5tk port=5432 name=postgres"
-        f" pythonpath={root}/security-standards/src lane_token= github=set"
+        f" pythonpath={root}/security-standards/src lane_token= socket= github=set"
     ]
     # A verified walk's selection reaches the driver; only its summary reaches the report.
     assert run.facts() == {
@@ -678,12 +685,108 @@ def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path
     assert run.logs["gh"] == []
 
 
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+PING_URL_SECRET = "11111111-2222-4333-8444-555555555555"
+
+
+def _brokered(tmp_path: Path, socket_path: Path, *args: str, **fake: str | None) -> Run:
+    """The container as `lane-run` starts it on the broker: no token and the socket's marker. The
+    compose's ping-URL id is empty, so an acting pass's outcome alarm asks for the broad identity;
+    the stand-in keeps the real Keychain out of the test."""
+    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake)
+
+
+@pytest.mark.parametrize("args", [(), ("--dry-run",)], ids=["acting", "dry-run"])
+def test_container_branch_runs_on_the_socket_without_a_token(
+    tmp_path: Path, broker, args: tuple[str, ...]
+) -> None:
+    socket_path = broker({u: value(u) for u in LANE_SECRETS})
+    run = _brokered(tmp_path, socket_path, *args)
+    assert run.code == 0, run.output
+    # Every lane secret came through the socket: the only `bws` call is an acting pass's outcome
+    # alarm reading the Healthchecks key, by the broad stand-in that exists only in this test, and
+    # the Mac's steps never ran.
+    assert run.reads() == ([] if args else [(HEALTHCHECKS_KEY_UUID, BROAD_STANDIN)])
+    assert "[activation]" not in run.output
+    assert run.logs["gh"] == []
+    # Neither the token nor the socket's marker reaches the derive, the mint, git or the walk.
+    assert run.lines("derive") == [
+        f"derive args=repositories lane_token= socket= system={value(SYSTEM_UUID)}"
+        " key=orchestrator-system"
+    ]
+    [mint] = run.lines("mint")
+    assert mint.endswith(f" key={value(READ_APP_KEY_UUID)} lane_token= socket=")
+    assert len(run.logs["git"]) == len(CLONES)
+    assert all(line.endswith(" lane_token= socket=") for line in run.logs["git"])
+    [walk] = run.lines("walk")
+    assert f"password={value(CHAIN_READ_UUID)} " in walk
+    assert walk.endswith(" lane_token= socket= github=set")
+    env = run.env()
+    assert env["ORCHESTRATOR_API_TOKEN"] == value(SYSTEM_UUID)
+    assert env["SDS_BRIDGE_ALERT_TOKEN"] == value(ALERT_UUID)
+    assert env["CHANGE_MANAGER_TOKEN"] == value(READ_UUID)
+    assert env["CODE_BRAIN_KEY"] == value(CODE_BRAIN_UUID)
+    assert env["INFRA_BRAIN_KEY"] == value(INFRA_BRAIN_UUID)
+    assert env["BUMP_DRIVER_GITHUB_TOKEN"] == READ_TOKEN
+    # Nor the driver.
+    assert "BWS_ACCESS_TOKEN" not in env and "SDS_SECRETS_SOCKET" not in env
+    assert len(run.passes()) == 1
+    for uuid in LANE_SECRETS:
+        assert value(uuid) not in run.output
+    assert READ_TOKEN not in run.output
+
+
+def test_with_a_ping_url_named_the_socket_serves_every_read(tmp_path: Path, broker) -> None:
+    """Once the compose names the ping-URL secret (a later change), the outcome alarm reads it
+    through the socket too, and `bws` never runs. No broad identity: nothing falls back to the
+    Mac."""
+    socket_path = broker(
+        {PING_URL_SECRET: "https://ping.example/x", **{u: value(u) for u in LANE_SECRETS}}
+    )
+    run = _brokered(
+        tmp_path,
+        socket_path,
+        BWS_ACCESS_TOKEN_BROAD=None,
+        SDS_DEADMAN_PING_URL_UUID=PING_URL_SECRET,
+    )
+    assert run.code == 0, run.output
+    assert run.logs["bws"] == []
+    assert len(run.passes()) == 1
+
+
+@pytest.mark.parametrize("uuid", (*FIVE, CHAIN_READ_UUID))
+def test_a_secret_the_socket_refuses_fails_the_pass_before_the_driver(
+    tmp_path: Path, broker, uuid: str
+) -> None:
+    socket_path = broker({u: (None if u == uuid else value(u)) for u in LANE_SECRETS})
+    run = _brokered(tmp_path, socket_path)
+    assert run.code == 1, run.output
+    assert "FATAL: could not read" in run.output
+    assert "(the lane's socket or token)" in run.output
+    assert run.passes() == [] and run.lines("mint") == []
+
+
+def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    run = _brokered(tmp_path, dead_socket)
+    assert run.code == 1, run.output
+    assert "FATAL: could not read the orchestrator system credential" in run.output
+    # Only the outcome alarm's Healthchecks key, by the broad stand-in: no lane secret fell back
+    # to `bws`, and no Mac identity was read.
+    assert run.reads() == [(HEALTHCHECKS_KEY_UUID, BROAD_STANDIN)]
+    assert run.logs["gh"] == []
+    assert "[activation]" not in run.output
+    assert run.lines("derive") == [] and run.lines("mint") == [] and run.passes() == []
+
+
 def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
     """The container block ends in `sds_outcome_end`, which exits, so every Keychain read and `gh`
     call after its closing `fi` is the Mac's. The outcome alarm's own Keychain read is reached only
     without a broad identity and a ping-URL id, which the compose names once its secret exists."""
     lines = LAUNCHER.read_text().splitlines()
-    block = lines.index('if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then')
+    block = lines.index("if sds_in_lane_container; then")
     end = lines.index("fi", block)
     assert lines[end - 1].strip() == 'sds_outcome_end "$rc" --told 2'
     code = [(i, line) for i, line in enumerate(lines) if not line.lstrip().startswith("#")]
@@ -747,12 +850,16 @@ def test_on_the_mac_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> N
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "bump-driver")
-    assert deploy.add_refusals(service, "bump-driver") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "bump-driver", allowlist)
+    assert deploy.add_refusals(service, "bump-driver", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "bump-driver") == []
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["bump-driver"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${BUMP_DRIVER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "BUMP_DRIVER_STATE_DIR": "/var/lib/sds/bump-driver",
             # A placeholder until the lane's ping-URL secret exists.
@@ -760,7 +867,10 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             # The work carrier's three chain settings: the chain's container inside `coolify`.
             **CHAIN_SETTINGS,
         },
-        "volumes": ["sds-lanes-bump-driver-state:/var/lib/sds/bump-driver"],
+        "volumes": [
+            "sds-lanes-bump-driver-state:/var/lib/sds/bump-driver",
+            "/data/sds/broker/bump-driver:/run/sds-broker:ro",
+        ],
         # The chain walk connects to a separate Coolify database resource (workspace invariant).
         "networks": ["coolify"],
         "restart": "unless-stopped",
