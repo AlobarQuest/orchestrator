@@ -222,3 +222,9 @@ reader on any of these four:
 - **Infra Brain 212 (HTTPS for public FQDNs):** not applicable. There's no domain change.
 - **Infra Brain lesson 450 (rotation landmines):** no secret value enters the registry, the test, the
   report or a log. The rows name ids only, and the infraops run used an empty scratch state.
+
+## CI
+
+At head `f5c3299f`, PR #765 passed all three jobs: `Quality` (15m57s), `Rollout transcription
+currency`, and `Runner consumer compatibility`. GitHub reports it `MERGEABLE`. The commit that
+adds this section is report-only.
