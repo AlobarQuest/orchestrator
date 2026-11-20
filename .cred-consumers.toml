@@ -1348,12 +1348,12 @@ healthchecks_check = "sds-rotation-proposer"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
 # ── The inert-landing lane's token and ping URL (ADR-0059 increment 5) ───────────
-# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
-# for its first issue by `rotate_requested`; a later change dates the ping URL's row, once the
-# token's `store` unit completes, so the two issue units never wait on a mint at once. Both keepers
-# were created in Rotation / Keepers at HQ gate G-78, which also created the `inert-landing` machine
-# account. Its grants on the lane's secrets are a later act (deploy.md, the inert lander's cut-over
-# item 4). The account has no other token, so this is its only token row.
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
+# first issue by `rotate_requested`. The ping URL's row is dated only after the token's `store` unit
+# completed, so the two issue units never waited on a mint at once. Both keepers were created in
+# Rotation / Keepers at HQ gate G-78, which also created the `inert-landing` machine account. Its
+# grants on the lane's secrets are a later act (deploy.md, the inert lander's cut-over item 4). The
+# account has no other token, so this is its only token row.
 # Neither row carries `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "inert-landing-bws-token"
@@ -1382,7 +1382,6 @@ reach_projects = []
   redeploy = false
   note = "the sds-lane-inert-landing service's variable; the lane phases redeploy it, never the executor"
 
-# Not yet due: a later change adds `rotate_requested`, once the token's `store` unit completes.
 # No `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "inert-landing-ping-url"
@@ -1390,6 +1389,7 @@ class = "healthchecks-ping-url"
 provider = "healthchecks-ping-url"
 bws_uuid = "35557473-f80c-44e3-892a-b507013158b1"
 rotated_by_sds = true
+rotate_requested = "2026-11-20"
 # The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
 # keeps the check it pinged from the Mac (ADR-0059 decision 3).
 healthchecks_check = "sds-inert-landing"
