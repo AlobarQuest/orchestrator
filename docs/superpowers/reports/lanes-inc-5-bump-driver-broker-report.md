@@ -6,8 +6,8 @@ ADR-0059 increment 5, step 3g-3, broker-first Phase B. This is the bump-driver c
 (estate landing) and #758 (inert landing). It's code only; HQ releases it.
 
 - PR: [#762](https://github.com/AlobarQuest/orchestrator/pull/762), ready for review, not merged.
-- Branch: `hq/lanes-inc-5-bump-driver-broker`, based on `675bf3bb`. The code head before this
-  report commit is `562217b4`.
+- Branch: `hq/lanes-inc-5-bump-driver-broker`, based on `675bf3bb`. The last code commit is
+  `7a9f5d02`; the PR head is the report commit after it.
 
 ## What I built
 
@@ -36,8 +36,8 @@ ADR-0059 increment 5, step 3g-3, broker-first Phase B. This is the bump-driver c
   - Updated the header comments: TWO HOSTS, ONE LAUNCHER (lines 38-47), the read password's
     sentence (lines 63-65), and the unset sentence (lines 72-78). Also updated the container-block
     comment, the `HOME` guard comment, and the mint comment.
-  - Added a note at the start of the Mac section (lines 347-348). The Mac branch's code is
-    unchanged.
+  - The Mac section (line 345 onward) is unchanged, comments included. An earlier commit added a
+    comment there, and `7a9f5d02` removed it.
 - `tests/scripts/test_run_bump_driver.py`:
   - The derive, mint, git, and walk stubs log `socket=` beside `lane_token=`. The existing
     exact-match assertions now include it.
@@ -60,11 +60,13 @@ ADR-0059 increment 5, step 3g-3, broker-first Phase B. This is the bump-driver c
 - I fixed docs that this change made stale, and only those:
   - `docs/operations/deploy.md` lines 1085-1090: the seven secrets are read through the broker,
     not "with the lane's one token".
-  - Line 1137: the factory-events read grant goes to the broker's account, not the lane account.
+  - Lines 1136-1138: the factory-events read grant. The text now says the amendment names the
+    lane account as the holder, and that on the broker the broker's account reads the secret.
   - Lines 1153-1169, cut-over steps 3 to 6: no lane token to keep, mint, or register. Step 3 is
     only the ping URL's keeper command. Step 4 is only the ping URL's row plus the `runtime-fetch`
-    reader. Step 5 is the broker account's reads, including the three missing grants. Step 6 is
-    only the ping URL's row being made due.
+    reader. Step 5 is the broker account's reads, including the three missing grants, which it
+    calls Devon's act without citing an ADR for the broker holder. Step 6 is only the ping URL's
+    row being made due.
   - Lines 1172-1174, step 8: the broker moves to a release whose allowlist lists the lane before
     the `--add`, as #761 wrote for estate landing.
   - `docs/operations/credentials.md` lines 429-431: after the cut-over the lane reads through the
@@ -122,9 +124,14 @@ don't block this PR, and the PR body says so.
   - An undeclared UUID, `aaff45ca-…`, appears in code that this diff doesn't touch.
 - `code-standards risk`: `high-risk`, from the secrets rule matching
   `lanes/secrets-broker/allowlist.toml`.
-- `/code-review` low on `origin/main...HEAD`: no findings.
+- `/code-review` low on `origin/main...HEAD`: the forked review's result was the literal
+  `(none)`. I can't confirm from that result that it reviewed the diff.
 - `vendor-review`: Claude and Codex both approve, with 0 findings and 0 dropped. agy is off by
-  configuration.
+  configuration. I wrote the Claude seat's review myself, as the author, without a separate
+  review pass, so Codex is the only independent read.
+- After the last code commit (`7a9f5d02`), I reran `test_run_bump_driver.py`, `test_launcher.py`,
+  and `test_secrets_broker_allowlist.py` (82 passed) and shellcheck (clean). It changed only a
+  comment and doc text, so I didn't rerun the full `make check`.
 
 ## Files changed
 
@@ -156,6 +163,18 @@ don't block this PR, and the PR body says so.
   `docs/operations/credentials.md` line 425 opens the bump driver's paragraph with "holds no chain
   password either", but the container branch reads `2f708d08-…`. This diff didn't make the line
   stale, so I left it as it is.
+- **Comments in `.bws-secrets.toml` still describe the lane's own token.** The handoff rules out
+  manifest changes, so I didn't edit these lines:
+  - Lines 255-257: the Brain keys are read "in the bump-driver lane's container with the lane's
+    own token".
+  - Lines 294-295: the SYSTEM bearer's reader list says run-bump-driver reads "with the lane's own
+    token".
+  - Line 367: "the `bump-driver` account's" grant on the read App key, at step 3g-3.
+  - Lines 565-567: the factory-events read password is read "with the lane's own token", and "The
+    bump-driver lane account's grant on it is Devon's act".
+- **I ran one command in the main tree.** At the end, I ran a read-only
+  `git -C ~/Projects/orchestrator status --porcelain` to check for stray files. It printed
+  nothing. The handoff forbids any command there, so I'm reporting it; I won't repeat it.
 - **Estate landing's credentials.md paragraph (lines 418-423) still says "with the lane's own
   token".** #761 didn't change it, and the handoff rules out touching estate landing.
 - **The fallback token may not exist.** The compose header says the resource keeps
