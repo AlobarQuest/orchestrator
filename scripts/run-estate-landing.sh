@@ -53,11 +53,13 @@
 # NOTHING HERE DECIDES ANYTHING. Every term is evaluated by the orchestrator, inside the
 # transaction that records the act. This script asks it two questions and relays the answers.
 #
-# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-2). A set `BWS_ACCESS_TOKEN` means the
-# lane's container: `lane-run` passes the lane's own token as its one secret, and the Mac's launchd
-# job never sets it. There the launcher skips activation (the container runs the image's own code),
-# reads no Keychain item and calls no `gh`, and reads every secret with that one token, in the
-# environment, never as a process argument:
+# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-2). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret, and the Mac's launchd
+# job sets neither. There the launcher skips activation (the container runs the image's own code),
+# reads no Keychain item and calls no `gh`, and reads every secret through the socket, or with that
+# one token in the environment, never as a process argument. The broker serves this lane only the
+# UUIDs its allowlist lists (`lanes/secrets-broker/allowlist.toml`), exactly these:
 #   - every pass: the change-manager READ bearer (`314f276d-…`), the read-only App's key
 #     (`314a966c-…`, piped straight into the mint) and the orchestrator SYSTEM bearer
 #     (`221a48d5-…`);
@@ -70,9 +72,10 @@
 # revert is in), and `contents`, read, on `--submit` only (whether production serves a commit at
 # or after the revert's, a compare only a submitting pass makes). The same token is the registry's
 # credential on `--submit`. This lane lands through the orchestrator's dispatch App, never with
-# it. It unsets `BWS_ACCESS_TOKEN` before the lander runs. The bare run, the exit codes and the
-# dead-man switch are the Mac's. The container block runs the whole pass and exits, so everything
-# after it is the Mac's launchd job, unchanged until increment 6.
+# it. It unsets `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` before the lander runs. The socket
+# itself stays reachable, as the design accepts: the lander already runs as the same user. The bare
+# run, the exit codes and the dead-man switch are the Mac's. The container block runs the whole
+# pass and exits, so everything after it is the Mac's launchd job, unchanged until increment 6.
 # Exit 1 there also covers a failed mint; exit 2 also covers a landing policy the repository list
 # couldn't be read from.
 #
@@ -110,6 +113,12 @@ READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
 READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
+# CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
+# which breaks the parse below. Sourced before activation, whose host test is its
+# `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
 # Dependabot cascade stops at the merge, which is complete for a repository whose landing redeploys
 # a hosted application and incomplete for this one, whose code runs from a working copy here
@@ -118,7 +127,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
 # and the file it just rewrote is this one.
 # Skipped in the container, which runs the image's own code and has no `activate-checkout.sh`.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+if ! sds_in_lane_container; then
   _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
   if [ -r "$_SDS_ACTIVATE" ]; then
       # shellcheck source=/dev/null
@@ -142,20 +151,14 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-estate-landing --finding 3 "$@"
 
-
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
-# CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
-# which breaks the parse below.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
 # ---- THE LANE'S CONTAINER (ADR-0059 increment 5, step 3g-2) -----------------------------------
-# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read takes the lane's one token from the
-# environment (`sds_bws_value` with one argument), so it never appears in a process argument, and
-# each secret is always read, never taken from the environment. Every failure names itself and
-# exits with the code the header gives it; the dead-man switch, armed above, pings on the way out.
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-  FROM=" (the lane's token)"
+# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read is `sds_bws_value` with one argument:
+# through the broker's socket, or with the lane's one token from the environment, so no token
+# appears in a process argument, and each secret is always read, never taken from the environment.
+# Every failure names itself and exits with the code the header gives it; the dead-man switch,
+# armed above, pings on the way out.
+if sds_in_lane_container; then
+  FROM=" (the lane's socket or token)"
   unset ESTATE_LANDING_CHANGE_MANAGER_TOKEN ESTATE_LANDING_ORCHESTRATOR_TOKEN \
     ESTATE_LANDING_GITHUB_TOKEN ESTATE_LANDING_COOLIFY_TOKEN SDS_BRIDGE_ALERT_TOKEN
 
@@ -179,7 +182,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # decision 2: the mint names only the lane's repositories). AN UNDERIVABLE LIST MINTS NOTHING:
   # the subcommand exits 2 with its reason on stderr for a policy it can't read or one declaring no
   # deploying population, and its code is the pass's.
-  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/estate-landing" repositories)"
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+    "$REPO_ROOT/.venv/bin/estate-landing" repositories)"
   derive_rc=$?
   if [ "$derive_rc" -ne 0 ]; then
     echo "FATAL: the estate lane's repositories could not be derived (estate-landing repositories exited $derive_rc); nothing was minted or asked" >&2
@@ -196,17 +200,17 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
 
   # THE READ TOKEN IS MINTED EACH PASS, bare or submitting. The App's key goes from the BWS read
   # straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a variable,
-  # an argument or a file, and the mint runs without the lane's token. Its permissions are what the
-  # pass's GitHub reads use: `metadata`, which every installation token carries, and each watched
-  # repository's open pull requests (`GitHubReader.open_pull_requests`, `pull_requests`) on every
-  # pass; and on `--submit` alone, the compare of a served commit with the revert's
-  # (`GitHubReader.compare_status`, `contents`), which a bare pass never makes.
+  # an argument or a file, and the mint runs without the lane's token or the socket's marker. Its
+  # permissions are what the pass's GitHub reads use: `metadata`, which every installation token
+  # carries, and each watched repository's open pull requests (`GitHubReader.open_pull_requests`,
+  # `pull_requests`) on every pass; and on `--submit` alone, the compare of a served commit with
+  # the revert's (`GitHubReader.compare_status`, `contents`), which a bare pass never makes.
   PERMISSIONS=(--permission metadata=read --permission pull_requests=read)
   case " $* " in
     *" --submit "*) PERMISSIONS+=(--permission contents=read) ;;
   esac
   ESTATE_LANDING_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+    | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" "${PERMISSIONS[@]}")"
   mint_rc=$?
   if [ "$mint_rc" -ne 0 ] || [ -z "$ESTATE_LANDING_GITHUB_TOKEN" ]; then
@@ -243,13 +247,16 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
       ;;
   esac
 
-  # EVERY BWS READ IS DONE, so the lane's token reaches no program.
-  unset BWS_ACCESS_TOKEN
+  # EVERY BWS READ IS DONE, so neither the lane's token nor the socket's marker reaches a program.
+  unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
   "$REPO_ROOT/.venv/bin/estate-landing" "$@"
   rc=$?
   exit "$rc"
 fi
 
+# THE MAC FROM HERE ON: the container block above exits. These checks test the token itself, not
+# `sds_in_lane_container`, because the token IS the Mac's narrow identity: a socket's marker must
+# never pass for it and hand an empty identity to the two-argument reads below.
 # SOURCED, not executed. `sds-token.sh` EXPORTS the value and prints nothing -- its own header says
 # so -- so command-substituting it yields the empty string and every fetch below fails with a
 # message about a missing environment variable rather than about a missing token. That was the

@@ -997,9 +997,11 @@ The flag is in the crontab line, so a scheduled pass asks for landings. The bare
 nor GHCR, but this lane arms the dead-man switch, so a bare run pings its check (ADR-0059, "It
 pings the real check").
 
-Its `.bws-secrets.toml` secrets are the following five, all read with the lane's one token. Its
-ping-URL secret joins them when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
-empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+Its `.bws-secrets.toml` secrets are the following five, all read through the lane secrets broker
+(ADR-0055 amendment 30; `docs/operations/secrets-broker.md`): the compose maps no token and mounts
+the lane's socket directory, and the broker's allowlist lists exactly these. Its ping-URL secret
+joins them, in the manifest and the allowlist, when it exists; until then the compose's
+`SDS_DEADMAN_PING_URL_UUID` is empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
 
 - On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer, and the read-only
   App's key.
@@ -1021,20 +1023,23 @@ its own change or act. It moves outside the 02:00 to 06:00 New York landing wind
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-estate-landing` from the
    compose without deploying it.
-2. The VM root's keeper commands for the lane token and `estate-landing-ping-url`.
-3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
-   row. In the same work, a `runtime-fetch` reader for `scripts/run-estate-landing.sh` on the read
-   App key's row.
-4. The lane account's grants on its five secrets and its ping-URL secret. The change-manager READ
-   bearer (`314f276d-…`) is read by the broad identity on the Mac and becomes a direct grant to the
-   lane account (Devon's act at the lane's identity gate). The SYSTEM bearer (`221a48d5-…`), the
-   alert sender (`b415d03b-…`) and the Coolify token (`f9f59233-…`) are in `SDS Operator`, read on
-   the Mac as `sds-operator`. The read App key (`314a966c-…`) is in `SDS / Lane Apps`.
-5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
-   write (ADR-0055 amendment 23).
+2. The VM root's keeper command for `estate-landing-ping-url`. The lane reads through the broker,
+   so it has no token of its own to keep.
+3. The ping URL's registry row in this repository. In the same work, a `runtime-fetch` reader for
+   `scripts/run-estate-landing.sh` on the read App key's row.
+4. The broker account's reads of the lane's five secrets and its ping-URL secret
+   (`docs/operations/secrets-broker.md`, "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`),
+   the alert sender (`b415d03b-…`) and the Coolify token (`f9f59233-…`) are in `SDS Operator`, the
+   read App key (`314a966c-…`) is in `SDS / Lane Apps`, and the change-manager READ bearer
+   (`314f276d-…`) and the ping-URL secret are in `Rotation / Keepers`. The broker's account reads
+   project by project (ADR-0055 amendment 30), and inert landing's entry already needs each of
+   these three projects.
+5. The ping URL's row made due and the executor's write (ADR-0055 amendment 23).
 6. A served release whose compose names the ping-URL secret's id, with `estate-landing` removed
    from `test_deploy_lanes.py`'s `placeholders`.
-7. The lane's `--add`, then the `lane-run --read` proof over all six secrets and a bare
+7. The broker moved to a release whose allowlist lists the lane (`docs/operations/secrets-broker.md`,
+   "Move the broker to a new release") and its `listening` line for the lane; then the lane's
+   `--add`, then the `lane-run --read` proof over all six secrets and a bare
    `lane-run estate-landing` in the container. That bare run is the first read mint over the
    deploying population, so it proves the read App's installation covers each repository. It
    doesn't prove `contents`, Coolify or GHCR: a bare pass uses none of them, and with no

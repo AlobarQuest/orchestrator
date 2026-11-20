@@ -24,3 +24,12 @@ read = [
   "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE (--submit only)
   "35557473-f80c-44e3-892a-b507013158b1",  # inert-landing-ping-url
 ]
+
+[lanes.estate-landing]
+read = [
+  "314f276d-55ca-4ddc-a24d-b4a3013508cd",  # change-manager/M2M_TOKEN_READ
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "221a48d5-3f29-4898-b300-b4820140c880",  # orchestrator-system-bearer
+  "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE (--submit only)
+  "f9f59233-0794-4ea8-9806-b4f3011e6147",  # COOLIFY_TOKEN_SDS_ESTATE_LANDER (--submit only)
+]
