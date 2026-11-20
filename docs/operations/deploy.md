@@ -5,8 +5,9 @@ How to build, migrate, swap and verify a production release, and what each check
 ## Development mode
 
 While SDS is in development, `deploy-mode.toml` at the repository root holds
-`mode = "development"`. The deploy command reads it with `git show origin/main:deploy-mode.toml`
-after a `git fetch`, so a local edit can't change it. Anything else is production: a missing or
+`mode = "development"`. The deploy command fetches `main` into `refs/remotes/origin/main` and
+reads the file there (`git show refs/remotes/origin/main:deploy-mode.toml`), so neither a local
+edit nor a local ref named `origin/main` can change it. Anything else is production: a missing or
 malformed file, another value, or a failed fetch. Every phase's result JSON carries
 `"deploy_mode"`.
 
@@ -184,7 +185,8 @@ Each phase takes `--lane <lane>` and exactly one change:
 - `--schedule <true|false>`: change the lane's `LANE_SCHEDULE_ENABLED`. It keeps the running tag
   and writes the tracked compose at that tag.
 - `--add --tag sha-<40 hex>`: the lane's first start, on the resource HQ created. The tag must be
-  the served orchestrator tag.
+  the served orchestrator tag (in production; development mode takes any released commit,
+  "Development mode").
 - `--token`: redeploy the lane after the VM rotation executor wrote its `<LANE>_BWS_ACCESS_TOKEN`
   (ADR-0059 Amendment 2). It keeps the running tag, digest and schedule, writes the tracked compose
   at that tag, and writes no variable. It refuses a lane with no passed `--add`.

@@ -106,6 +106,8 @@ HEALTH_CHECK_FILES = ("Dockerfile", "docker-compose.yml")
 # is production, the stricter mode.
 DEPLOY_MODE_FILE = "deploy-mode.toml"
 DEVELOPMENT, PRODUCTION = "development", "production"
+# Spelled in full, so a local branch or tag named `origin/main` can't decide the mode.
+MAIN_TRACKING_REF = "refs/remotes/origin/main"
 
 # A restart in these states strands the unit with its attempt spent: its runner calls back at the
 # end of its run (#82). `draft` is reported but does not block, because a draft is inert across a
@@ -274,8 +276,8 @@ def deploy_mode(world: World) -> str:
     It fetches first, so a stale checkout can't keep a mode main has left, and a local edit
     can't change it. A failed fetch, or a missing, unreadable or malformed file, is production."""
     try:
-        _git(world, "fetch", "-q", "origin")
-        text = _git(world, "show", f"origin/main:{DEPLOY_MODE_FILE}")
+        _git(world, "fetch", "-q", "origin", f"+refs/heads/main:{MAIN_TRACKING_REF}")
+        text = _git(world, "show", f"{MAIN_TRACKING_REF}:{DEPLOY_MODE_FILE}")
         parsed = tomllib.loads(text)
     except Refused, OSError, subprocess.SubprocessError, ValueError:
         return PRODUCTION

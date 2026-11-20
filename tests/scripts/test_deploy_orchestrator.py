@@ -1430,3 +1430,25 @@ def test_recheck_in_development_still_checks_nothing_live_for_a_migration(
     migrated.production.ledger = [_ledger_row("claimed", "late")]
 
     assert _recheck(migrated) == EXIT_CONDITION
+
+
+def test_a_failed_fetch_is_production_even_when_the_tracking_ref_says_development(
+    h: Harness, tmp_path: Path
+) -> None:
+    _mode_at_main(h.repo, DEVELOPMENT)
+    assert deploy.deploy_mode(h.world()) == deploy.DEVELOPMENT
+    _git(h.repo.work, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+
+    assert (
+        _git(h.repo.work, "show", f"origin/main:{deploy.DEPLOY_MODE_FILE}") == DEVELOPMENT.strip()
+    )
+    assert deploy.deploy_mode(h.world()) == deploy.PRODUCTION
+
+
+def test_a_local_ref_named_origin_main_does_not_decide_the_mode(h: Harness) -> None:
+    here = _git(h.repo.work, "rev-parse", "HEAD")
+    _git(h.repo.work, "checkout", "-q", "-b", "origin/main")
+    _commit(h.repo.work, {deploy.DEPLOY_MODE_FILE: DEVELOPMENT}, "a local branch")
+    _git(h.repo.work, "checkout", "-q", here)
+
+    assert deploy.deploy_mode(h.world()) == deploy.PRODUCTION
