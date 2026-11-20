@@ -144,7 +144,8 @@ _DRIVER = """#!/bin/bash
 echo "envscan $0 $(env | grep -c "value-of-2f708d08" || true)" >> "$LANE_LOG"
 if [ "$1" = repositories ]; then
   echo "derive args=$* lane_token=${BWS_ACCESS_TOKEN:+set} \\
-socket=${SDS_SECRETS_SOCKET:+set} system=${ORCHESTRATOR_API_TOKEN:-} key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-}" >> "$LANE_LOG"
+socket=${SDS_SECRETS_SOCKET:+set} system=${ORCHESTRATOR_API_TOKEN:-} \\
+key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-}" >> "$LANE_LOG"
   if [ -n "${FAKE_DERIVE_RC:-}" ]; then
     echo "the member record could not be read: the orchestrator answered 503" >&2
     exit "$FAKE_DERIVE_RC"
