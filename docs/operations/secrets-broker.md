@@ -124,5 +124,5 @@ broker failed on a connection, and the lane sees no reply).
 ## What the broker doesn't change
 
 The 12 lanes already on the VPS, and every Mac launcher, keep their tokens and run unchanged. The
-broker's own token is the one BWS token that stays manual until Phase C; its registry row, added at
-the deploy step once the resource and its keeper secret exist, is `rotated_by_sds = false` until then.
+broker's own token is the one BWS token that stays manual until Phase C; its registry row,
+`secrets-broker-bws-token` in `.cred-consumers.toml`, is `rotated_by_sds = false` until then.

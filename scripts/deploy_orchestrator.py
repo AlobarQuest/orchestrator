@@ -1036,6 +1036,9 @@ STATEFUL_LANES = frozenset(
 LANE_TOKEN_KIND = "coolify-env"
 LANE_TOKEN_RESOURCE = "service"
 LANE_TOKEN_KEY = re.compile(r"^([A-Z][A-Z0-9_]*)_BWS_ACCESS_TOKEN$")
+# The secrets broker's token row (ADR-0055 amendment 30). It matches the key shape above but the
+# broker is not a lane: it is not in `LANE_CHECKS` and this command never plans it.
+BROKER_TOKEN_ID = "secrets-broker-bws-token"
 
 # The quiet slot: outside estate landing's 02:00 to 06:00 New York window
 # (`estate_lander/cli.py`, held equal by `test_the_landing_window_is_the_estate_landers`), and
@@ -1257,6 +1260,8 @@ def lanes_in_registry(text: str) -> set[str]:
         raise Refused(f"{CRED_CONSUMERS} at main has no credential array")
     found: list[str] = []
     for credential in credentials:
+        if isinstance(credential, dict) and credential.get("id") == BROKER_TOKEN_ID:
+            continue
         consumers = credential.get("consumer", []) if isinstance(credential, dict) else []
         for consumer in consumers if isinstance(consumers, list) else []:
             lane = _lane_of_token_consumer(consumer)

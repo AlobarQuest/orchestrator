@@ -1399,6 +1399,39 @@ healthchecks_check = "sds-inert-landing"
   uuid = "35557473-f80c-44e3-892a-b507013158b1"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The lane secrets broker's token (ADR-0055 amendment 30, item 8) ───────────────
+# The one BWS token that stays manual until Phase C: anything holding it reads for any lane, so it
+# is in the unlock tier. Devon minted it and pasted it into the Coolify variable on 2026-11-20, with
+# the keeper copy in Rotation / Keepers. The row is `rotated_by_sds = false`, so it has no
+# `rotate_requested` and falls to the manual checklist. No `created`, for the reason the landing
+# ledger's block gives.
+# Its reach is project-level for SDS Operator and SDS / Lane Apps, plus two single secrets in
+# Rotation / Keepers (change-manager/M2M_TOKEN_READ and inert-landing-ping-url). Devon's choice:
+# "Project by project", with single-secret grants in Rotation / Keepers so the broker can't read
+# every lane's keeper.
+[[credential]]
+id = "secrets-broker-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
+rotated_by_sds = false
+reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1"]
+reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a157-b4fd01259df8"]
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
+  note = "the keeper, in Rotation / Keepers; only the executor reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "wogvks6obmvv9fdotlgnw7r3"
+  key = "SECRETS_BROKER_BWS_ACCESS_TOKEN"
+  redeploy = false
+  note = "the sds-lane-secrets-broker service's variable; Devon pasted the token here on 2026-11-20"
+
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
