@@ -35,12 +35,15 @@
 # `factory` alone as PYTHONPATH. A claim that can't be produced refuses the decomposition. `factory`
 # runs on an allowlist of variables holding only the Brain keys as secrets (`cli.py`).
 #
-# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-3). A set `BWS_ACCESS_TOKEN` means the
-# lane's container: `lane-run` passes the lane's own token as its one secret, and the Mac's launchd
-# job never sets it. There the launcher skips activation (the container runs the image's own code),
-# reads no Keychain item and calls no `gh`, and reads the same five secrets with that one token, in
-# the environment, never as a process argument, each fatal as on the Mac, on every pass, plus the
-# read-only App's key (`314a966c-…`), piped straight into the mint. It mints
+# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-3). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret, and the Mac's launchd
+# job sets neither. There the launcher skips activation (the container runs the image's own code),
+# reads no Keychain item and calls no `gh`, and reads the same five secrets through the socket, or
+# with that one token in the environment, never as a process argument, each fatal as on the Mac,
+# on every pass, plus the read-only App's key (`314a966c-…`), piped straight into the mint. The
+# broker serves this lane only the UUIDs its allowlist lists
+# (`lanes/secrets-broker/allowlist.toml`), exactly the seven this launcher reads. It mints
 # `BUMP_DRIVER_GITHUB_TOKEN` from the read-only App, in place of `gh auth token`, for exactly the
 # repositories `bump-driver repositories` prints (the three clones and each `dependency_updates`
 # grant), with `metadata`, `pull_requests` and `contents`, read: a granted pull request's state
@@ -57,18 +60,20 @@
 # `mac_conformance.reported` event in the factory-events chain. Every container pass walks the
 # chain with `orchestrator.factory_chain_read`, under the read role, from the image's pinned
 # security-standards, as the work carrier does: the chain's three settings come from the compose
-# (a missing one fails the pass), and the read password (BWS `2f708d08-…`) is read with the lane's
-# token and passed to that walk alone, as an assignment prefix, never exported, never to `factory`,
-# git, the mint or the driver. The walk's verdict, its summary and its newest event (or the reason
+# (a missing one fails the pass), and the read password (BWS `2f708d08-…`) is read like the other
+# secrets and passed to that walk alone, as an assignment prefix, never exported, never to
+# `factory`, git, the mint or the driver. The walk's verdict, its summary and its newest event (or the reason
 # there is none) go to a file this pass owns, which the driver reads as `--conformance-facts`. The
 # driver judges it, holds a bump whose member reads it when it is unusable, and otherwise writes
 # the facts under `HOME` where project-standards' matrix reads them (`bump_driver/conformance.py`).
 # A walk that didn't verify is a hold with a keyed alert in the driver, not a failed pass: the
 # dispatches and merges of bumps already decomposed don't wait on the chain. It unsets
-# `BWS_ACCESS_TOKEN` before the clones and the driver run, and git's credential before the driver
-# runs. A missing `BUMP_DRIVER_STATE_DIR` fails the pass: the lock, the alerts and the mirrors must
-# be on the lane's volume. The container block runs the whole pass and exits, so everything after
-# it is the Mac's launchd job, unchanged until increment 6. Exit 1 there also covers a failed mint
+# `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` before the clones and the driver run, and git's
+# credential before the driver runs. The socket itself stays reachable, as the design accepts: the
+# driver already runs as the same user. A missing `BUMP_DRIVER_STATE_DIR` fails the pass: the
+# lock, the alerts and the mirrors must be on the lane's volume. The container block runs the
+# whole pass and exits, so everything after it is the Mac's launchd job, unchanged until
+# increment 6. Exit 1 there also covers a failed mint
 # or clone; a member record the repository list couldn't be read from exits 3.
 #
 # Usage:
@@ -92,10 +97,13 @@ READ_APP_ID="5684758"
 FACTORY_EVENTS_READ_UUID="2f708d08-ea5d-4d11-bde0-b50200c9a60b"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Sourced before activation, whose host test is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 # ACTIVATION: these launchers run the working copy, so a merged change is live here only once it
 # is pulled. Best-effort: the helper prints one `[activation]` line and returns 0 whatever it finds.
 # Skipped in the container, which runs the image's own code and has no `activate-checkout.sh`.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+if ! sds_in_lane_container; then
   _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
   if [ -r "$_SDS_ACTIVATE" ]; then
       # shellcheck source=/dev/null
@@ -117,16 +125,13 @@ done
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" bump-driver "$_acting"
 
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
 # ---- THE LANE'S CONTAINER (ADR-0059 increment 5, step 3g-3) -----------------------------------
-# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read takes the lane's one token from the
-# environment (`sds_bws_value` with one argument), so it never appears in a process argument, and
-# each secret is always read, never taken from the environment. Every failure is
-# `sds_outcome_fail`, which names it and pings `/fail` with it as the body.
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-  FROM=" (the lane's token)"
+# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read is `sds_bws_value` with one argument:
+# through the broker's socket, or with the lane's one token from the environment, so no token
+# appears in a process argument, and each secret is always read, never taken from the environment.
+# Every failure is `sds_outcome_fail`, which names it and pings `/fail` with it as the body.
+if sds_in_lane_container; then
+  FROM=" (the lane's socket or token)"
 
   # The compose sets it to the lane's volume (decision 1, "Lane state"). Without it the pass lock,
   # the alerts and the mirrors would go to this run's `HOME`, which `lane-run` discards, and two
@@ -136,8 +141,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   export BUMP_DRIVER_STATE_DIR
   # The clones, the shims and the Mac's conformance facts go under `HOME`, so it must be the new,
   # empty directory `lane-run` gives each pass. A run under a real `HOME` (a hand run with a BWS
-  # token exported) refuses here, before it reads a secret or writes over a checkout, a real
-  # `factory`, an infra-drift report, a LaunchAgent or a Claude settings file.
+  # token exported or a socket named) refuses here, before it reads a secret or writes over a
+  # checkout, a real `factory`, an infra-drift report, a LaunchAgent or a Claude settings file.
   for _written in Projects Developer .local infra-drift Library .claude; do
     if [ -e "$HOME/$_written" ]; then
       _why="it holds $_written, which the pass would write over"
@@ -189,8 +194,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # MINTS NOTHING: the subcommand exits 3 for an unreadable member record, as the pass would, and
   # its code is the pass's; its reason, its last stderr line, is in the failure's message.
   _DERIVE_ERR="$SDS_OUTCOME_REPORT.derive"
-  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/bump-driver" repositories \
-    2> "$_DERIVE_ERR")"
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+    "$REPO_ROOT/.venv/bin/bump-driver" repositories 2> "$_DERIVE_ERR")"
   derive_rc=$?
   _derive_reason="$(tail -n 1 "$_DERIVE_ERR")"
   rm -f -- "$_DERIVE_ERR"
@@ -208,15 +213,16 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
 
   # THE READ TOKEN IS MINTED EACH PASS, dry or acting. The App's key goes from the BWS read
   # straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a variable,
-  # an argument or a file, and the mint runs without the lane's token. Its permissions are what the
-  # pass's GitHub reads use: `metadata`, which every installation token carries; `pull_requests`,
-  # a granted pull request's state (`bump_driver/client.py`, `GitHub.pull_state`); and `contents`,
-  # the mirrors' clones and fetches (`bump_driver/mirror.py`) and decision 1's four clones. On the
-  # four cloned repositories the pass reads only `contents`, by the clone: no pull request read
-  # names one, since `GitHub.pull_state` asks only of a granted member's bump unit. The driver
-  # writes nothing to GitHub: it dispatches and lands through the orchestrator as SYSTEM.
+  # an argument or a file, and the mint runs without the lane's token or the socket's marker. Its
+  # permissions are what the pass's GitHub reads use: `metadata`, which every installation token
+  # carries; `pull_requests`, a granted pull request's state (`bump_driver/client.py`,
+  # `GitHub.pull_state`); and `contents`, the mirrors' clones and fetches (`bump_driver/mirror.py`)
+  # and decision 1's four clones. On the four cloned repositories the pass reads only `contents`,
+  # by the clone: no pull request read names one, since `GitHub.pull_state` asks only of a granted
+  # member's bump unit. The driver writes nothing to GitHub: it dispatches and lands through the
+  # orchestrator as SYSTEM.
   BUMP_DRIVER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+    | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
         --permission metadata=read --permission pull_requests=read --permission contents=read)"
   mint_rc=$?
@@ -225,8 +231,9 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   fi
   export BUMP_DRIVER_GITHUB_TOKEN
 
-  # EVERY BWS READ IS DONE, so the lane's token reaches neither git nor any program.
-  unset BWS_ACCESS_TOKEN
+  # EVERY BWS READ IS DONE, so neither the lane's token nor the socket's marker reaches git or any
+  # program.
+  unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
   # DECISION 1'S CLONES, shallow, at `main`, with the read token through git's environment, into
   # `$HOME/Projects/` and `$HOME/Developer/`: the Mac's paths, so `FACTORY_PYTHONPATH` is the Mac's

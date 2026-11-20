@@ -1082,10 +1082,12 @@ driver acts unless `--dry-run` is given. So the bare `lane-run bump-driver` is a
 once the lane is in `.claude/hq-gate-pass.json` an HQ cycle may run it out of schedule. The
 reporting run is `lane-run bump-driver --dry-run`, which acts on nothing and pings nothing.
 
-Its `.bws-secrets.toml` secrets are the following seven, all read with the lane's one token on every
-pass, each fatal if unreadable, the first six as on the Mac. Its ping-URL secret joins them when it exists; until
-then the compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane is in `test_deploy_lanes.py`'s
-`placeholders`.
+Its `.bws-secrets.toml` secrets are the following seven, all read through the lane secrets broker
+on every pass (ADR-0055 amendment 30; `docs/operations/secrets-broker.md`), each fatal if
+unreadable, the first six as on the Mac: the compose maps no token and mounts the lane's socket
+directory, and the broker's allowlist lists exactly these. Its ping-URL secret joins them, in the
+manifest and the allowlist, when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
+empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
 
 - The orchestrator SYSTEM bearer and the `sds-bridge` alert sender (read on a `--dry-run` pass
   too, which sends nothing).
@@ -1132,7 +1134,8 @@ its own change or act.
    it. A `--dry-run` pass never runs the generator, so the paired reporting runs of cut-over step 2
    can't show this. Amendment 13 needs these, as step 3g-3-inputs, before the acting pass:
    - Devon's acts: the read-only App installed on `AlobarQuest/code-standards` (`contents: read`),
-     and a read grant on the factory-events read password (`2f708d08-…`) to the lane account.
+     and a read grant on the factory-events read password (`2f708d08-…`). The amendment names the
+     lane account as its holder; on the broker the broker's account reads it (step 5).
    - security-standards: the nightly's adapter for the new event in `adapt --source all`, its
      `source.system` value in the event schema, and one credential-less registry agent. The names
      are HQ's proposals in the amendment (`mac_conformance.reported`, `mac-conformance-facts`).
@@ -1147,28 +1150,30 @@ its own change or act.
    - project-standards only if the materialized files can't reproduce the Mac's cells.
 2. The orchestrator serving this release; then HQ creates `sds-lane-bump-driver` from the compose
    without deploying it.
-3. The VM root's keeper commands for the lane token and `bump-driver-ping-url`.
-4. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
-   row. In the same work, a `runtime-fetch` reader for `scripts/run-bump-driver.sh` on the read App
-   key's row. The token's `reach_secrets` names the factory-events read password (`2f708d08-…`)
-   beside the other six.
-5. The lane account's grants on its six secrets and its ping-URL secret. The SYSTEM bearer
-   (`221a48d5-…`) and the alert sender (`b415d03b-…`) are in `SDS Operator`, read on the Mac as
-   `sds-operator`. The change-manager READ bearer (`314f276d-…`, `Rotation / Keepers`) and the two
-   Brain keys (`750f737f-…`, `da8134b0-…`, `Brains - Contributor`) are read by the broad identity
-   on the Mac and become direct grants to the lane account (Devon's act at the lane's identity
-   gate). The read App key (`314a966c-…`) is in `SDS / Lane Apps`. The factory-events read password
-   (`2f708d08-…`, `Factory Events`) is a read grant to the lane account, Devon's act (Amendment 13
-   decision item 7): until it is made, `lane-run --read` refuses that UUID and every container pass
-   fails on it.
+3. The VM root's keeper command for `bump-driver-ping-url`. The lane reads through the broker,
+   so it has no token of its own to keep.
+4. The ping URL's registry row in this repository. In the same work, a `runtime-fetch` reader for
+   `scripts/run-bump-driver.sh` on the read App key's row.
+5. The broker account's reads of the lane's seven secrets and its ping-URL secret
+   (`docs/operations/secrets-broker.md`, "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`)
+   and the alert sender (`b415d03b-…`) are in `SDS Operator`, the read App key (`314a966c-…`) is in
+   `SDS / Lane Apps`, and the change-manager READ bearer (`314f276d-…`) is in `Rotation / Keepers`,
+   all as for inert landing's entry. The two Brain keys (`750f737f-…`, `da8134b0-…`,
+   `Brains - Contributor`) and the factory-events read password (`2f708d08-…`, `Factory Events`)
+   are outside what the broker's account reads (`.cred-consumers.toml`, the
+   `secrets-broker-bws-token` row's reach), so each needs a grant to the broker's account, Devon's
+   act at the lane's cut-over gate: until each is made,
+   `lane-run --read` refuses that UUID and every container pass fails on it. The ping-URL secret is
+   in `Rotation / Keepers` too: check that the broker's account reads it at this step.
    Devon's other act comes before step 8's dry run: the read-only App's installation on
    `AlobarQuest/code-standards`, `contents: read` (Amendment 13 decision item 7). Until then the
    mint, which names code-standards, fails, and so does every container pass.
-6. The token's mint and the executor's write; then the ping URL's row made due and the executor's
-   write (ADR-0055 amendment 23).
+6. The ping URL's row made due and the executor's write (ADR-0055 amendment 23).
 7. A served release whose compose names the ping-URL secret's id, with `bump-driver` removed from
    `test_deploy_lanes.py`'s `placeholders`.
-8. The lane's `--add`, then the `lane-run --read` proof over all eight secrets and a
+8. The broker moved to a release whose allowlist lists the lane (`docs/operations/secrets-broker.md`,
+   "Move the broker to a new release") and its `listening` line for the lane; then the lane's
+   `--add`, then the `lane-run --read` proof over all eight secrets and a
    `lane-run bump-driver --dry-run` in the container. That run is the first read mint over the
    granted members and the four clones, so it proves the read App's installation covers each
    repository, and it proves the clones. It also walks the chain over the `coolify` network, and
