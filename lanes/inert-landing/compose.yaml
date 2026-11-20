@@ -10,10 +10,12 @@
 # The lane's token is the resource's own `INERT_LANDING_BWS_ACCESS_TOKEN` variable, which the VM
 # rotation executor writes; this file names it and never holds a value. With it the launcher reads
 # every secret the pass needs (`scripts/run-inert-landing.sh`, "TWO HOSTS, ONE LAUNCHER").
-# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
-# secret, `inert-landing-ping-url` in `Rotation / Keepers`, created at HQ gate G-78: an id, not a
-# secret and not the ping URL. While it's empty the dead-man helper
-# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `inert-landing-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
+# the lane's own token on every pass, the bare one included (`scripts/sds-deadman.sh`). The VM
+# rotation executor writes the URL there from its inbox; while the secret holds the inbox's empty
+# marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:
   inert-landing:
@@ -23,7 +25,7 @@ services:
       BWS_ACCESS_TOKEN: ${INERT_LANDING_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       LANDER_STATE_DIR: /var/lib/sds/inert-landing
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 35557473-f80c-44e3-892a-b507013158b1
     volumes:
       - sds-lanes-inert-landing-state:/var/lib/sds/inert-landing
     restart: unless-stopped

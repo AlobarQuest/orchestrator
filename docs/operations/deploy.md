@@ -903,9 +903,10 @@ is in the crontab line, so a scheduled pass asks for landings. The bare `lane-ru
 the reporting run, which asks for nothing, but this lane arms the dead-man switch, so a bare run
 pings its check (ADR-0059, "It pings the real check").
 
-Its `.bws-secrets.toml` secrets are the following four, all read with the lane's one token. Its
-ping-URL secret joins them when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
-empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following four, all read with the
+lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`inert-landing-ping-url`, which the container's dead-man helper reads the URL from on every pass
+(`scripts/sds-deadman.sh`).
 
 - On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer, and the read-only
   App's key.

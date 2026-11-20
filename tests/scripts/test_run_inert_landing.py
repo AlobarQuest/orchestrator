@@ -378,7 +378,7 @@ def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path
 def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
     """The container block exits, so every Keychain read and `gh` call after its closing `fi` is
     the Mac's. The dead-man helper's own Keychain read is reached only without a broad identity
-    and a ping-URL id, which the container's compose names once its secret exists."""
+    and a ping-URL id, which the container's compose names."""
     lines = LAUNCHER.read_text().splitlines()
     block = lines.index('if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then')
     end = lines.index("fi", block)
@@ -460,8 +460,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BWS_ACCESS_TOKEN": "${INERT_LANDING_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "LANDER_STATE_DIR": "/var/lib/sds/inert-landing",
-            # A placeholder until the lane's ping-URL secret exists.
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `inert-landing-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "35557473-f80c-44e3-892a-b507013158b1",
         },
         "volumes": ["sds-lanes-inert-landing-state:/var/lib/sds/inert-landing"],
         "restart": "unless-stopped",
@@ -505,11 +505,13 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 
 def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it: its four secrets. Its
-    ping-URL secret joins them when it exists. The launcher names each secret it reads."""
+    """The lane's `--token` proof reads what the manifest lists for it: its four secrets and its
+    ping-URL secret. The launcher names each secret it reads, except the ping-URL secret, whose id
+    reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "35557473-f80c-44e3-892a-b507013158b1"
     secrets = deploy.lane_secrets(manifest, "inert-landing")
-    assert sorted(secrets) == sorted(LANE_SECRETS)
+    assert sorted(secrets) == sorted([*LANE_SECRETS, ping_url_secret])
     launcher = LAUNCHER.read_text()
     for uuid in secrets:
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid
