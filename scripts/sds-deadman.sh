@@ -117,7 +117,9 @@ sds_deadman_resolve_by_uuid() {
     fi
     url="$(sds_bws_value "$SDS_DEADMAN_PING_URL_UUID" 2>"$errors" || true)"
     if [ "$errors" != /dev/null ]; then
-        case "$(tail -n 1 "$errors")" in
+        local line last=""
+        while IFS= read -r line; do last="$line"; done < "$errors"
+        case "$last" in
             *": not_allowed") code=not_allowed ;;
             *": bad_request") code=bad_request ;;
             *": bws_failed") code=bws_failed ;;
