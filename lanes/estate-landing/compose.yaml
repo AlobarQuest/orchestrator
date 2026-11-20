@@ -16,8 +16,9 @@
 # "TWO HOSTS, ONE LAUNCHER"), and the broker serves it only the UUIDs its entry in
 # `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
 # `ESTATE_LANDING_BWS_ACCESS_TOKEN` variable as a fallback, which this file maps to nothing.
-# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
-# and not the ping URL, which a later change writes here. While it's empty the dead-man helper
+# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
+# secret, `estate-landing-ping-url` in `Rotation / Keepers`, created at HQ gate G-81: an id, not a
+# secret and not the ping URL. While it's empty the dead-man helper
 # resolves no ping URL in the container and pings nothing; the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:

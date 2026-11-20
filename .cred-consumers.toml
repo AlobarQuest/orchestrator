@@ -1399,6 +1399,29 @@ healthchecks_check = "sds-inert-landing"
   uuid = "35557473-f80c-44e3-892a-b507013158b1"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The estate-landing lane's ping URL (ADR-0059 increment 5) ────────────────────
+# ADR-0055 amendment 19, item 8, for a lane on the secrets broker (amendment 30): estate landing
+# reads every secret through the broker's socket, so it has no token of its own and no token row,
+# and this is its one row. The keeper was created in Rotation / Keepers at HQ gate G-81 by the VM
+# root's keeper command, and the broker's account `lane-secrets-broker` holds a read grant on it,
+# that secret alone. Handed to the SDS but not yet due: a later change adds `rotate_requested`
+# (deploy.md, estate landing's cut-over item 5). No `created`, for the reason the landing ledger's
+# block gives.
+[[credential]]
+id = "estate-landing-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "11e940d7-e43a-4ebd-9026-b508017d9cef"
+rotated_by_sds = true
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-estate-landing"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "11e940d7-e43a-4ebd-9026-b508017d9cef"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id"
+
 # ── The lane secrets broker's token (ADR-0055 amendment 30, item 8) ───────────────
 # The one BWS token that stays manual until Phase C: anything holding it reads for any lane, so it
 # is in the unlock tier. Devon minted it and pasted it into the Coolify variable on 2026-11-20, with
@@ -1452,7 +1475,8 @@ reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a1
 # keys, the rotation proposer the push App's alone. Their accounts' grants, the first on the push
 # App's keeper, came at HQ gate G-75. The inert-landing lane's reader of the read App's key lands
 # with its registry rows (deploy.md, the inert lander's cut-over item 3), ahead of its account's
-# grant (item 4).
+# grant (item 4). The estate-landing lane's reader lands with its ping URL's row (deploy.md, estate
+# landing's cut-over item 3); it reads through the secrets broker, whose account's grant is item 4.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -1536,7 +1560,14 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   repo = "orchestrator"
   ref = "scripts/run-inert-landing.sh"
   healthchecks_check = "sds-inert-landing"
-  note = "read in the sds-lane-inert-landing container with the lane's own token, each pass (bare or --submit), and piped straight into sds-github-mint; pings sds-inert-landing every pass"
+  note = "read in the sds-lane-inert-landing container through the lane secrets broker, each pass (bare or --submit), and piped straight into sds-github-mint; pings sds-inert-landing every pass"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-estate-landing.sh"
+  healthchecks_check = "sds-estate-landing"
+  note = "read in the sds-lane-estate-landing container through the lane secrets broker, each pass (bare or --submit), and piped straight into sds-github-mint; pings sds-estate-landing every pass"
 
 [[credential]]
 id = "lanes-push-app-private-key"
