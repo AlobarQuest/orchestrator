@@ -1031,9 +1031,8 @@ its own change or act. It moves outside the 02:00 to 06:00 New York landing wind
    (`docs/operations/secrets-broker.md`, "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`),
    the alert sender (`b415d03b-…`) and the Coolify token (`f9f59233-…`) are in `SDS Operator`, the
    read App key (`314a966c-…`) is in `SDS / Lane Apps`, and the change-manager READ bearer
-   (`314f276d-…`) and the ping-URL secret are in `Rotation / Keepers`. The broker's account reads
-   project by project (ADR-0055 amendment 30), and inert landing's entry already needs each of
-   these three projects.
+   (`314f276d-…`) is in `Rotation / Keepers`, all as for inert landing's entry. The ping-URL
+   secret is in `Rotation / Keepers` too: check that the broker's account reads it at this step.
 5. The ping URL's row made due and the executor's write (ADR-0055 amendment 23).
 6. A served release whose compose names the ping-URL secret's id, with `estate-landing` removed
    from `test_deploy_lanes.py`'s `placeholders`.
