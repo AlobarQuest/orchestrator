@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 import pytest
+import yaml
 
 from scripts import deploy_orchestrator as deploy
 from scripts.deploy_orchestrator import (
@@ -1172,6 +1173,11 @@ ALLOWLIST = f'[lanes.execution-watch]\nread = ["{OBSERVER}"]\n'
 OTHER_ALLOWLIST = f'[lanes.inert-landing]\nread = ["{OBSERVER}"]\n'
 
 
+def _compose(service: dict[str, Any]) -> str:
+    """A compose holding `service` as the execution-watch lane's."""
+    return yaml.safe_dump({"services": {"execution-watch": service}})
+
+
 def test_a_broker_lane_needs_its_own_bind_and_an_allowlist_entry() -> None:
     service = deploy.lane_service(BROKER_COMPOSE, "execution-watch")
     allowlist = {"execution-watch": frozenset({OBSERVER})}
@@ -1193,9 +1199,9 @@ def test_a_broker_lane_needs_its_own_bind_and_an_allowlist_entry() -> None:
             "volumes": [v if v != BROKER_BIND else wrong for v in service["volumes"]],
         }
         assert not deploy.broker_lane(mounted, "execution-watch", allowlist), wrong
-        refused = deploy.add_refusals(mounted, "execution-watch", allowlist)
-        assert len(refused) == 2 and refused[0] == refusal, wrong
-        assert "stray mount of the secrets broker's directory" in refused[1], wrong
+        assert deploy.add_refusals(mounted, "execution-watch", allowlist) == [refusal], wrong
+        [stray] = deploy.compose_broker_refusals(_compose(mounted), "execution-watch")
+        assert "stray mount of the secrets broker's directory" in stray, wrong
     # A compose that maps its token is a token lane, whatever the allowlist says.
     token_lane = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
     assert not deploy.broker_lane(token_lane, "execution-watch", allowlist)
@@ -1226,20 +1232,19 @@ def test_any_other_mount_of_the_broker_directory_is_refused(extra: object) -> No
     beside = {**service, "volumes": [*service["volumes"], extra]}
     assert deploy.stray_broker_mounts(beside, "execution-watch") == [extra]
     assert not deploy.broker_lane(beside, "execution-watch", allowlist)
-    refusals = deploy.add_refusals(beside, "execution-watch", allowlist)
-    assert any("stray mount of the secrets broker's directory" in r for r in refusals), refusals
-
     token_lane = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
     token_lane = {**token_lane, "volumes": [*token_lane["volumes"], extra]}
-    [refusal] = deploy.add_refusals(token_lane, "execution-watch")
-    assert "stray mount of the secrets broker's directory" in refusal
+    # `/` and an unreadable entry reach the docker socket too, so that refusal may join it.
+    for mounted in (beside, token_lane):
+        refusals = deploy.compose_broker_refusals(_compose(mounted), "execution-watch")
+        assert "stray mount of the secrets broker's directory" in refusals[0], refusals
 
 
 def test_a_token_lane_mounts_none_of_the_broker_directory() -> None:
     token_lane = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
     token_lane = {**token_lane, "volumes": [*token_lane["volumes"], BROKER_BIND]}
     assert deploy.stray_broker_mounts(token_lane, "execution-watch") == [BROKER_BIND]
-    [refusal] = deploy.add_refusals(token_lane, "execution-watch")
+    [refusal] = deploy.compose_broker_refusals(_compose(token_lane), "execution-watch")
     assert "stray mount of the secrets broker's directory" in refusal
 
 
@@ -1401,3 +1406,102 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     } <= set(named), named
     for lane, uuid in named.items():
         assert uuid in deploy.lane_secrets(manifest, lane), lane
+
+
+# ---- the broker review follow-ups (R1, R2, R4, R6) -----------------------------------------
+
+
+def test_a_broker_lanes_token_run_is_refused_at_plan_time(lanes: Lanes) -> None:
+    sha = _broker_commit(lanes, BROKER_COMPOSE, ALLOWLIST)
+    change = ("--add", "--tag", tag(sha))
+    assert lanes.add("execution-watch", sha) == EXIT_OK
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    reads = (*_watch_reads(sha), "--token-present", "false")
+    assert lanes.finish("execution-watch", *change, *reads) == EXIT_OK
+    running = ["--running-tag", tag(sha), "--running-volume", WATCH_VOLUME]
+    assert lanes.main("lanes-prepare", "--lane", "execution-watch", "--token", *running) == (
+        EXIT_REFUSED
+    )
+    assert "a broker lane has no token; its --token run is not supported" in (
+        lanes.runs("execution-watch")[-1].reason
+    )
+
+
+def _failing_git(stderr: str, failing: str):
+    def run(argv, *, env=None, timeout=600):
+        if failing in argv:
+            return subprocess.CompletedProcess(argv, 128, "", stderr)
+        return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+    return run
+
+
+def test_the_allowlist_is_empty_only_when_the_commit_has_no_file(lanes: Lanes) -> None:
+    service = deploy.lane_service(BROKER_COMPOSE, "execution-watch")
+    world = lanes.world()
+    # The fixture's commits hold no allowlist: no broker lane, no refusal.
+    assert deploy._broker_allowlist(world, lanes.added, service) == {}
+    sha = _broker_commit(lanes, BROKER_COMPOSE, ALLOWLIST)
+    assert deploy._broker_allowlist(world, sha, service) == {
+        "execution-watch": frozenset({OBSERVER})
+    }
+    # Any other git failure is named, never read as "no broker lane".
+    for failing in ("ls-tree", "show"):
+        broken = World(**{**world.__dict__, "run": _failing_git("fatal: bad object", failing)})
+        with pytest.raises(deploy.Refused, match="fatal: bad object"):
+            deploy._broker_allowlist(broken, sha, service)
+
+
+def test_a_tag_change_carrying_a_stray_broker_mount_is_refused(lanes: Lanes) -> None:
+    lanes.added_watch()
+    compose = WATCH_COMPOSE.replace(STATE_LINE, STATE_LINE + "      - /data/sds/broker:/mnt/x:ro\n")
+    sha = _commit(lanes.work, {"lanes/execution-watch/compose.yaml": compose}, "a stray mount")
+    _git(lanes.work, "push", "-q", "origin", "main")
+    lanes.served = lanes.later = sha
+    assert lanes.prepare_tag("execution-watch", sha) == EXIT_REFUSED
+    assert (
+        "stray mount of the secrets broker's directory" in lanes.runs("execution-watch")[-1].reason
+    )
+
+
+def _sidecar(lines: str) -> str:
+    """BROKER_COMPOSE with a second service holding `lines`."""
+    return BROKER_COMPOSE.replace(
+        "\nvolumes:\n", f"  sidecar:\n    image: busybox\n{lines}\nvolumes:\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("compose", "named"),
+    [
+        (_sidecar("    volumes:\n      - /data/sds/broker:/b\n"), "stray mount"),
+        (_sidecar(f"    volumes:\n      - {BROKER_BIND}\n"), "stray mount"),
+        (_sidecar("    volumes_from:\n      - execution-watch\n"), "volumes_from"),
+        (_sidecar("    privileged: true\n"), "privileged"),
+        (_sidecar("    volumes:\n      - /var/run/docker.sock:/d.sock\n"), "docker socket"),
+        (_sidecar("    volumes:\n      - /run/docker.sock:/d.sock\n"), "docker socket"),
+        (
+            BROKER_COMPOSE
+            + "  sneaky:\n    driver_opts:\n      type: none\n      o: bind\n"
+            + "      device: /data/sds/broker/inert-landing\n",
+            "named volume",
+        ),
+    ],
+    ids=[
+        "sidecar-bind",
+        "sidecar-own-bind",
+        "volumes-from",
+        "privileged",
+        "docker-sock",
+        "run-docker-sock",
+        "named-volume-device",
+    ],
+)
+def test_every_other_route_to_the_broker_directory_is_refused(compose: str, named: str) -> None:
+    refusals = deploy.compose_broker_refusals(compose, "execution-watch")
+    assert any(named in refusal for refusal in refusals), refusals
+
+
+def test_a_clean_broker_compose_has_no_broker_route_refusal() -> None:
+    assert deploy.compose_broker_refusals(BROKER_COMPOSE, "execution-watch") == []
+    assert deploy.compose_broker_refusals(WATCH_COMPOSE, "execution-watch") == []

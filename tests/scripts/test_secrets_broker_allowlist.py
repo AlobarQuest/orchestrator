@@ -71,11 +71,14 @@ def test_every_tokenless_lane_is_allowlisted_and_mounts_its_socket() -> None:
 
 def test_no_compose_mounts_the_broker_directory_beyond_its_own_lanes_bind() -> None:
     """Each lane's service may mount only `/data/sds/broker/<its lane>:/run/sds-broker:ro` (a token
-    lane none), and no other service any of it: the socket a lane reaches is its identity."""
+    lane none), and no other service any of it: the socket a lane reaches is its identity. No
+    other route reaches it either (`volumes_from`, a privileged service, the Docker socket, a
+    named volume's device): the deploy check's own rule, over every tracked compose."""
     for compose in sorted(Path("lanes").glob("*/compose.yaml")):
         lane = compose.parent.name
         if lane == BROKER:
             continue
+        assert deploy.compose_broker_refusals(compose.read_text(), lane) == [], lane
         services = yaml.safe_load(compose.read_text())["services"]
         for name, service in services.items():
             own = f"/data/sds/broker/{lane}:/run/sds-broker:ro"

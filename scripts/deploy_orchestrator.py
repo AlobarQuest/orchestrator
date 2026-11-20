@@ -1402,35 +1402,102 @@ def lane_service(compose: str, lane: str) -> dict[str, Any]:
     return service
 
 
-def _reaches_broker(entry: object) -> bool:
-    """The volume entry's host source is `BROKER_ROOT`, under it, or above it. An entry the rule
-    can't read (an interpolated or non-string source, a relative path climbing with `..`, an
-    entry neither a string nor a mapping) counts as reaching it: the check fails closed."""
+# The Docker daemon's sockets: a container holding one can mount anything, the broker's
+# directory included.
+DOCKER_SOCKETS = ("/var/run/docker.sock", "/run/docker.sock")
+_NO_SOURCE, _UNREADABLE = object(), object()
+
+
+def _volume_source(entry: object) -> object:
+    """A service volume entry's host source: a string as written, `_NO_SOURCE` for a tmpfs or an
+    anonymous volume, or anything else the entry holds (`_UNREADABLE` for a non-mapping)."""
     if isinstance(entry, str):
-        source: object = entry.partition(":")[0]
-    elif isinstance(entry, dict):
-        if "source" not in entry:
-            return False  # a tmpfs or an anonymous volume
-        source = entry["source"]
-    else:
-        return True
+        return entry.partition(":")[0]
+    if isinstance(entry, dict):
+        return entry["source"] if "source" in entry else _NO_SOURCE
+    return _UNREADABLE
+
+
+def _reaches(source: object, target: str) -> bool:
+    """The host source is `target`, under it, or above it. A source the rule can't read (not a
+    string, interpolated, or a relative path climbing with `..`) counts as reaching it: the
+    check fails closed. A named volume or `./x` reaches nothing."""
+    if source is _NO_SOURCE:
+        return False
     if not isinstance(source, str) or "$" in source:
         return True
     if not source.startswith("/"):
         return ".." in source.split("/")
     path = "/" + posixpath.normpath(source).lstrip("/")
     return (
-        path == BROKER_ROOT
-        or path.startswith(BROKER_ROOT + "/")
-        or BROKER_ROOT.startswith(path.rstrip("/") + "/")
+        path == target or path.startswith(target + "/") or target.startswith(path.rstrip("/") + "/")
     )
+
+
+def _stray(volumes: list[Any], own: str | None) -> list[object]:
+    return [v for v in volumes if v != own and _reaches(_volume_source(v), BROKER_ROOT)]
 
 
 def stray_broker_mounts(service: dict[str, Any], lane: str) -> list[object]:
     """Each volume entry of the service reaching the broker's directory, other than a tokenless
     lane's own bind, exactly `LANE_BROKER_BIND`. A lane that maps its token mounts none of it."""
     own = None if TOKEN_VARIABLE in _environment(service) else LANE_BROKER_BIND.format(lane=lane)
-    return [v for v in service.get("volumes") or [] if v != own and _reaches_broker(v)]
+    return _stray(service.get("volumes") or [], own)
+
+
+def _service_broker_routes(name: str, service: object, lane: str) -> list[str]:
+    """Why one compose service could reach the broker's directory beyond its lane's own bind."""
+    if not isinstance(service, dict):
+        return [f"service {name!r} is unreadable"]
+    volumes = service.get("volumes") or []
+    if not isinstance(volumes, list):
+        return [f"service {name!r} has unreadable volumes"]
+    own = name == lane and TOKEN_VARIABLE not in _environment(service)
+    stray = _stray(volumes, LANE_BROKER_BIND.format(lane=lane) if own else None)
+    routes = []
+    if stray:
+        routes.append(
+            f"service {name!r} holds a stray mount of the secrets broker's directory "
+            f"{BROKER_ROOT}: {', '.join(repr(v) for v in stray)}; a broker lane mounts only "
+            f"{LANE_BROKER_BIND.format(lane=lane)!r} of it, and a token lane none"
+        )
+    if "volumes_from" in service:
+        routes.append(f"service {name!r} uses volumes_from, which could carry another's mounts")
+    if service.get("privileged") not in (None, False):
+        routes.append(f"service {name!r} is privileged, so it could mount the host's directories")
+    sockets = [
+        v
+        for v in volumes
+        if any(_reaches(_volume_source(v), socket_path) for socket_path in DOCKER_SOCKETS)
+    ]
+    if sockets:
+        routes.append(f"service {name!r} mounts the docker socket: {sockets!r}")
+    return routes
+
+
+def compose_broker_refusals(compose: str, lane: str) -> list[str]:
+    """Every route in a lane's compose to the secrets broker's directory other than the lane's
+    own bind, on any service: a stray mount, `volumes_from`, a privileged service, the Docker
+    socket, or a top-level named volume whose `driver_opts` device reaches it. Each planned
+    change checks this, whatever its kind."""
+    document = yaml.safe_load(compose)
+    services = document.get("services") if isinstance(document, dict) else None
+    if not isinstance(services, dict):
+        return ["the compose has no readable services"]
+    refusals = [r for n, svc in services.items() for r in _service_broker_routes(n, svc, lane)]
+    named = document.get("volumes") or {}
+    if not isinstance(named, dict):
+        return [*refusals, "the compose's top-level volumes are unreadable"]
+    for name, spec in named.items():
+        # A bare name (None) has no options; a spec or options that aren't mappings fail closed.
+        options = ((spec or {}).get("driver_opts") or {}) if isinstance(spec, dict | None) else None
+        device = options.get("device", _NO_SOURCE) if isinstance(options, dict) else _UNREADABLE
+        if _reaches(device, BROKER_ROOT):
+            refusals.append(
+                f"named volume {name!r} binds {device!r}, which reaches the secrets broker's "
+                f"directory {BROKER_ROOT}"
+            )
+    return refusals
 
 
 def broker_lane(service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]]) -> bool:
@@ -1452,10 +1519,10 @@ def _broker_allowlist(
     one names no broker lane, so that compose is refused as a lane with no token is."""
     if TOKEN_VARIABLE in _environment(service):
         return {}
-    try:
-        text = _git(world, "show", f"{commit}:{BROKER_ALLOWLIST}")
-    except Refused:
+    # Only a missing file means "no broker lane"; any other git failure is refused as itself.
+    if not _git(world, "ls-tree", "--name-only", commit, "--", BROKER_ALLOWLIST).strip():
         return {}
+    text = _git(world, "show", f"{commit}:{BROKER_ALLOWLIST}")
     try:
         return parse_allowlist(text, f"{BROKER_ALLOWLIST} at {commit}")
     except AllowlistError as error:
@@ -1481,13 +1548,6 @@ def add_refusals(
         refusals.append(
             f"it maps no {TOKEN_VARIABLE} as {mapped!r}, and it is no broker lane: one that "
             f"mounts {LANE_BROKER_BIND.format(lane=lane)!r} and that {BROKER_ALLOWLIST} lists"
-        )
-    stray = stray_broker_mounts(service, lane)
-    if stray:
-        refusals.append(
-            f"it holds a stray mount of the secrets broker's directory {BROKER_ROOT}: "
-            f"{', '.join(repr(v) for v in stray)}; a broker lane mounts only "
-            f"{LANE_BROKER_BIND.format(lane=lane)!r} of it, and a token lane none"
         )
     if lane in STATEFUL_LANES and _state_volume(service, lane) is None:
         refusals.append(f"it mounts no named volume at {LANE_STATE_MOUNT.format(lane=lane)}")
@@ -1594,11 +1654,18 @@ def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneR
     service = lane_service(run.compose_sent, lane)
     allowlist = _broker_allowlist(world, run.commit, service)
     run.brokered = broker_lane(service, lane, allowlist)
+    refusals = compose_broker_refusals(run.compose_sent, lane)
     if change.kind == "add":
-        refusals = add_refusals(service, lane, allowlist)
-        if refusals:
-            raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
+        refusals += add_refusals(service, lane, allowlist)
+    if refusals:
+        raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
+    if change.kind == "add":
         run.volume_slug = _state_volume(service, lane) or ""
+    if change.kind == "token" and run.brokered:
+        raise Refused(
+            f"lane {lane}: a broker lane has no token; its --token run is not supported "
+            "(ADR-0055 a30 item 10)"
+        )
     if change.kind == "token":
         manifest = _git(world, "show", f"{run.commit}:{SECRETS_MANIFEST}")
         run.read_uuids = lane_secrets(manifest, lane)
