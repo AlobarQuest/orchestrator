@@ -74,9 +74,11 @@ change is `0bf973b2`, and this report's commits follow it.
 
 ## Tests and checks
 
-- `make check` against `orchestrator_test_hq_w_249` passed: **14,839 passed, 1 skipped**, and all
-  lint checks passed. Exit code 0.
-- Security scan from the repo root (`--category security`): **0 BLOCK, 2 WARN, 1 INFO**. Both
+- `make check` against `orchestrator_test_hq_w_249` passed at `be110ee1`, a clean tree with this
+  report in it: **14,839 passed, 1 skipped**, and all lint checks passed. Exit code 0. The commit
+  after it changes only this paragraph. A first run at `91642bc2`, before the review fixes and
+  without the report, gave the same counts.
+- Security scan from the repo root (`--category security`), at `be110ee1`: **0 BLOCK, 2 WARN, 1 INFO**. Both
   WARNs are in files this diff doesn't touch: an uncovered `*-migration/` glob, and an undeclared
   UUID `aaff45ca-…` in code. The INFO is the standing judgment item.
 - `code-standards risk --repo .`: `normal`, so no vendor review was needed.
