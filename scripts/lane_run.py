@@ -35,9 +35,20 @@ and needs no token; otherwise, under the same environment, it runs one
 reaches each child through its environment alone. A mounted socket is never bypassed for `bws`,
 so a broken broker shows as `refused`.
 
+A broker lane can find its mount in two broken states, and neither falls back to the token:
+
+- A stale socket: `/run/sds-broker/broker.sock` is a socket file but nothing listens (the broker
+  is down). The marker is set as usual; each read through it fails, as a failed `bws` read does,
+  and `--read` prints `<uuid> refused` with "no value from the secrets broker".
+- A missing socket: the mount directory `/run/sds-broker` exists but holds no socket (the broker
+  never started on that host directory). lane-run starts no launcher and exits 2 with "broker
+  socket missing at ..."; `--read` prints `<uuid> refused` with the same message for each UUID.
+
+A token lane mounts no such directory, so neither applies to it.
+
 Exit codes: a launcher run exits with the launcher's own code. `--read` exits 0 when every read
-is `ok` and 1 when any is `refused`. A usage error, an unknown lane, or, with no socket, a missing
-token or a missing `bws` for `--read`, exits 2.
+is `ok` and 1 when any is `refused`. A usage error, an unknown lane, a missing broker socket for a
+launcher run, or, with no socket mount, a missing token or a missing `bws` for `--read`, exits 2.
 """
 
 from __future__ import annotations
@@ -108,12 +119,23 @@ def _fail(message: str) -> int:
     return EXIT_USAGE
 
 
+def missing_socket(broker: Path) -> str | None:
+    """Why the broker can't be reached, when its mount directory (`broker`'s parent) exists but
+    holds no socket; None otherwise. A token lane has no such directory, so this is never its
+    case. A socket file nothing listens on is a stale socket instead: it fails at the read."""
+    if broker.parent.is_dir() and not broker.is_socket():
+        return f"broker socket missing at {broker}"
+    return None
+
+
 def run_launcher(
     lane: str, arguments: Sequence[str], source: Mapping[str, str], broker: Path = BROKER_SOCKET
 ) -> int:
     launcher = LAUNCHER_DIR / f"run-{lane}.sh"
     if not LANE.match(lane) or not launcher.is_file():
         return _fail(f"no launcher for lane {lane!r} at {launcher}")
+    if (missing := missing_socket(broker)) is not None:
+        return _fail(missing)
     with tempfile.TemporaryDirectory(prefix="lane-run-") as home:
         completed = subprocess.run(
             [str(launcher), *arguments], env=lane_environment(source, home, broker), check=False
@@ -142,12 +164,14 @@ def read_from_socket(path: Path, uuid: str) -> str | None:
 
 
 def _read_through_broker(uuids: Sequence[str], broker: Path) -> int:
+    missing = missing_socket(broker)
     refused = False
     for uuid in uuids:
-        if read_from_socket(broker, uuid) is None:
+        if missing is not None or read_from_socket(broker, uuid) is None:
             refused = True
             print(f"{uuid} refused")
-            print(f"lane-run: no value from the secrets broker for {uuid}", file=sys.stderr)
+            why = missing or f"no value from the secrets broker for {uuid}"
+            print(f"lane-run: {why}", file=sys.stderr)
         else:
             print(f"{uuid} ok")
     return EXIT_REFUSED if refused else EXIT_OK
@@ -161,7 +185,7 @@ def read_secrets(
     malformed = [uuid for uuid in uuids if not UUID.match(uuid)]
     if malformed:
         return _fail(f"not a BWS secret UUID: {', '.join(malformed)}")
-    if broker.is_socket():
+    if broker.is_socket() or missing_socket(broker) is not None:
         return _read_through_broker(uuids, broker)
     if not source.get(TOKEN):
         return _fail(f"{TOKEN} is not set in this container; nothing can be read")

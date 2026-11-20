@@ -283,24 +283,56 @@ def test_lane_run_sets_the_marker_only_when_the_socket_exists(
     lane: Lane, dead_socket: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(lane_run, "LAUNCHER_DIR", lane.scripts)
-    regular = lane.root / "regular"
-    regular.write_text("")
     # A marker in the container's own environment is never what decides.
     source = {"BWS_ACCESS_TOKEN": TOKEN_VALUE, "SDS_SECRETS_SOCKET": str(dead_socket)}
 
     seen = {}
-    for name, path in (
-        ("socket", dead_socket),
-        ("missing", lane.root / "missing.sock"),
-        ("regular", regular),
-    ):
+    # A token lane: no broker mount, so neither the directory nor the socket exists.
+    for name, path in (("socket", dead_socket), ("unmounted", lane.root / "none" / "broker.sock")):
         assert lane_run.main(["example"], source, broker=path) == 7
         seen[name] = lane.launcher_saw()["env"]
 
     assert seen["socket"]["SDS_SECRETS_SOCKET"] == str(dead_socket)
-    assert "SDS_SECRETS_SOCKET" not in seen["missing"]
-    assert "SDS_SECRETS_SOCKET" not in seen["regular"]
+    assert "SDS_SECRETS_SOCKET" not in seen["unmounted"]
     assert seen["socket"]["BWS_ACCESS_TOKEN"] == TOKEN_VALUE
+
+
+@pytest.mark.parametrize("held", ["nothing", "a regular file"])
+def test_a_mounted_directory_without_its_socket_fails_the_launcher(
+    lane: Lane, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, held: str
+) -> None:
+    """The broker's mount is there but holds no socket (the broker never started on this host
+    directory): an explicit failure, never the token's path, even with a token set."""
+    monkeypatch.setattr(lane_run, "LAUNCHER_DIR", lane.scripts)
+    mount = tmp_path / "sds-broker"
+    mount.mkdir()
+    if held == "a regular file":
+        (mount / "broker.sock").write_text("")
+    source = {"BWS_ACCESS_TOKEN": TOKEN_VALUE}
+
+    code = lane_run.main(["example"], source, broker=mount / "broker.sock")
+    _, err = capsys.readouterr()
+
+    assert code == lane_run.EXIT_USAGE
+    assert err == f"lane-run: broker socket missing at {mount / 'broker.sock'}\n"
+    assert not (lane.record / "launcher.json").exists(), "the launcher never starts"
+
+
+def test_read_proof_with_a_mounted_directory_but_no_socket_refuses_without_bws(
+    lane: Lane, tmp_path: Path, capsys
+) -> None:
+    mount = tmp_path / "sds-broker"
+    mount.mkdir()
+    source = {"PATH": f"{lane.bin}:/usr/bin:/bin", "BWS_ACCESS_TOKEN": TOKEN_VALUE}
+
+    code = lane_run.main(["--read", GOOD, BAD], source, broker=mount / "broker.sock")
+    out, err = capsys.readouterr()
+
+    assert code == lane_run.EXIT_REFUSED
+    assert out.splitlines() == [f"{GOOD} refused", f"{BAD} refused"]
+    missing = f"lane-run: broker socket missing at {mount / 'broker.sock'}"
+    assert err.splitlines() == [missing, missing]
+    assert not (lane.record / "bws-argv").exists(), "never the token's path"
 
 
 @pytest.mark.parametrize("token", [None, TOKEN_VALUE])
