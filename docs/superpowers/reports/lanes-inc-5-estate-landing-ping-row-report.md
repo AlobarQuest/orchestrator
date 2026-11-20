@@ -2,8 +2,8 @@ Outcome: done
 
 # Report: estate landing's ping-URL registry row (W-250)
 
-PR: #PR_NUMBER, branch `hq/lanes-inc-5-estate-landing-ping-row`, base `origin/main` at `262cc34c`
-(confirmed at dispatch: `git fetch` then `git log -1 origin/main`). Ready for review, not merged.
+PR: #765, branch `hq/lanes-inc-5-estate-landing-ping-row`, base `origin/main` at `262cc34c`
+(confirmed at dispatch: `git fetch` then `git log -1 origin/main`). Opened ready for review, not merged. The code head is `2e294d96`; this report commit follows it.
 
 ## What I built
 
