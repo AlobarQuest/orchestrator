@@ -132,6 +132,9 @@ don't block this PR, and the PR body says so.
 - After the last code commit (`7a9f5d02`), I reran `test_run_bump_driver.py`, `test_launcher.py`,
   and `test_secrets_broker_allowlist.py` (82 passed) and shellcheck (clean). It changed only a
   comment and doc text, so I didn't rerun the full `make check`.
+- CI on `8accb69d` (run 44826295987): Quality, Runner consumer compatibility, and Rollout
+  transcription currency all pass. Quality collected 14,840 items: 14,814 passed and 26 skipped.
+  The only commit after it is this CI line in the report.
 
 ## Files changed
 
