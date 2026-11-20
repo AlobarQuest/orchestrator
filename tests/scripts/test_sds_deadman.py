@@ -700,7 +700,10 @@ def test_a_ping_url_uuid_without_a_lane_token_disables_the_pings(
 ) -> None:
     rc, pings, output, bws = _by_uuid(tmp_path, bin_stubs, exit_code=0, BWS_ACCESS_TOKEN="")
     assert (rc, pings, bws) == (0, [], "")
-    assert "SDS_DEADMAN_PING_URL_UUID is set but BWS_ACCESS_TOKEN is not" in output
+    assert (
+        "SDS_DEADMAN_PING_URL_UUID is set but neither BWS_ACCESS_TOKEN nor a broker socket is "
+        "available"
+    ) in output
 
 
 def test_deadman_resolves_through_the_socket_without_a_token(

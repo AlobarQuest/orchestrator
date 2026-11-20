@@ -104,7 +104,8 @@ sds_deadman_log() {
 sds_deadman_resolve_by_uuid() {
     local url secret="the ping-URL secret $SDS_DEADMAN_PING_URL_UUID"
     if ! sds_in_lane_container; then
-        SDS_DEADMAN_REASON="SDS_DEADMAN_PING_URL_UUID is set but BWS_ACCESS_TOKEN is not"
+        SDS_DEADMAN_REASON="SDS_DEADMAN_PING_URL_UUID is set but neither BWS_ACCESS_TOKEN nor"
+        SDS_DEADMAN_REASON+=" a broker socket is available"
         return 0
     fi
     url="$(sds_bws_value "$SDS_DEADMAN_PING_URL_UUID" 2>/dev/null || true)"

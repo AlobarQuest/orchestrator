@@ -1,7 +1,8 @@
 """`scripts/run-inert-landing.sh` in the lane's container and on the Mac, and the lane's files.
 
 The real launcher runs under `env -i` from a throwaway tree, with what `lane-run` passes it in the
-container: the lane's token as `BWS_ACCESS_TOKEN`, the state directory, `PATH` and `HOME`. `bws`,
+container: the lane's token as `BWS_ACCESS_TOKEN` (or, on the secrets broker, `SDS_SECRETS_SOCKET`
+naming a stand-in broker's socket, `conftest.py`'s), the state directory, `PATH` and `HOME`. `bws`,
 `gh` and `curl` are stubs on PATH. In the venv, `inert-landing` and `sds-github-mint` are stubs that
 log what reached them, and `python` is the real interpreter (`sds-bws.sh` parses BWS's JSON with
 it). On the Mac, `scripts/sds-token.sh` is a stub that exports a stand-in, and the broad identity
@@ -62,6 +63,7 @@ _CURL = '#!/bin/sh\necho "curl $*" >> "$PING_LOG"\nexit 1\n'
 _LANDER = """#!/bin/bash
 if [ "$1" = repositories ]; then
   echo "derive args=$* lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set} \\
 cm=${INERT_LANDING_CHANGE_MANAGER_TOKEN:-} system=${INERT_LANDING_ORCHESTRATOR_TOKEN:-}" \\
     >> "$LANE_LOG"
   if [ -n "${FAKE_DERIVE_RC:-}" ]; then
@@ -80,7 +82,8 @@ exit "${FAKE_LANDER_RC:-0}"
 """
 _MINT = """#!/bin/bash
 key="$(cat)"
-echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
 echo "%s"
 """
@@ -309,7 +312,7 @@ def test_the_mint_names_the_derived_repositories_and_two_read_permissions(tmp_pa
         f"mint args=--app-id 5684758 {targets}"
         " --permission metadata=read --permission pull_requests=read"
         # The key reaches the mint undecoded, in the form BWS holds it, without the lane's token.
-        f" key={value(READ_APP_KEY_UUID)} lane_token="
+        f" key={value(READ_APP_KEY_UUID)} lane_token= socket="
     ]
 
 
@@ -317,7 +320,7 @@ def test_the_list_is_derived_from_the_policy_credential_alone(tmp_path: Path) ->
     """Without the lane's token, and before the SYSTEM bearer is read."""
     run = _run(tmp_path)
     assert run.lines("derive") == [
-        f"derive args=repositories lane_token= cm={value(READ_UUID)} system="
+        f"derive args=repositories lane_token= socket= cm={value(READ_UUID)} system="
     ]
 
 
@@ -375,12 +378,72 @@ def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path
     assert run.logs["gh"] == []
 
 
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+PING_URL_SECRET = "35557473-f80c-44e3-892a-b507013158b1"
+
+
+def _brokered(tmp_path: Path, socket_path: Path, *args: str, **fake: str | None) -> Run:
+    """The container as `lane-run` starts it on the broker: no token, the socket's marker, and the
+    compose's ping-URL id. The broad stand-in is gone, so nothing can fall back to the Mac."""
+    return _run(
+        tmp_path,
+        *args,
+        BWS_ACCESS_TOKEN=None,
+        BWS_ACCESS_TOKEN_BROAD=None,
+        SDS_SECRETS_SOCKET=str(socket_path),
+        SDS_DEADMAN_PING_URL_UUID=PING_URL_SECRET,
+        **fake,
+    )
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["bare", "submit"])
+def test_container_branch_runs_on_the_socket_without_a_token(
+    tmp_path: Path, broker, args: tuple[str, ...]
+) -> None:
+    socket_path = broker(
+        {PING_URL_SECRET: "https://ping.example/x", **{u: value(u) for u in LANE_SECRETS}}
+    )
+    run = _brokered(tmp_path, socket_path, *args)
+    assert run.code == 0, run.output
+    # Every secret came through the socket: `bws` never ran, and the Mac's steps never did.
+    assert run.logs["bws"] == []
+    assert "[activation]" not in run.output
+    assert run.logs["gh"] == []
+    assert run.lines("derive") == [
+        f"derive args=repositories lane_token= socket= cm={value(READ_UUID)} system="
+    ]
+    assert run.lines("mint")[0].endswith(f" key={value(READ_APP_KEY_UUID)} lane_token= socket=")
+    env = run.env()
+    assert env["INERT_LANDING_CHANGE_MANAGER_TOKEN"] == value(READ_UUID)
+    assert env["INERT_LANDING_ORCHESTRATOR_TOKEN"] == value(SYSTEM_UUID)
+    assert env["INERT_LANDING_GITHUB_TOKEN"] == READ_TOKEN
+    # Neither the token nor the socket's marker reaches the lander.
+    assert "BWS_ACCESS_TOKEN" not in env and "SDS_SECRETS_SOCKET" not in env
+    if args:
+        assert env["SDS_BRIDGE_ALERT_TOKEN"] == value(ALERT_UUID)
+    else:
+        assert "SDS_BRIDGE_ALERT_TOKEN" not in env
+    assert run.passes() == [f"lander args={' '.join(args)}"]
+
+
+def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    run = _brokered(tmp_path, dead_socket, "--submit")
+    assert run.code == 1, run.output
+    assert "FATAL: could not read the change-manager credential" in run.output
+    assert run.logs["bws"] == [] and run.logs["gh"] == []
+    assert "[activation]" not in run.output
+    assert run.passes() == []
+
+
 def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
     """The container block exits, so every Keychain read and `gh` call after its closing `fi` is
     the Mac's. The dead-man helper's own Keychain read is reached only without a broad identity
     and a ping-URL id, which the container's compose names."""
     lines = LAUNCHER.read_text().splitlines()
-    block = lines.index('if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then')
+    block = lines.index("if sds_in_lane_container; then")
     end = lines.index("fi", block)
     assert lines[end - 1].strip() == 'exit "$rc"'
     code = [(i, line) for i, line in enumerate(lines) if not line.lstrip().startswith("#")]
@@ -456,14 +519,17 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["inert-landing"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${INERT_LANDING_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "LANDER_STATE_DIR": "/var/lib/sds/inert-landing",
             # The BWS secret id of `inert-landing-ping-url`: not a secret, not the ping URL.
             "SDS_DEADMAN_PING_URL_UUID": "35557473-f80c-44e3-892a-b507013158b1",
         },
-        "volumes": ["sds-lanes-inert-landing-state:/var/lib/sds/inert-landing"],
+        "volumes": [
+            "sds-lanes-inert-landing-state:/var/lib/sds/inert-landing",
+            "/data/sds/broker/inert-landing:/run/sds-broker:ro",
+        ],
         "restart": "unless-stopped",
     }
     document = yaml.safe_load(COMPOSE.read_text())

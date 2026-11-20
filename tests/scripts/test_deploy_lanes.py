@@ -1160,6 +1160,25 @@ def test_a_malformed_token_command_is_usage(lanes: Lanes, argv: list[str]) -> No
     assert not (lanes.tmp / "deploy-lanes" / "execution-watch").exists()
 
 
+def test_add_takes_a_lane_on_the_secrets_broker_in_place_of_a_token() -> None:
+    """A tokenless compose passes only with the lane's own socket bind (ADR-0055 amendment 30)."""
+    compose = (ROOT / "lanes/execution-watch/compose.yaml").read_text()
+    service = deploy.lane_service(compose, "execution-watch")
+    del service["environment"]["BWS_ACCESS_TOKEN"]
+    [refusal] = deploy.add_refusals(service, "execution-watch")
+    assert "BWS_ACCESS_TOKEN" in refusal and "/data/sds/broker/execution-watch" in refusal
+    for wrong in (
+        "/data/sds/broker/inert-landing:/run/sds-broker:ro",
+        "/data/sds/broker/execution-watch:/run/sds-broker",
+        "/data/sds/broker:/run/sds-broker:ro",
+    ):
+        mounted = {**service, "volumes": [*service["volumes"], wrong]}
+        assert deploy.add_refusals(mounted, "execution-watch") == [refusal], wrong
+    bound = "/data/sds/broker/execution-watch:/run/sds-broker:ro"
+    brokered = {**service, "volumes": [*service["volumes"], bound]}
+    assert deploy.add_refusals(brokered, "execution-watch") == []
+
+
 # ---- the execution-watch lane's tracked files ----------------------------------------------
 
 

@@ -936,6 +936,9 @@ LANES_STATE_DIR = Path.home() / "Library" / "Application Support" / "sds" / "dep
 LANE_RESOURCE_PREFIX = "sds-lane-"
 LANE_COMPOSE = "lanes/{lane}/compose.yaml"
 LANE_STATE_MOUNT = "/var/lib/sds/{lane}"
+# A lane on the secrets broker (ADR-0055 amendment 30) maps no token and mounts its own socket
+# directory read-only instead.
+LANE_BROKER_BIND = "/data/sds/broker/{lane}:/run/sds-broker:ro"
 CRED_CONSUMERS = ".cred-consumers.toml"
 SECRETS_MANIFEST = ".bws-secrets.toml"
 COOLIFY_INSTANCE = "prod"
@@ -1400,8 +1403,12 @@ def add_refusals(service: dict[str, Any], lane: str) -> list[str]:
             f"not {SCHEDULE_MAPPING!r}"
         )
     mapped = "${" + lane.upper().replace("-", "_") + "_BWS_ACCESS_TOKEN}"
-    if environment.get(TOKEN_VARIABLE) != mapped:
-        refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
+    bind = LANE_BROKER_BIND.format(lane=lane)
+    if TOKEN_VARIABLE in environment:
+        if environment[TOKEN_VARIABLE] != mapped:
+            refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
+    elif bind not in (service.get("volumes") or []):
+        refusals.append(f"it maps no {TOKEN_VARIABLE} as {mapped!r} and mounts no {bind!r}")
     if lane in STATEFUL_LANES and _state_volume(service, lane) is None:
         refusals.append(f"it mounts no named volume at {LANE_STATE_MOUNT.format(lane=lane)}")
     return refusals

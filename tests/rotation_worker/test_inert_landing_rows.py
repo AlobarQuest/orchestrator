@@ -75,14 +75,16 @@ def test_the_token_row_is_one_the_lane_token_adapter_acts_on(
     bws_lane_token.check_row(entry.credential)
     variable = bws_lane_token.lane_variable(entry.destinations, entry.keeper)
     assert variable["uuid"] == SERVICE
-    # The variable the lane's compose maps to the container's BWS_ACCESS_TOKEN.
+    # The lane's token variable, kept on the resource as a fallback: the compose maps it to nothing,
+    # since the lane reads through its secrets-broker socket (ADR-0055 amendment 30).
     assert variable["key"] == VARIABLE
     # The lane phases redeploy the service, never the executor. Read from the row itself: the
     # destination parser reads a missing `redeploy` as false.
     [env] = [c for c in entry.credential["consumer"] if c["kind"] == "coolify-env"]
     assert env["redeploy"] is False
     compose = (ROOT / "lanes" / LANE / "compose.yaml").read_text()
-    assert f"BWS_ACCESS_TOKEN: ${{{VARIABLE}}}" in compose
+    assert f"BWS_ACCESS_TOKEN: ${{{VARIABLE}}}" not in compose
+    assert "- /data/sds/broker/inert-landing:/run/sds-broker:ro" in compose
 
 
 def test_the_token_row_declares_the_lane_s_manifest_secrets_and_its_ping_url_keeper(
