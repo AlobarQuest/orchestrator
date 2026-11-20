@@ -719,3 +719,27 @@ def test_deadman_resolves_through_the_socket_without_a_token(
     assert (rc, bws) == (0, "")
     assert pings == [f"{PING_URL}/start", PING_URL]
     assert "armed (sds-execution-watch)" in output
+
+
+@pytest.mark.parametrize(
+    ("values", "dead", "code"),
+    [
+        ({"99999999-9999-4999-8999-999999999999": PING_URL}, False, "not_allowed"),
+        ({PING_URL_UUID: None}, False, "bws_failed"),
+        ({}, True, "no_reply"),
+    ],
+    ids=["not-allowed", "bws-failed", "stale-socket"],
+)
+def test_a_failed_broker_read_keeps_the_brokers_reason(
+    tmp_path: Path, bin_stubs: Path, broker, dead_socket: Path, values, dead: bool, code: str
+) -> None:
+    """The broker's closed-list code reaches the log beside "could not be read"; no value does."""
+    socket_path = dead_socket if dead else broker(values)
+    rc, pings, output, bws = _by_uuid(
+        tmp_path, bin_stubs, exit_code=0, BWS_ACCESS_TOKEN="", SDS_SECRETS_SOCKET=str(socket_path)
+    )
+
+    assert (rc, pings, bws) == (0, [], "")
+    reason = f"the ping-URL secret {PING_URL_UUID} could not be read through the secrets broker"
+    assert f"{reason} ({code})" in output
+    assert PING_URL not in output
