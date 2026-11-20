@@ -36,6 +36,8 @@
     Healthchecks API; no paste).
   - 2026-11-13, amendment 24, proposed (the factory-events chain of record is a VPS database;
     approvers append, the carrier verifies there).
+  - 2026-11-20, amendment 30, proposed (the lane secrets broker: a lane reads its secrets over a
+    socket and holds no BWS token).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -4286,3 +4288,106 @@ Line numbers are at `ad721fc0`. This amendment edits none of them.
 | ADR-0059 Amendment 2, the lane-token restart (lines 1782-1787) | Governed as increment 7 is. |
 | ADR-0059 Amendment 6 decision item 4 (lines 2694-2696) | Governed: item 5 states the executor's cut-over checks. |
 | ADR-0059 Amendment 6 decision item 6, the heartbeat as an alarm (lines 2709-2710) | Stands. Item 4, step 9 keeps the key. |
+
+## Amendment 30 — The lane secrets broker (2026-11-20)
+
+**Status: Proposed (2026-11-20).** Accepted on merge, as amendment 29 is. **Relates to:** amendment
+19 (lane tokens and ping URLs), amendment 12 (BWS machine tokens), decision 3's R10 rule, and
+ADR-0059 decision 1, decision 2 and "Cut-over for one lane".
+
+### Context
+
+Each lane holds its own BWS access token, and Bitwarden has no API to create or revoke one. Every
+lane token costs Devon a browser sitting to mint (G-79) and another to revoke, and six lanes still
+have to move off the Mac. About 40 of the SDS's roughly 58 credentials need his hands, and the BWS
+access tokens are the largest group. The design is `docs/superpowers/specs/2026-11-20-lane-secrets-broker-design.md`
+in sds-hq, Phase A of the credential-rotation redesign.
+
+Devon answered two questions on 2026-11-20, in an interactive HQ session. They are quoted:
+
+- **The broker's read grants.** Devon: "Project by project". The broker's account is granted read on
+  each BWS project that holds a lane-read secret, not on each secret.
+- **How the broker's first token reaches its resource.** Devon: "past straight into the broker's
+  coolify variable". Devon mints the token and pastes it into the broker resource's
+  `SECRETS_BROKER_BWS_ACCESS_TOKEN` variable in Coolify, in the same browser sitting, and stores the same token in a keeper secret in
+  the BWS project `Rotation / Keepers`, as every lane token keeps a stored copy. The executor
+  writes none of it, so the first token needs no package, approval or mint gate.
+
+### Decision
+
+1. **One broker serves every lane that is cut over to it.** `sds-lane-secrets-broker` is one Coolify
+   resource on `prod-vps`, built from the lane image with its own entry command,
+   `scripts/secrets_broker.py` (standard library, like `lane_run.py`). It holds one BWS identity,
+   the machine account `lane-secrets-broker`, and serves no network: no port, no domain. A lane cut
+   over to it has no BWS token, no token keeper and no mint gate, so this amendment replaces the
+   `bws-lane-token` issue for those lanes with an allowlist entry and a socket mount.
+2. **A lane's identity is the socket its request arrives on.** The broker binds
+   `/data/sds/broker/<lane>/broker.sock` (mode 0600, in a directory of mode 0750) for each lane in
+   its allowlist. A lane's compose mounts only its own directory, read-only at `/run/sds-broker`, so
+   a lane can't reach another's socket. The request carries no token, header or claim.
+3. **The allowlist is code.** `lanes/secrets-broker/allowlist.toml` lists, per lane, every BWS secret
+   UUID the lane may read. It is baked into the image, so a change takes effect only through a
+   reviewed orchestrator PR and a release. A UUID outside a lane's list is refused before `bws`
+   runs. The broker refuses to start when the file is missing, unreadable, names a lane twice, or
+   holds a malformed lane name or UUID. A test holds each lane's list equal to the UUIDs its
+   launcher reads plus its ping-URL secret.
+4. **The protocol returns the value or a code, never `bws`'s output.** One request per connection: a
+   UUID and a newline. The reply is one JSON line, `bws secret get --output json`'s shape or
+   `{"error": "<code>"}` with `not_allowed`, `bad_request` or `bws_failed`. Each read is fresh, under
+   a new empty `HOME` and with `--color no` (workspace invariants 22 and 23). The broker caches and
+   writes nothing, and logs one line per lane once its socket listens (outcome `listening`) and one
+   per request: lane, UUID and outcome, never a value.
+5. **The broker refuses to start without its token.** With `BWS_ACCESS_TOKEN` unset or empty, a bad
+   allowlist, or a lane whose directory or socket can't be set up (named with its errno's name, and
+   fail-fast), it prints one JSON error line and exits 2. Before the broker's first start, the
+   deploy creates `/data/sds/broker`, or chowns it, to the image's `orchestrator` uid and gid and
+   checks it with `ls -ln`: Coolify or Docker may create a bind directory root-owned, and the broker
+   couldn't make its lanes' directories.
+6. **The lane side.** `sds_bws_value` and `lane-run --read` read through `/run/sds-broker/broker.sock`
+   when `lane-run` finds it mounted, and set `SDS_SECRETS_SOCKET` to name it. A brokered read never
+   falls back to `bws`. A launcher's "am I in my container" test is `sds_in_lane_container`, true on
+   a token or a socket. The two-argument form of `sds_bws_value` names an identity and always runs
+   `bws`. The 12 lanes already on the VPS and every Mac launcher run unchanged.
+7. **The deploy checks know a broker lane.** A lane is a broker lane when its compose maps no
+   `BWS_ACCESS_TOKEN`, mounts exactly `/data/sds/broker/<lane>:/run/sds-broker:ro` and nothing else
+   at, under or above `/data/sds/broker`, and the allowlist at the run's commit lists the lane.
+   Every planned change refuses a compose with any other route to that directory on any service
+   (a stray mount, `volumes_from`, a privileged service, the Docker socket, or a named volume's
+   device), on a token lane too. A lane that only lost its token is none. A broker lane's `--add`
+   run finishes with `--token-present false`; a token lane's with `true`.
+8. **The unlock tier.** Anything holding the broker's token, or the broker's mount, can read for any
+   lane, so the broker's token is in the unlock tier: the one BWS token that stays manual. Phase C
+   settles how it rotates. The token lives in the resource's Coolify variable and its keeper secret in
+   `Rotation / Keepers`. Its registry row, added at the deploy step once the resource and the keeper
+   exist, is `rotated_by_sds = false` until then.
+9. **Accepted exposure.** A mounted socket stays reachable to a lane's child process after the
+   launcher drops the marker or unsets `BWS_ACCESS_TOKEN`. This is no new exposure: the child
+   already could read the launcher's starting environment, token included, through `/proc`, and the
+   lane's allowlist bounds what it gets.
+10. **Open: a `--token` run on a broker lane.** A broker lane has no token to issue, so its
+    `--token` run is refused at plan time, and Phase B settles what the run does for one.
+
+### Phases
+
+- **A (this amendment).** The broker, the read path, and inert landing moved onto it. Inert landing
+  keeps its G-79 token as a fallback, mapped to nothing in its compose.
+- **B.** HQ resumes and cuts the remaining lanes over. HQ holds every new
+  `rotation-<lane>-bws-token` package until Phase A's release ships.
+- **C.** The 12 earlier lanes move in batches and their tokens retire in one revoke sitting. The
+  unlock tier, adapters for Coolify tokens, GitHub App keys and possibly Anthropic, and the broker
+  token's own rotation arrive here, and `rotated_by_sds` becomes true for its row.
+
+### What it grants, and nothing more
+
+The broker's account reads each BWS project that holds a lane-read secret (Devon, "Project by
+project"). It could read every secret in those projects, including ones no lane uses; the allowlist
+limits what any lane gets. No lane gains a grant. No existing identity, token or grant is widened,
+and no rotation age changes.
+
+### Consequences
+
+- **A broker lane costs no mint sitting**, and its retirement costs no revoke sitting.
+- **The broker is a shared point of failure.** A restart re-binds the sockets, and a lane pass that
+  starts during it fails one read and runs again on its next schedule. The lane's dead-man check
+  and alerts cover a refusing or absent broker the way they cover a failed `bws` read.
+- **ADR-0059's "Cut-over for one lane"** takes the broker-lane variation that section states.

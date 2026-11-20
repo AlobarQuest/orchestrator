@@ -372,10 +372,13 @@ SECURITY = "/usr/bin/security"
 
 # command heads (functions the file defines and builtins excluded), literal hosts, sourced scripts.
 SHELL_ROWS: dict[str, tuple[frozenset[str], frozenset[str], frozenset[str]]] = {
-    # Reaches `bws` only through `sds_bws_value`, which `sds-bws.sh` defines.
+    # Reaches `bws` only through `sds_bws_value`, which `sds-bws.sh` defines, as it does
+    # `sds_in_lane_container`.
     "sds-deadman.sh": (
-        frozenset({PYTHON, SECURITY, "cat", "curl", "dirname", "mktemp", "rm", "sds_bws_value"})
-        | {"tee"},
+        frozenset(
+            {PYTHON, SECURITY, "cat", "curl", "dirname", "mktemp", "rm", "sds_bws_value"}
+            | {"sds_in_lane_container", "tee"}
+        ),
         frozenset({HEALTHCHECKS}),
         frozenset({"sds-bws.sh"}),
     ),

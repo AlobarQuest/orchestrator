@@ -97,18 +97,40 @@ sds_deadman_log() {
     echo "[deadman] $*"
 }
 
-# The lane's ping URL from its own ping-URL secret, `SDS_DEADMAN_PING_URL_UUID`, read with the
-# lane's `BWS_ACCESS_TOKEN` in the one-argument form, so the token stays in the environment and
-# never becomes a process argument. Never fails the caller; never prints the URL.
+# The lane's ping URL from its own ping-URL secret, `SDS_DEADMAN_PING_URL_UUID`, read in the
+# one-argument form: through the lane's mounted secrets-broker socket when `lane-run` named one,
+# otherwise with the lane's `BWS_ACCESS_TOKEN`, so the token stays in the environment and never
+# becomes a process argument. Never fails the caller; never prints the URL.
 sds_deadman_resolve_by_uuid() {
     local url secret="the ping-URL secret $SDS_DEADMAN_PING_URL_UUID"
-    if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-        SDS_DEADMAN_REASON="SDS_DEADMAN_PING_URL_UUID is set but BWS_ACCESS_TOKEN is not"
+    if ! sds_in_lane_container; then
+        SDS_DEADMAN_REASON="SDS_DEADMAN_PING_URL_UUID is set but neither BWS_ACCESS_TOKEN nor"
+        SDS_DEADMAN_REASON+=" a broker socket is available"
         return 0
     fi
-    url="$(sds_bws_value "$SDS_DEADMAN_PING_URL_UUID" 2>/dev/null || true)"
+    # A brokered read's one stderr line ends in a code from a closed list (`sds_bws_value`), and
+    # only that code is kept: never the line itself, and never `bws`'s own stderr, which goes to
+    # /dev/null as before.
+    local errors=/dev/null code=""
+    if [ -S "${SDS_SECRETS_SOCKET:-}" ]; then
+        errors="$(mktemp "${TMPDIR:-/tmp}/sds-deadman-read.XXXXXX")" || errors=/dev/null
+    fi
+    url="$(sds_bws_value "$SDS_DEADMAN_PING_URL_UUID" 2>"$errors" || true)"
+    if [ "$errors" != /dev/null ]; then
+        local line last=""
+        while IFS= read -r line; do last="$line"; done < "$errors"
+        case "$last" in
+            *": not_allowed") code=not_allowed ;;
+            *": bad_request") code=bad_request ;;
+            *": bws_failed") code=bws_failed ;;
+            *": no_reply") code=no_reply ;;
+            *": bad_reply") code=bad_reply ;;
+        esac
+        rm -f "$errors"
+    fi
     case "$url" in
-        '') SDS_DEADMAN_REASON="$secret could not be read" ;;
+        '') SDS_DEADMAN_REASON="$secret could not be read"
+            [ -z "$code" ] || SDS_DEADMAN_REASON+=" through the secrets broker ($code)" ;;
         # The URL becomes one quoted line of curl's config, so it may hold no quote, backslash or
         # whitespace.
         *[[:space:]\"\\]*) SDS_DEADMAN_REASON="$secret holds no usable URL" ;;

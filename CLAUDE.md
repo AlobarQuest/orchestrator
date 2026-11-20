@@ -44,8 +44,8 @@ style of that module.
 
 Each rule below is stated once, as it stands now. Where a procedure, method lesson or history lives
 elsewhere, the rule names it. Pages: `docs/operations/` (deploy, credentials, driving-a-unit,
-architecture-guards, local-development, landing-lanes, rotation-executor, onboarding-a-target,
-onboarding-a-fork),
+architecture-guards, local-development, landing-lanes, rotation-executor, secrets-broker,
+onboarding-a-target, onboarding-a-fork),
 `docs/method-lessons.md`, and `docs/history/claude-md-invariants-archive.md` (the full original
 text of every bullet, by number; `Archive #N` means that entry, and each rule shortened by Execution
 Part 5 keeps its earlier text under that heading there).
@@ -380,3 +380,8 @@ Subsystem rules continue in nested files that load only when a session reads fil
   Boot requires the credentials holding `work-carrier-observer-v1` to be exactly that setting's
   identity, or none when unset, so unlike the executors' setting it can't go first
   (`test_work_carrier_boot.py`). Detail: `docs/operations/rotation-proposer.md`.
+- A lane whose compose maps no `BWS_ACCESS_TOKEN` must have an entry in
+  `lanes/secrets-broker/allowlist.toml` and mount `/data/sds/broker/<lane>` read-only at
+  `/run/sds-broker`, and its launcher must test `sds_in_lane_container`, not `BWS_ACCESS_TOKEN`
+  alone. The allowlist's list for a lane equals the UUIDs its launcher reads plus its ping-URL
+  secret. Detail: `docs/operations/secrets-broker.md`.

@@ -59,6 +59,7 @@ import difflib
 import fcntl
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -78,6 +79,7 @@ import httpx
 import yaml
 
 from scripts.compute_image_tags import LANE_IMAGE, derivable_tag, readable_tag
+from scripts.secrets_broker import AllowlistError, parse_allowlist
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -936,6 +938,13 @@ LANES_STATE_DIR = Path.home() / "Library" / "Application Support" / "sds" / "dep
 LANE_RESOURCE_PREFIX = "sds-lane-"
 LANE_COMPOSE = "lanes/{lane}/compose.yaml"
 LANE_STATE_MOUNT = "/var/lib/sds/{lane}"
+# A lane on the secrets broker (ADR-0055 amendment 30) maps no token: it mounts its own socket
+# directory read-only, and the broker's allowlist names it.
+LANE_BROKER_BIND = "/data/sds/broker/{lane}:/run/sds-broker:ro"
+# The broker's host directory: every lane's socket lives under it, so any other mount reaching it
+# would hand a container another lane's identity.
+BROKER_ROOT = "/data/sds/broker"
+BROKER_ALLOWLIST = "lanes/secrets-broker/allowlist.toml"
 CRED_CONSUMERS = ".cred-consumers.toml"
 SECRETS_MANIFEST = ".bws-secrets.toml"
 COOLIFY_INSTANCE = "prod"
@@ -1108,6 +1117,9 @@ class LaneRun:
     # A `--token` run's secrets, as `.bws-secrets.toml` at its commit lists them for the lane:
     # what `lane-run --read` must read `ok` (ADR-0059 Amendment 2).
     read_uuids: list[str] = field(default_factory=list)
+    # The lane reads through the secrets broker at the run's commit (`broker_lane`), so its
+    # container must hold no token.
+    brokered: bool = False
     run_id: str = ""
     # The run's place in its lane's chain, assigned under the lane's lock: the order, even for two
     # runs created in the same instant.
@@ -1390,7 +1402,136 @@ def lane_service(compose: str, lane: str) -> dict[str, Any]:
     return service
 
 
-def add_refusals(service: dict[str, Any], lane: str) -> list[str]:
+# The Docker daemon's sockets: a container holding one can mount anything, the broker's
+# directory included.
+DOCKER_SOCKETS = ("/var/run/docker.sock", "/run/docker.sock")
+_NO_SOURCE, _UNREADABLE = object(), object()
+
+
+def _volume_source(entry: object) -> object:
+    """A service volume entry's host source: a string as written, `_NO_SOURCE` for a tmpfs or an
+    anonymous volume, or anything else the entry holds (`_UNREADABLE` for a non-mapping)."""
+    if isinstance(entry, str):
+        return entry.partition(":")[0]
+    if isinstance(entry, dict):
+        return entry["source"] if "source" in entry else _NO_SOURCE
+    return _UNREADABLE
+
+
+def _reaches(source: object, target: str) -> bool:
+    """The host source is `target`, under it, or above it. A source the rule can't read (not a
+    string, interpolated, or a relative path climbing with `..`) counts as reaching it: the
+    check fails closed. A named volume or `./x` reaches nothing."""
+    if source is _NO_SOURCE:
+        return False
+    if not isinstance(source, str) or "$" in source:
+        return True
+    if not source.startswith("/"):
+        return ".." in source.split("/")
+    path = "/" + posixpath.normpath(source).lstrip("/")
+    return (
+        path == target or path.startswith(target + "/") or target.startswith(path.rstrip("/") + "/")
+    )
+
+
+def _stray(volumes: list[Any], own: str | None) -> list[object]:
+    return [v for v in volumes if v != own and _reaches(_volume_source(v), BROKER_ROOT)]
+
+
+def stray_broker_mounts(service: dict[str, Any], lane: str) -> list[object]:
+    """Each volume entry of the service reaching the broker's directory, other than a tokenless
+    lane's own bind, exactly `LANE_BROKER_BIND`. A lane that maps its token mounts none of it."""
+    own = None if TOKEN_VARIABLE in _environment(service) else LANE_BROKER_BIND.format(lane=lane)
+    return _stray(service.get("volumes") or [], own)
+
+
+def _service_broker_routes(name: str, service: object, lane: str) -> list[str]:
+    """Why one compose service could reach the broker's directory beyond its lane's own bind."""
+    if not isinstance(service, dict):
+        return [f"service {name!r} is unreadable"]
+    volumes = service.get("volumes") or []
+    if not isinstance(volumes, list):
+        return [f"service {name!r} has unreadable volumes"]
+    own = name == lane and TOKEN_VARIABLE not in _environment(service)
+    stray = _stray(volumes, LANE_BROKER_BIND.format(lane=lane) if own else None)
+    routes = []
+    if stray:
+        routes.append(
+            f"service {name!r} holds a stray mount of the secrets broker's directory "
+            f"{BROKER_ROOT}: {', '.join(repr(v) for v in stray)}; a broker lane mounts only "
+            f"{LANE_BROKER_BIND.format(lane=lane)!r} of it, and a token lane none"
+        )
+    if "volumes_from" in service:
+        routes.append(f"service {name!r} uses volumes_from, which could carry another's mounts")
+    if service.get("privileged") not in (None, False):
+        routes.append(f"service {name!r} is privileged, so it could mount the host's directories")
+    sockets = [
+        v
+        for v in volumes
+        if any(_reaches(_volume_source(v), socket_path) for socket_path in DOCKER_SOCKETS)
+    ]
+    if sockets:
+        routes.append(f"service {name!r} mounts the docker socket: {sockets!r}")
+    return routes
+
+
+def compose_broker_refusals(compose: str, lane: str) -> list[str]:
+    """Every route in a lane's compose to the secrets broker's directory other than the lane's
+    own bind, on any service: a stray mount, `volumes_from`, a privileged service, the Docker
+    socket, or a top-level named volume whose `driver_opts` device reaches it. Each planned
+    change checks this, whatever its kind."""
+    document = yaml.safe_load(compose)
+    services = document.get("services") if isinstance(document, dict) else None
+    if not isinstance(services, dict):
+        return ["the compose has no readable services"]
+    refusals = [r for n, svc in services.items() for r in _service_broker_routes(n, svc, lane)]
+    named = document.get("volumes") or {}
+    if not isinstance(named, dict):
+        return [*refusals, "the compose's top-level volumes are unreadable"]
+    for name, spec in named.items():
+        # A bare name (None) has no options; a spec or options that aren't mappings fail closed.
+        options = ((spec or {}).get("driver_opts") or {}) if isinstance(spec, dict | None) else None
+        device = options.get("device", _NO_SOURCE) if isinstance(options, dict) else _UNREADABLE
+        if _reaches(device, BROKER_ROOT):
+            refusals.append(
+                f"named volume {name!r} binds {device!r}, which reaches the secrets broker's "
+                f"directory {BROKER_ROOT}"
+            )
+    return refusals
+
+
+def broker_lane(service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]]) -> bool:
+    """The lane reads through the secrets broker: its compose maps no token, it mounts its own
+    socket directory and nothing else of the broker's, and the allowlist names it. A lane that
+    only lost its token is none."""
+    return (
+        TOKEN_VARIABLE not in _environment(service)
+        and LANE_BROKER_BIND.format(lane=lane) in (service.get("volumes") or [])
+        and not stray_broker_mounts(service, lane)
+        and lane in allowlist
+    )
+
+
+def _broker_allowlist(
+    world: World, commit: str, service: dict[str, Any]
+) -> dict[str, frozenset[str]]:
+    """The allowlist at `commit`, read only for a compose that maps no token. A commit without
+    one names no broker lane, so that compose is refused as a lane with no token is."""
+    if TOKEN_VARIABLE in _environment(service):
+        return {}
+    # Only a missing file means "no broker lane"; any other git failure is refused as itself.
+    if not _git(world, "ls-tree", "--name-only", commit, "--", BROKER_ALLOWLIST).strip():
+        return {}
+    text = _git(world, "show", f"{commit}:{BROKER_ALLOWLIST}")
+    try:
+        return parse_allowlist(text, f"{BROKER_ALLOWLIST} at {commit}")
+    except AllowlistError as error:
+        raise Refused(str(error)) from error
+
+
+def add_refusals(
+    service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]] | None = None
+) -> list[str]:
     """What an `--add`'s tracked compose entry must hold before its container may start."""
     refusals = []
     environment = _environment(service)
@@ -1400,8 +1541,14 @@ def add_refusals(service: dict[str, Any], lane: str) -> list[str]:
             f"not {SCHEDULE_MAPPING!r}"
         )
     mapped = "${" + lane.upper().replace("-", "_") + "_BWS_ACCESS_TOKEN}"
-    if environment.get(TOKEN_VARIABLE) != mapped:
-        refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
+    if TOKEN_VARIABLE in environment:
+        if environment[TOKEN_VARIABLE] != mapped:
+            refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
+    elif not broker_lane(service, lane, allowlist or {}):
+        refusals.append(
+            f"it maps no {TOKEN_VARIABLE} as {mapped!r}, and it is no broker lane: one that "
+            f"mounts {LANE_BROKER_BIND.format(lane=lane)!r} and that {BROKER_ALLOWLIST} lists"
+        )
     if lane in STATEFUL_LANES and _state_volume(service, lane) is None:
         refusals.append(f"it mounts no named volume at {LANE_STATE_MOUNT.format(lane=lane)}")
     return refusals
@@ -1505,11 +1652,20 @@ def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneR
         _plan_change(world, args, run, change, runs)
     run.compose_sent = _git(world, "show", f"{run.commit}:{LANE_COMPOSE.format(lane=lane)}")
     service = lane_service(run.compose_sent, lane)
+    allowlist = _broker_allowlist(world, run.commit, service)
+    run.brokered = broker_lane(service, lane, allowlist)
+    refusals = compose_broker_refusals(run.compose_sent, lane)
     if change.kind == "add":
-        refusals = add_refusals(service, lane)
-        if refusals:
-            raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
+        refusals += add_refusals(service, lane, allowlist)
+    if refusals:
+        raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
+    if change.kind == "add":
         run.volume_slug = _state_volume(service, lane) or ""
+    if change.kind == "token" and run.brokered:
+        raise Refused(
+            f"lane {lane}: a broker lane has no token; its --token run is not supported "
+            "(ADR-0055 a30 item 10)"
+        )
     if change.kind == "token":
         manifest = _git(world, "show", f"{run.commit}:{SECRETS_MANIFEST}")
         run.read_uuids = lane_secrets(manifest, lane)
@@ -1848,9 +2004,12 @@ def finish_mismatches(args: argparse.Namespace, run: LaneRun) -> list[str]:
         found.append(f"it runs {args.observed_digest}, not the release's {run.lane_digest}")
     if args.observed_schedule != run.schedule:
         found.append(f"its {SCHEDULE_VARIABLE} is {args.observed_schedule}, not {run.schedule}")
-    holds_token = run.change in ("add", "token")
-    if holds_token and args.token_present != "true":
-        found.append(f"it holds no {TOKEN_VARIABLE}")
+    if run.change in ("add", "token"):
+        # A broker lane's compose maps no token, so its container must hold none.
+        if run.brokered and args.token_present != "false":
+            found.append(f"it holds a {TOKEN_VARIABLE}, though it reads through the broker")
+        elif not run.brokered and args.token_present != "true":
+            found.append(f"it holds no {TOKEN_VARIABLE}")
     if run.lane in STATEFUL_LANES:
         refusal = volume_refusal(run, args.observed_volume)
         if refusal:

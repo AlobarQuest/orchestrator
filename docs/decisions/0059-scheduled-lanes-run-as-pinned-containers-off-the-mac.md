@@ -1124,6 +1124,18 @@ Each increment's plan records which repositories it changes and which identities
    ADR-0055 amendment 23 narrows this step's ping URL: once HQ makes the ping URL's row due, the
    executor reads the URL from the Healthchecks check listing and writes the lane's ping-URL
    secret. Devon pastes nothing, and the ping URL's issue raises no mint alert.
+   **A broker lane** (ADR-0055 amendment 30) swaps the token issue in this step for three things, in
+   one reviewed change: the lane's entry in `lanes/secrets-broker/allowlist.toml`, listing every
+   secret UUID its launcher reads and its ping-URL secret; a mount in its compose of
+   `/data/sds/broker/<lane>`, read-only at `/run/sds-broker`, with no `BWS_ACCESS_TOKEN`; and its
+   launcher's host test and empty-token check moved to `sds_in_lane_container`. It needs no
+   identity, token keeper or token row, and the broker's account must already be granted read on the
+   BWS project holding each listed secret. The broker has started once on the release carrying the
+   entry, so its directory for the lane exists before Docker would create it root-owned. The
+   lane's `--add` finishes with `--token-present false`, and the proofs in this step run through
+   the socket: `lane-run --read` over every listed secret (each `ok`), one UUID outside the list
+   (`refused`), and the launcher's `--dry-run`. Open until Phase B: a `--token` run on a broker lane
+   still assumes a token (`.bws-secrets.toml` reads and a `--read` proof).
 2. Pick a cut-over time between two scheduled passes. In that gap, for a lane with state (decision
    1, "Lane state"), first copy its Mac state directory into its volume: the session reads each
    file, which holds alert keys and timestamps and no secret, and writes it with infraops's
