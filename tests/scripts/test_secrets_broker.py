@@ -227,7 +227,11 @@ def served(bws: Bws) -> Iterator[Path]:
 
 
 def _listening(path: Path) -> bool:
-    return path.exists() and stat.S_ISSOCK(path.stat().st_mode)
+    """True once `path` is a socket. The broker may remove the stale file between two calls."""
+    try:
+        return stat.S_ISSOCK(path.stat().st_mode)
+    except FileNotFoundError:
+        return False
 
 
 def _connect(path: Path) -> socket.socket:
@@ -331,3 +335,31 @@ def test_main_refuses_a_bad_allowlist(tmp_path: Path, capsys: pytest.CaptureFixt
     assert code == 2
     assert "allowlist" in capsys.readouterr().err
     assert not root.exists()
+
+
+@pytest.mark.parametrize("token", [None, ""])
+def test_main_refuses_to_start_without_a_token(
+    tmp_path: Path,
+    bws: Bws,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture,
+    token: str | None,
+) -> None:
+    allowlist = _allowlist(tmp_path, f'[lanes.inert-landing]\nread = ["{GOOD}"]\n')
+    root = tmp_path / "broker"
+    monkeypatch.setenv("PATH", str(bws.bin))
+    if token is None:
+        monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("BWS_ACCESS_TOKEN", token)
+
+    code = secrets_broker.main(["--allowlist", str(allowlist), "--root", str(root)])
+
+    out, err = capfd.readouterr()
+    assert code == 2
+    assert out == ""
+    assert [json.loads(line) for line in err.splitlines()] == [
+        {"error": "BWS_ACCESS_TOKEN is not set"}
+    ]
+    assert not root.exists(), "nothing is bound"
+    assert bws.calls() == []

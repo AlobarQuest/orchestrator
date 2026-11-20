@@ -26,7 +26,7 @@ Usage:
 
 The image runs it as `/app/.venv/bin/python -I /app/scripts/secrets_broker.py` (standard library
 only, like `lane_run.py`), and it serves until SIGTERM. Exit codes: 0 after SIGTERM, 2 for a usage
-error, a refused allowlist or a missing `bws`.
+error, a refused allowlist, a missing `bws`, or an unset or empty `BWS_ACCESS_TOKEN`.
 """
 
 from __future__ import annotations
@@ -278,6 +278,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     bws = shutil.which("bws")
     if bws is None:
         print("secrets-broker: bws is not on PATH", file=sys.stderr)
+        return EXIT_USAGE
+    # Without its token every fetch would fail; refuse to start, so the resource shows the cause.
+    if not os.environ.get(TOKEN):
+        print(json.dumps({"error": f"{TOKEN} is not set"}), file=sys.stderr)
         return EXIT_USAGE
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda _signum, _frame: stop.set())
