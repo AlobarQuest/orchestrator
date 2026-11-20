@@ -10,9 +10,12 @@
 # volume at `LANDER_STATE_DIR`; the Mac's `sds/estate-landing` files are copied in at cut-over,
 # before the first `--submit` pass, or every held pull request's clock restarts and the alerts the
 # Mac left firing never resolve.
-# The lane's token is the resource's own `ESTATE_LANDING_BWS_ACCESS_TOKEN` variable, which the VM
-# rotation executor writes; this file names it and never holds a value. With it the launcher reads
-# every secret the pass needs (`scripts/run-estate-landing.sh`, "TWO HOSTS, ONE LAUNCHER").
+# It holds no token: it reads every secret the pass needs through the lane secrets broker (ADR-0055
+# amendment 30), whose socket directory `/data/sds/broker/estate-landing` it mounts read-only at
+# `/run/sds-broker`. `lane-run` names the socket to the launcher (`scripts/run-estate-landing.sh`,
+# "TWO HOSTS, ONE LAUNCHER"), and the broker serves it only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
+# `ESTATE_LANDING_BWS_ACCESS_TOKEN` variable as a fallback, which this file maps to nothing.
 # `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
 # and not the ping URL, which a later change writes here. While it's empty the dead-man helper
 # resolves no ping URL in the container and pings nothing; the pass itself still runs.
@@ -22,12 +25,12 @@ services:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["estate-landing"]
     environment:
-      BWS_ACCESS_TOKEN: ${ESTATE_LANDING_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       LANDER_STATE_DIR: /var/lib/sds/estate-landing
       SDS_DEADMAN_PING_URL_UUID: ""
     volumes:
       - sds-lanes-estate-landing-state:/var/lib/sds/estate-landing
+      - /data/sds/broker/estate-landing:/run/sds-broker:ro
     restart: unless-stopped
 
 volumes:

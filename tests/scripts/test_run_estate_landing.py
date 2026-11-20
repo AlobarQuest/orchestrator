@@ -1,7 +1,8 @@
 """`scripts/run-estate-landing.sh` in the lane's container and on the Mac, and the lane's files.
 
 The real launcher runs under `env -i` from a throwaway tree, with what `lane-run` passes it in the
-container: the lane's token as `BWS_ACCESS_TOKEN`, the state directory, `PATH` and `HOME`. `bws`,
+container: the lane's token as `BWS_ACCESS_TOKEN` (or, on the secrets broker, `SDS_SECRETS_SOCKET`
+naming a stand-in broker's socket, `conftest.py`'s), the state directory, `PATH` and `HOME`. `bws`,
 `gh` and `curl` are stubs on PATH. In the venv, `estate-landing` and `sds-github-mint` are stubs
 that log what reached them, and `python` is the real interpreter (`sds-bws.sh` parses BWS's JSON
 with it). On the Mac, `scripts/sds-token.sh` is a stub that exports a stand-in, and the broad
@@ -21,6 +22,7 @@ import yaml
 from estate_lander import image_repoint
 from scripts import deploy_orchestrator as deploy
 from scripts import lane_run
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-estate-landing.sh")
@@ -65,6 +67,7 @@ _CURL = '#!/bin/sh\necho "curl $*" >> "$PING_LOG"\nexit 1\n'
 _LANDER = """#!/bin/bash
 if [ "$1" = repositories ]; then
   echo "derive args=$* lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set} \\
 cm=${ESTATE_LANDING_CHANGE_MANAGER_TOKEN:-} system=${ESTATE_LANDING_ORCHESTRATOR_TOKEN:-}" \\
     >> "$LANE_LOG"
   if [ -n "${FAKE_DERIVE_RC:-}" ]; then
@@ -83,7 +86,8 @@ exit "${FAKE_LANDER_RC:-0}"
 """
 _MINT = """#!/bin/bash
 key="$(cat)"
-echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
 echo "%s"
 """
@@ -286,8 +290,9 @@ def test_an_unreadable_coolify_token_is_logged_and_the_pass_still_runs(tmp_path:
     """As on the Mac: the program refuses every re-point by name, so the pass runs without it."""
     run = _run(tmp_path, "--submit", BWS_REFUSES=COOLIFY_UUID)
     assert run.code == 0, run.output
-    assert "the Coolify token could not be read (the lane's token): re-points are refused" in (
-        run.output
+    assert (
+        "the Coolify token could not be read (the lane's socket or token): re-points are refused"
+        in run.output
     )
     assert run.passes() == ["lander args=--submit"]
     assert "ESTATE_LANDING_COOLIFY_TOKEN" not in run.env()
@@ -343,7 +348,7 @@ def test_the_mint_names_the_derived_repositories_and_the_passs_read_permissions(
     assert run.lines("mint") == [
         f"mint args=--app-id 5684758 {targets} {permissions}"
         # The key reaches the mint undecoded, in the form BWS holds it, without the lane's token.
-        f" key={value(READ_APP_KEY_UUID)} lane_token="
+        f" key={value(READ_APP_KEY_UUID)} lane_token= socket="
     ]
 
 
@@ -351,7 +356,7 @@ def test_the_list_is_derived_from_the_policy_credential_alone(tmp_path: Path) ->
     """Without the lane's token, and before the SYSTEM bearer is read."""
     run = _run(tmp_path)
     assert run.lines("derive") == [
-        f"derive args=repositories lane_token= cm={value(READ_UUID)} system="
+        f"derive args=repositories lane_token= socket= cm={value(READ_UUID)} system="
     ]
 
 
@@ -409,12 +414,100 @@ def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path
     assert run.logs["gh"] == []
 
 
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+PING_URL_SECRET = "11111111-2222-4333-8444-555555555555"
+
+
+def _brokered(tmp_path: Path, socket_path: Path, *args: str, **fake: str | None) -> Run:
+    """The container as `lane-run` starts it on the broker: no token and the socket's marker. The
+    compose's ping-URL id is empty, so the dead-man helper's name lookup asks for the broad
+    identity; the stand-in keeps the real Keychain out of the test."""
+    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake)
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["bare", "submit"])
+def test_container_branch_runs_on_the_socket_without_a_token(
+    tmp_path: Path, broker, args: tuple[str, ...]
+) -> None:
+    socket_path = broker({u: value(u) for u in LANE_SECRETS})
+    run = _brokered(tmp_path, socket_path, *args)
+    assert run.code == 0, run.output
+    # Every lane secret came through the socket: the only `bws` call is the dead-man helper's
+    # Healthchecks key, by the broad stand-in that exists only in this test, and the Mac's steps
+    # never ran.
+    assert run.reads() == [(HEALTHCHECKS_KEY_UUID, BROAD_STANDIN)]
+    assert "[activation]" not in run.output
+    assert run.logs["gh"] == []
+    assert run.lines("derive") == [
+        f"derive args=repositories lane_token= socket= cm={value(READ_UUID)} system="
+    ]
+    assert run.lines("mint")[0].endswith(f" key={value(READ_APP_KEY_UUID)} lane_token= socket=")
+    env = run.env()
+    assert env["ESTATE_LANDING_CHANGE_MANAGER_TOKEN"] == value(READ_UUID)
+    assert env["ESTATE_LANDING_ORCHESTRATOR_TOKEN"] == value(SYSTEM_UUID)
+    assert env["ESTATE_LANDING_GITHUB_TOKEN"] == READ_TOKEN
+    # Neither the token nor the socket's marker reaches the lander.
+    assert "BWS_ACCESS_TOKEN" not in env and "SDS_SECRETS_SOCKET" not in env
+    if args:
+        assert env["SDS_BRIDGE_ALERT_TOKEN"] == value(ALERT_UUID)
+        assert env["ESTATE_LANDING_COOLIFY_TOKEN"] == value(COOLIFY_UUID)
+    else:
+        assert "SDS_BRIDGE_ALERT_TOKEN" not in env
+        assert "ESTATE_LANDING_COOLIFY_TOKEN" not in env
+    assert run.passes() == [f"lander args={' '.join(args)}"]
+    for uuid in LANE_SECRETS:
+        assert value(uuid) not in run.output
+
+
+def test_with_a_ping_url_named_the_socket_serves_every_read(tmp_path: Path, broker) -> None:
+    """Once the compose names the ping-URL secret (a later change), the dead-man helper reads it
+    through the socket too, and `bws` never runs. No broad identity: nothing falls back to the
+    Mac."""
+    socket_path = broker(
+        {PING_URL_SECRET: "https://ping.example/x", **{u: value(u) for u in LANE_SECRETS}}
+    )
+    run = _brokered(
+        tmp_path,
+        socket_path,
+        "--submit",
+        BWS_ACCESS_TOKEN_BROAD=None,
+        SDS_DEADMAN_PING_URL_UUID=PING_URL_SECRET,
+    )
+    assert run.code == 0, run.output
+    assert run.logs["bws"] == []
+    assert run.passes() == ["lander args=--submit"]
+
+
+def test_an_unreadable_coolify_token_on_the_socket_is_logged_and_the_pass_still_runs(
+    tmp_path: Path, broker
+) -> None:
+    socket_path = broker({u: (None if u == COOLIFY_UUID else value(u)) for u in LANE_SECRETS})
+    run = _brokered(tmp_path, socket_path, "--submit")
+    assert run.code == 0, run.output
+    assert "the Coolify token could not be read (the lane's socket or token)" in run.output
+    assert run.passes() == ["lander args=--submit"]
+    assert "ESTATE_LANDING_COOLIFY_TOKEN" not in run.env()
+
+
+def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    run = _brokered(tmp_path, dead_socket, "--submit")
+    assert run.code == 1, run.output
+    assert "FATAL: could not read the change-manager credential" in run.output
+    assert [uuid for uuid, _ in run.reads()] == [HEALTHCHECKS_KEY_UUID]
+    assert run.logs["gh"] == []
+    assert "[activation]" not in run.output
+    assert run.passes() == []
+
+
 def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
     """The container block exits, so every Keychain read and `gh` call after its closing `fi` is
     the Mac's. The dead-man helper's own Keychain read is reached only without a broad identity
     and a ping-URL id, which the container's compose names once its secret exists."""
     lines = LAUNCHER.read_text().splitlines()
-    block = lines.index('if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then')
+    block = lines.index("if sds_in_lane_container; then")
     end = lines.index("fi", block)
     assert lines[end - 1].strip() == 'exit "$rc"'
     code = [(i, line) for i, line in enumerate(lines) if not line.lstrip().startswith("#")]
@@ -500,18 +593,25 @@ def test_on_the_mac_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> N
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "estate-landing")
-    assert deploy.add_refusals(service, "estate-landing") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "estate-landing", allowlist)
+    assert deploy.add_refusals(service, "estate-landing", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "estate-landing") == []
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["estate-landing"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${ESTATE_LANDING_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "LANDER_STATE_DIR": "/var/lib/sds/estate-landing",
             # A placeholder until the lane's ping-URL secret exists.
             "SDS_DEADMAN_PING_URL_UUID": "",
         },
-        "volumes": ["sds-lanes-estate-landing-state:/var/lib/sds/estate-landing"],
+        "volumes": [
+            "sds-lanes-estate-landing-state:/var/lib/sds/estate-landing",
+            "/data/sds/broker/estate-landing:/run/sds-broker:ro",
+        ],
         "restart": "unless-stopped",
     }
     document = yaml.safe_load(COMPOSE.read_text())
