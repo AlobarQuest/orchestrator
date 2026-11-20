@@ -140,6 +140,9 @@ Subsystem rules continue in nested files that load only when a session reads fil
 - Migrate-before-swap is safe only because neither Coolify's (disabled) health check nor the
   Dockerfile `HEALTHCHECK` consults `/health/ready`; never point either at it without re-deciding
   migration order. Detail: `docs/operations/deploy.md`.
+- `deploy-mode.toml` at `origin/main` decides the deploy command's gates: anything but exactly
+  `mode = "development"` (missing, malformed, another value, a failed fetch) means production.
+  Detail: `docs/operations/deploy.md`, "Development mode".
 - Dispatch has one caller, its route (`test_execution_writers.py`). `ORCHESTRATOR_DISPATCH_ENABLED` is only
   an off switch. Never restart the orchestrator while a dispatched run is live.
 - `budgets.max_llm_calls` gates the next claim, not a running attempt (`test_claims_budget.py`), and

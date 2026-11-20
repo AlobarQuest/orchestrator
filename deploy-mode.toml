@@ -1,0 +1,12 @@
+# The deploy command's mode (`scripts/deploy_orchestrator.py`, deploy.md "Development mode").
+# The command reads this file at origin/main only; anything but exactly `mode = "development"`
+# is production.
+#
+# Development drops four gates: a lane's quiet slot, the lane served-tag rule (a lane takes any
+# released commit on origin/main), prepare's lane lag check, and the nothing-live check when the
+# deploy carries no migration. It keeps everything else: commits only on origin/main, the
+# readiness and health-check refusals, migration order and its readiness proof, the digest
+# checks, the broker checks, the unfinished-run refusals, and secret handling.
+#
+# Production is a one-line PR: mode = "production".
+mode = "development"

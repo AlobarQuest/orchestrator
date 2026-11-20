@@ -1505,3 +1505,79 @@ def test_every_other_route_to_the_broker_directory_is_refused(compose: str, name
 def test_a_clean_broker_compose_has_no_broker_route_refusal() -> None:
     assert deploy.compose_broker_refusals(BROKER_COMPOSE, "execution-watch") == []
     assert deploy.compose_broker_refusals(WATCH_COMPOSE, "execution-watch") == []
+
+
+# ---- development mode (`deploy-mode.toml` at origin/main) -----------------------------------
+
+
+def _development(lanes: Lanes) -> None:
+    _commit(lanes.work, {deploy.DEPLOY_MODE_FILE: 'mode = "development"\n'}, "development")
+    _git(lanes.work, "push", "-q", "origin", "main")
+
+
+def test_development_drops_the_quiet_slot_without_reading_the_clock_or_listing() -> None:
+    def unread() -> Any:
+        raise AssertionError("development mode reads no clock and no listing")
+
+    world = World(now=unread, checks=unread)
+    assert deploy.quiet_slot_unmet(world, "execution-watch", deploy.DEVELOPMENT) == []
+
+
+def test_production_still_holds_a_lane_in_the_landing_window(lanes: Lanes) -> None:
+    lanes.served, lanes.now = lanes.added, LANDING
+    assert lanes.add("execution-watch", lanes.added) == EXIT_CONDITION
+    assert lanes.listing_reads == 1
+
+
+def test_development_redeploys_a_lane_in_the_window_and_mid_pass(
+    lanes: Lanes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _development(lanes)
+    lanes.served, lanes.now = lanes.added, LANDING
+    lanes.checks = [{"name": "sds-execution-watch", "started": True, "status": "up"}]
+    change = ("--add", "--tag", tag(lanes.added))
+
+    assert lanes.add("execution-watch", lanes.added) == EXIT_OK
+    assert json.loads(capsys.readouterr().out)["deploy_mode"] == "development"
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    assert lanes.listing_reads == 0
+    assert _status(lanes, "execution-watch") == ["unfinished"]
+
+
+def test_development_takes_any_released_tag_on_main(lanes: Lanes) -> None:
+    _development(lanes)
+    lanes.served = ""  # /health/live states no revision, so reading it would refuse
+    assert lanes.add("landing-ledger", lanes.added) == EXIT_OK
+    [run] = lanes.runs("landing-ledger")
+    assert (run.commit, run.lane_digest) == (lanes.added, lane_digest(lanes.added))
+
+
+def test_development_still_refuses_a_tag_below_the_lanes_add(lanes: Lanes) -> None:
+    lanes.added_watch()
+    _development(lanes)
+    lanes.served = ""
+    assert lanes.prepare_tag("execution-watch", lanes.old) == EXIT_REFUSED
+
+
+def test_development_still_refuses_a_commit_not_on_main(lanes: Lanes) -> None:
+    _development(lanes)
+    _git(lanes.work, "checkout", "-q", "-b", "side", lanes.added)
+    side = _commit(lanes.work, {"SIDE.md": "x\n"}, "side")
+    _git(lanes.work, "checkout", "-q", "main")
+    assert lanes.add("landing-ledger", side) == EXIT_REFUSED
+    assert "not on origin/main" in lanes.runs("landing-ledger")[0].reason
+
+
+def test_development_drops_the_lag_check_and_keeps_the_unfinished_one(lanes: Lanes) -> None:
+    _register_watch(lanes)
+    lanes.added_watch()  # finished at `added`
+    _development(lanes)
+    deploy.require_lanes_current(lanes.world(), lanes.later, lanes.later, deploy.DEVELOPMENT)
+    with pytest.raises(deploy.Refused, match="execution-watch runs"):
+        deploy.require_lanes_current(lanes.world(), lanes.later, lanes.later, deploy.PRODUCTION)
+
+    assert lanes.prepare_tag("execution-watch", lanes.following) == EXIT_OK
+    assert lanes.recheck("execution-watch", "--tag", tag(lanes.following)) == EXIT_OK
+    for mode in (deploy.DEVELOPMENT, deploy.PRODUCTION):
+        with pytest.raises(deploy.Refused, match="unfinished"):
+            deploy.require_lanes_current(lanes.world(), lanes.later, lanes.later, mode)
