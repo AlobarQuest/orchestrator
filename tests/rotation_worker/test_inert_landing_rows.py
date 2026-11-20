@@ -1,8 +1,7 @@
 """The repository's inert-landing registry rows, read by the code that acts on them.
 
-ADR-0055 amendment 19 item 8 and ADR-0059 increment 5: both rows are handed to the SDS, and the
-token's is due for its first issue; the ping URL's is dated by a later change, once the token's
-`store` unit completes. The rows are read here as the executor reads them, at `main` through
+ADR-0055 amendment 19 item 8 and ADR-0059 increment 5: both rows are handed to the SDS and due for
+their first issue. The rows are read here as the executor reads them, at `main` through
 `RepoMirror`, from this repository's own `.cred-consumers.toml`.
 """
 
@@ -123,11 +122,11 @@ def test_the_ping_url_row_names_only_its_keeper(rows: dict[str, RegistryEntry]) 
     assert f"sds_deadman_arm {CHECK} " in (ROOT / LAUNCHER).read_text()
 
 
-def test_only_the_token_row_is_due(rows: dict[str, RegistryEntry]) -> None:
-    """The ping URL's row is dated only after the token's `store` unit completes, so the two
-    issue units never wait on a mint at once."""
+def test_both_rows_are_due(rows: dict[str, RegistryEntry]) -> None:
+    """The ping URL's row is dated only after the token's `store` unit completed, so the two
+    issue units never waited on a mint at once."""
     assert rows[TOKEN].credential["rotate_requested"] == "2026-11-19"
-    assert "rotate_requested" not in rows[PING_URL].credential
+    assert rows[PING_URL].credential["rotate_requested"] == "2026-11-20"
 
 
 @BOTH
