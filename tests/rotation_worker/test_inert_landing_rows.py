@@ -88,13 +88,11 @@ def test_the_token_row_is_one_the_lane_token_adapter_acts_on(
 def test_the_token_row_declares_the_lane_s_manifest_secrets_and_its_ping_url_keeper(
     rows: dict[str, RegistryEntry],
 ) -> None:
-    """The ping URL's keeper joins the manifest's list for the lane in a later change (deploy.md,
-    the inert lander's cut-over item 6), so for now it is the one secret the row adds."""
     ping_keeper = rows[PING_URL].credential["bws_uuid"]
     projects, secrets = bws_lane_token.declared_reach(rows[TOKEN].credential)
     assert projects == frozenset()
-    assert ping_keeper not in _lane_secrets()
-    assert secrets == _lane_secrets() | {ping_keeper}
+    assert ping_keeper in _lane_secrets()
+    assert secrets == _lane_secrets()
     assert secrets == REACH
 
 
