@@ -34,7 +34,11 @@ as it stands, and the row test asserts that both rows carry their dates. The cha
    - `_generate` (`src/rotation_proposer/cli.py:444`) renders revision 1 with
      `first_issue=_first_issue(last_rotated, due.credential_id)` (`:462`).
    - `_first_issue` (`:436-441`) returns `True` while infraops serves the row's `last_rotated` as
-     null, which it does because the row has no `created`.
+     null. Both scratch runs in item 5 served `"inert-landing-ping-url": null`. infraops builds the
+     field from the row's age anchor and the rotation state
+     (`src/cli/security-drift-cli.ts:190-194`); the row has no `created` and no recorded rotation.
+     The scratch state was empty, so this is observed for the row's own fields, not for the live
+     state.
    - `plan_for` (`src/rotation_proposer/generate.py:131-162`) returns the issue plan for
      `first_issue is True` (`:149-150`).
 
@@ -112,8 +116,9 @@ a later change, as the handoff scopes it.
   ping URL's UUID.
 - Infra Brain 591, 592, and 593: the diff adds no BWS token, and the bootstrap token isn't inline.
   The one added value is a date. The scan reports 0 BLOCK.
-- Infra Brain 2890: the diff commits no ping URL; `healthcheck.alobar.net/ping/` appears nowhere in
-  it.
+- Infra Brain 2890: the diff commits no ping URL. The row names its check by name
+  (`sds-inert-landing`) and its keeper by BWS secret id, and no file in the diff holds a ping URL
+  with a UUID.
 - Infra Brain 1032 (cred.exposure-rotate): neither inert-landing row declares a
   `[[credential.exposure]]`.
 - Infra Brain 212 (HTTPS for public FQDNs): not applicable, because the diff changes no domain.
