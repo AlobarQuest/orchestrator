@@ -4,7 +4,7 @@ Outcome: done
 
 Handoff: `lanes-inc-5-inert-landing-ping-url-due` (worker W-244). Branch
 `hq/lanes-inc-5-inert-landing-ping-url-due`, base `origin/main` at `b4175ea6`. Every fact the
-handoff gives at `b4175ea6` matched at the base. PR: PR_NUMBER, head HEAD_SHA (ready, not merged).
+handoff gives at `b4175ea6` matched at the base. PR: #756, ready and not merged. Its code commit is `4f05d0b9`; the head is the commit that records this PR number.
 
 ## What I built
 
