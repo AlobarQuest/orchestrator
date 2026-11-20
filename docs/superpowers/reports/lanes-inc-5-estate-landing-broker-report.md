@@ -118,8 +118,8 @@ The estate-landing copy of #758's inert-landing change, file by file.
   and `scripts/run-estate-landing.sh`. I ran `vendor-review` on the diff from `1447b3da` to head
   `4503ef0f`: claude ok (approve), codex ok (approve), agy off by configuration. The review is
   complete: 0 findings, 0 dropped.
-- CI on the PR: when I last checked, `Rollout transcription currency` and
-  `Runner consumer compatibility` had passed, and `Quality` was pending.
+- CI on the PR at head `a074c964`: `Quality`, `Rollout transcription currency`, and
+  `Runner consumer compatibility` all passed.
 
 ## Files changed
 
