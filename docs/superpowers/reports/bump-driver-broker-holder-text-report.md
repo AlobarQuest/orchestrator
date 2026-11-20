@@ -9,7 +9,7 @@ Worker W-249. Branch `hq/bump-driver-broker-holder-text`, base `origin/main` at 
 ## What I built
 
 - **ADR-0059 Amendment 17**, appended at the end of
-  `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` (lines 4813-4905
+  `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` (lines 4814-4905
   at `353210e8`). It's the next number after Amendment 16 and dated 2026-11-20. The amendment says
   the following:
   - Under ADR-0055 amendment 30, the broker's account `lane-secrets-broker` holds the read grant
