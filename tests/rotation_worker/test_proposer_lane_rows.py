@@ -149,13 +149,18 @@ def test_no_other_lane_token_row_declares_the_same_reach(
     given another lane's whole reach is caught."""
     lane_rows = provider_entries(mirror, bws_lane_token.PROVIDER)
     mine = bws_lane_token.declared_reach(rows[lane.token].credential)[1]
-    others = [entry.credential["id"] for entry in lane_rows if entry.credential["id"] != lane.token]
+    others = [entry for entry in lane_rows if entry.credential["id"] != lane.token]
     assert others
     assert bws_lane_token.sharing_reach(lane_rows, rows[lane.token].credential) == []
-    for other in others:
-        theirs = bws_lane_token.declared_reach(rows[other].credential)[1]
+    for entry in others:
+        other = entry.credential["id"]
+        projects, theirs = bws_lane_token.declared_reach(entry.credential)
         assert theirs != mine
-        twin = {**rows[lane.token].credential, "reach_secrets": sorted(theirs)}
+        twin = {
+            **rows[lane.token].credential,
+            "reach_secrets": sorted(theirs),
+            "reach_projects": sorted(projects),
+        }
         assert bws_lane_token.sharing_reach(lane_rows, twin) == [other]
 
 

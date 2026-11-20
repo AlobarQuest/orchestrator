@@ -4358,8 +4358,8 @@ Devon answered two questions on 2026-11-20, in an interactive HQ session. They a
 8. **The unlock tier.** Anything holding the broker's token, or the broker's mount, can read for any
    lane, so the broker's token is in the unlock tier: the one BWS token that stays manual. Phase C
    settles how it rotates. The token lives in the resource's Coolify variable and its keeper secret in
-   `Rotation / Keepers`. Its registry row, added at the deploy step once the resource and the keeper
-   exist, is `rotated_by_sds = false` until then.
+   `Rotation / Keepers`. Its registry row, `secrets-broker-bws-token` in `.cred-consumers.toml`, is
+   `rotated_by_sds = false` until then.
 9. **Accepted exposure.** A mounted socket stays reachable to a lane's child process after the
    launcher drops the marker or unsets `BWS_ACCESS_TOKEN`. This is no new exposure: the child
    already could read the launcher's starting environment, token included, through `/proc`, and the

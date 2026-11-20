@@ -841,6 +841,18 @@ def test_the_matcher_refuses_an_unknown_lane_or_two_entries() -> None:
         deploy.lanes_in_registry("version = 1\n" + WATCH_TOKEN_ENTRY * 2)
 
 
+def test_the_brokers_token_row_is_skipped_and_an_unknown_lane_s_is_refused() -> None:
+    broker = (
+        WATCH_TOKEN_ENTRY.replace("bws-lane-execution-watch-token", deploy.BROKER_TOKEN_ID)
+        .replace("EXECUTION_WATCH_", "SECRETS_BROKER_")
+        .replace("ewuuid00000000000000000a", "brokeruuid0000000000000a")
+    )
+    assert deploy.lanes_in_registry("version = 1\n" + broker) == set()
+    unknown = broker.replace(deploy.BROKER_TOKEN_ID, "some-other-bws-token")
+    with pytest.raises(deploy.Refused, match="names a token for unknown lane 'secrets-broker'"):
+        deploy.lanes_in_registry("version = 1\n" + unknown)
+
+
 def test_the_repositorys_registry_registers_the_thirteen_moved_lanes() -> None:
     """Increment 2 adds the first lane token entry, increment 3 the landing ledger's, the deploy
     watcher's, the revision watcher's, the unit verifier's, the pin watcher's and the membership
