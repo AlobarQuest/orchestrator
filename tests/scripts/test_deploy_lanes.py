@@ -1181,20 +1181,78 @@ def test_a_broker_lane_needs_its_own_bind_and_an_allowlist_entry() -> None:
     [refusal] = deploy.add_refusals(service, "execution-watch", {"inert-landing": frozenset()})
     assert "BWS_ACCESS_TOKEN" in refusal and deploy.BROKER_ALLOWLIST in refusal
     assert deploy.add_refusals(service, "execution-watch") == [refusal]
+    # A wrong bind in place of the right one: no broker lane, and a stray broker mount.
     for wrong in (
         "/data/sds/broker/inert-landing:/run/sds-broker:ro",
         "/data/sds/broker/execution-watch:/run/sds-broker",
         "/data/sds/broker:/run/sds-broker:ro",
+        {"type": "bind", "source": "/data/sds/broker/execution-watch", "target": "/run/sds-broker"},
     ):
         mounted = {
             **service,
             "volumes": [v if v != BROKER_BIND else wrong for v in service["volumes"]],
         }
         assert not deploy.broker_lane(mounted, "execution-watch", allowlist), wrong
-        assert deploy.add_refusals(mounted, "execution-watch", allowlist) == [refusal], wrong
+        refused = deploy.add_refusals(mounted, "execution-watch", allowlist)
+        assert len(refused) == 2 and refused[0] == refusal, wrong
+        assert "stray mount of the secrets broker's directory" in refused[1], wrong
     # A compose that maps its token is a token lane, whatever the allowlist says.
     token_lane = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
     assert not deploy.broker_lane(token_lane, "execution-watch", allowlist)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "/data/sds/broker/inert-landing:/run/other:ro",
+        "/data/sds/broker:/mnt/broker:ro",
+        "/data/sds/broker/:/mnt/broker:ro",
+        "//data/sds/./broker/x/../inert-landing:/mnt/broker:ro",
+        "/data/sds:/mnt/sds:ro",
+        "/data:/mnt/data:ro",
+        "/:/mnt/host:ro",
+        "${SOME_PATH}:/mnt/somewhere",
+        "../../../sds/broker:/mnt/broker",
+        {"type": "bind", "source": "/data/sds/broker/inert-landing", "target": "/run/other"},
+        {"type": "bind", "source": None, "target": "/run/other"},
+        ["not", "a", "volume"],
+    ],
+)
+def test_any_other_mount_of_the_broker_directory_is_refused(extra: object) -> None:
+    """Beside the lane's own bind or on a token lane, a mount that reaches the broker's directory
+    (its lanes' sockets) is refused; one the rule can't read is refused too."""
+    service = deploy.lane_service(BROKER_COMPOSE, "execution-watch")
+    allowlist = {"execution-watch": frozenset({OBSERVER})}
+    beside = {**service, "volumes": [*service["volumes"], extra]}
+    assert deploy.stray_broker_mounts(beside, "execution-watch") == [extra]
+    assert not deploy.broker_lane(beside, "execution-watch", allowlist)
+    refusals = deploy.add_refusals(beside, "execution-watch", allowlist)
+    assert any("stray mount of the secrets broker's directory" in r for r in refusals), refusals
+
+    token_lane = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
+    token_lane = {**token_lane, "volumes": [*token_lane["volumes"], extra]}
+    [refusal] = deploy.add_refusals(token_lane, "execution-watch")
+    assert "stray mount of the secrets broker's directory" in refusal
+
+
+def test_a_token_lane_mounts_none_of_the_broker_directory() -> None:
+    token_lane = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
+    token_lane = {**token_lane, "volumes": [*token_lane["volumes"], BROKER_BIND]}
+    assert deploy.stray_broker_mounts(token_lane, "execution-watch") == [BROKER_BIND]
+    [refusal] = deploy.add_refusals(token_lane, "execution-watch")
+    assert "stray mount of the secrets broker's directory" in refusal
+
+
+def test_mounts_that_dont_reach_the_broker_are_not_stray() -> None:
+    service = deploy.lane_service(WATCH_COMPOSE, "execution-watch")
+    fine = [
+        "sds-lanes-execution-watch-state:/var/lib/sds/execution-watch",
+        "./config:/etc/config:ro",
+        "/data/sds/brokerage:/mnt/x",
+        "/data/other:/mnt/y",
+        {"type": "tmpfs", "target": "/tmp"},
+    ]
+    assert deploy.stray_broker_mounts({**service, "volumes": fine}, "execution-watch") == []
 
 
 def _broker_commit(lanes: Lanes, compose: str, allowlist: str | None) -> str:

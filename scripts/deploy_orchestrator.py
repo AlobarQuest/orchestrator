@@ -59,6 +59,7 @@ import difflib
 import fcntl
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -940,6 +941,9 @@ LANE_STATE_MOUNT = "/var/lib/sds/{lane}"
 # A lane on the secrets broker (ADR-0055 amendment 30) maps no token: it mounts its own socket
 # directory read-only, and the broker's allowlist names it.
 LANE_BROKER_BIND = "/data/sds/broker/{lane}:/run/sds-broker:ro"
+# The broker's host directory: every lane's socket lives under it, so any other mount reaching it
+# would hand a container another lane's identity.
+BROKER_ROOT = "/data/sds/broker"
 BROKER_ALLOWLIST = "lanes/secrets-broker/allowlist.toml"
 CRED_CONSUMERS = ".cred-consumers.toml"
 SECRETS_MANIFEST = ".bws-secrets.toml"
@@ -1398,12 +1402,45 @@ def lane_service(compose: str, lane: str) -> dict[str, Any]:
     return service
 
 
+def _reaches_broker(entry: object) -> bool:
+    """The volume entry's host source is `BROKER_ROOT`, under it, or above it. An entry the rule
+    can't read (an interpolated or non-string source, a relative path climbing with `..`, an
+    entry neither a string nor a mapping) counts as reaching it: the check fails closed."""
+    if isinstance(entry, str):
+        source: object = entry.partition(":")[0]
+    elif isinstance(entry, dict):
+        if "source" not in entry:
+            return False  # a tmpfs or an anonymous volume
+        source = entry["source"]
+    else:
+        return True
+    if not isinstance(source, str) or "$" in source:
+        return True
+    if not source.startswith("/"):
+        return ".." in source.split("/")
+    path = "/" + posixpath.normpath(source).lstrip("/")
+    return (
+        path == BROKER_ROOT
+        or path.startswith(BROKER_ROOT + "/")
+        or BROKER_ROOT.startswith(path.rstrip("/") + "/")
+    )
+
+
+def stray_broker_mounts(service: dict[str, Any], lane: str) -> list[object]:
+    """Each volume entry of the service reaching the broker's directory, other than a tokenless
+    lane's own bind, exactly `LANE_BROKER_BIND`. A lane that maps its token mounts none of it."""
+    own = None if TOKEN_VARIABLE in _environment(service) else LANE_BROKER_BIND.format(lane=lane)
+    return [v for v in service.get("volumes") or [] if v != own and _reaches_broker(v)]
+
+
 def broker_lane(service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]]) -> bool:
     """The lane reads through the secrets broker: its compose maps no token, it mounts its own
-    socket directory, and the allowlist names it. A lane that only lost its token is none."""
+    socket directory and nothing else of the broker's, and the allowlist names it. A lane that
+    only lost its token is none."""
     return (
         TOKEN_VARIABLE not in _environment(service)
         and LANE_BROKER_BIND.format(lane=lane) in (service.get("volumes") or [])
+        and not stray_broker_mounts(service, lane)
         and lane in allowlist
     )
 
@@ -1444,6 +1481,13 @@ def add_refusals(
         refusals.append(
             f"it maps no {TOKEN_VARIABLE} as {mapped!r}, and it is no broker lane: one that "
             f"mounts {LANE_BROKER_BIND.format(lane=lane)!r} and that {BROKER_ALLOWLIST} lists"
+        )
+    stray = stray_broker_mounts(service, lane)
+    if stray:
+        refusals.append(
+            f"it holds a stray mount of the secrets broker's directory {BROKER_ROOT}: "
+            f"{', '.join(repr(v) for v in stray)}; a broker lane mounts only "
+            f"{LANE_BROKER_BIND.format(lane=lane)!r} of it, and a token lane none"
         )
     if lane in STATEFUL_LANES and _state_volume(service, lane) is None:
         refusals.append(f"it mounts no named volume at {LANE_STATE_MOUNT.format(lane=lane)}")

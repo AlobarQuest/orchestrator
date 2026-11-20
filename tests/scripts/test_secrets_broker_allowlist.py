@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from scripts import deploy_orchestrator as deploy
 from scripts.secrets_broker import load_allowlist
 
 ALLOWLIST = Path("lanes/secrets-broker/allowlist.toml")
@@ -66,3 +67,18 @@ def test_every_tokenless_lane_is_allowlisted_and_mounts_its_socket() -> None:
     assert "inert-landing" in tokenless
     # Each allowlisted lane is a tokenless one: a lane with a token reads with it, not the socket.
     assert set(allowlist) == tokenless
+
+
+def test_no_compose_mounts_the_broker_directory_beyond_its_own_lanes_bind() -> None:
+    """Each lane's service may mount only `/data/sds/broker/<its lane>:/run/sds-broker:ro` (a token
+    lane none), and no other service any of it: the socket a lane reaches is its identity."""
+    for compose in sorted(Path("lanes").glob("*/compose.yaml")):
+        lane = compose.parent.name
+        if lane == BROKER:
+            continue
+        services = yaml.safe_load(compose.read_text())["services"]
+        for name, service in services.items():
+            own = f"/data/sds/broker/{lane}:/run/sds-broker:ro"
+            assert deploy.stray_broker_mounts(service, lane) == [], (lane, name)
+            if name != lane:
+                assert own not in (service.get("volumes") or []), (lane, name)
