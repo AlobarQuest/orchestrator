@@ -43,6 +43,10 @@ quiet-slot reads immediately before the session's writes; `lanes-finish` checks 
 of the redeployed container. The command creates and deletes nothing, holds no Coolify credential,
 and sends no alert. Run files live under `LANES_STATE_DIR`, one chain per lane.
 
+`deploy-mode.toml` at `origin/main` sets the mode. Anything but `mode = "development"` is
+production; development drops the quiet slot, the lane served-tag rule, `prepare`'s lane lag check
+and, for a deploy with no migration, the nothing-live check (deploy.md, "Development mode").
+
 Exit codes: 0 done; 2 a condition (a live unit, a digest mismatch, a revision not served, a
 binder condition, a lane's quiet slot unmet); 3 unreadable or refused; 4 a lane's quiet-slot wait
 timed out; 1 usage. Every command prints one JSON object on stdout. `prepare` and the lane phases
@@ -97,6 +101,11 @@ DRIFT = "migration_drift"
 IMAGE_NAME = "ghcr.io/alobarquest/orchestrator"
 MIGRATIONS_DIR = "migrations/versions/"
 HEALTH_CHECK_FILES = ("Dockerfile", "docker-compose.yml")
+# The deploy mode, read at `origin/main` only. Development drops the gates that keep a running
+# production safe (deploy.md, "Development mode"); anything but exactly `mode = "development"`
+# is production, the stricter mode.
+DEPLOY_MODE_FILE = "deploy-mode.toml"
+DEVELOPMENT, PRODUCTION = "development", "production"
 
 # A restart in these states strands the unit with its attempt spent: its runner calls back at the
 # end of its run (#82). `draft` is reported but does not block, because a draft is inert across a
@@ -259,6 +268,20 @@ def _gh_json(world: World, *args: str) -> Any:
         raise Refused(f"gh {' '.join(args[:3])} did not answer JSON") from error
 
 
+def deploy_mode(world: World) -> str:
+    """`development` only when `origin/main` holds exactly `mode = "development"`.
+
+    It fetches first, so a stale checkout can't keep a mode main has left, and a local edit
+    can't change it. A failed fetch, or a missing, unreadable or malformed file, is production."""
+    try:
+        _git(world, "fetch", "-q", "origin")
+        text = _git(world, "show", f"origin/main:{DEPLOY_MODE_FILE}")
+        parsed = tomllib.loads(text)
+    except Refused, OSError, subprocess.SubprocessError, ValueError:
+        return PRODUCTION
+    return DEVELOPMENT if parsed == {"mode": DEVELOPMENT} else PRODUCTION
+
+
 # --------------------------------------------------------------------------------------------
 # state
 # --------------------------------------------------------------------------------------------
@@ -391,6 +414,18 @@ def precheck(world: World, token: str) -> dict[str, list[str]]:
             + ", ".join(sorted(dispatched))
         )
     return {"reported": sorted(r["unit_key"] for r in rows if r["unit_state"] in REPORTED_STATES)}
+
+
+# What `prepare` and `recheck` report when development mode skips the nothing-live check.
+NOTHING_LIVE_SKIPPED = {
+    "draft_units": [],
+    "nothing_live": "skipped: development mode, and this deploy carries no migration",
+}
+
+
+def nothing_live(world: World) -> dict[str, Any]:
+    """The nothing-live check with the SYSTEM bearer, as its result fields."""
+    return {"draft_units": precheck(world, world.bearer(SYSTEM_BEARER_UUID))["reported"]}
 
 
 def pre_swap_revision(world: World) -> str:
@@ -578,7 +613,7 @@ def require_outgoing_ready(world: World) -> None:
     raise Refused(f"{READINESS_PATH} answered {status} ({reason}) before the deploy")
 
 
-def _prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
+def _prepare(args: argparse.Namespace, world: World, mode: str) -> dict[str, Any]:
     state_path = Path(args.state)
     if state_path.exists() or args.resume:
         return _resume(state_path, args.ref, world)
@@ -589,12 +624,15 @@ def _prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
     if enabled is None or path is None:
         raise Usage("--coolify-health-check-enabled and --coolify-health-check-path are required")
     refuse_readiness_health_checks(world, sha, enabled, path)
-    seen = precheck(world, world.bearer(SYSTEM_BEARER_UUID))
+    # Production checks nothing is live first; development only for a migration, once known.
+    live = nothing_live(world) if mode == PRODUCTION else None
     previous = pre_swap_revision(world)
     if previous == sha:
         raise Condition(f"production already serves {sha}")
-    require_lanes_current(world, previous, sha)
+    require_lanes_current(world, previous, sha, mode)
     migrations = migrations_between(world, previous, sha)
+    if live is None:
+        live = nothing_live(world) if migrations else NOTHING_LIVE_SKIPPED
     # The migration runs under the OUTGOING image, so its health check is the one that would fire.
     refuse_readiness_health_checks(world, previous, enabled, path)
     require_outgoing_ready(world)
@@ -626,7 +664,7 @@ def _prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
         "-f",
         f"label={args.label}",
     )
-    return {"resumed": False, "draft_units": seen["reported"], **_build(world, state, state_path)}
+    return {"resumed": False, **live, **_build(world, state, state_path)}
 
 
 def _build(world: World, state: State, state_path: Path) -> dict[str, Any]:
@@ -757,7 +795,7 @@ def require_migration_state(world: World, state: State) -> str:
     raise Refused(f"{READINESS_PATH} answered {status} ({reason}), not {expected}.{hint}")
 
 
-def _recheck(args: argparse.Namespace, world: World) -> dict[str, Any]:
+def _recheck(args: argparse.Namespace, world: World, mode: str) -> dict[str, Any]:
     """The prepare-time checks that age, run again immediately before the swap (#82)."""
     state = State.load(Path(args.state))
     serving = pre_swap_revision(world)
@@ -769,13 +807,8 @@ def _recheck(args: argparse.Namespace, world: World) -> dict[str, Any]:
             "somebody else deployed"
         )
     migration = require_migration_state(world, state)
-    seen = precheck(world, world.bearer(SYSTEM_BEARER_UUID))
-    return {
-        "result": "clear",
-        "previous_commit": serving,
-        "migration": migration,
-        "draft_units": seen["reported"],
-    }
+    live = nothing_live(world) if mode == PRODUCTION or state.migrations else NOTHING_LIVE_SKIPPED
+    return {"result": "clear", "previous_commit": serving, "migration": migration, **live}
 
 
 # --------------------------------------------------------------------------------------------
@@ -884,7 +917,7 @@ def run_binder(world: World, state: State, observed: str) -> dict[str, Any]:
     return result
 
 
-def _finish(args: argparse.Namespace, world: World) -> dict[str, Any]:
+def _finish(args: argparse.Namespace, world: World, mode: str) -> dict[str, Any]:
     state = State.load(Path(args.state))
     if args.observed_digest != state.pushed_digest:
         raise Condition(
@@ -1275,10 +1308,11 @@ def _recorded_lanes(world: World) -> list[str]:
     return sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
 
 
-def require_lanes_current(world: World, served: str, sha: str) -> None:
+def require_lanes_current(world: World, served: str, sha: str, mode: str = PRODUCTION) -> None:
     """Refuse a release while a lane-phase run is unfinished or a registered lane lags `served`.
 
-    A registered lane with no passed `--add` holds nothing and is skipped.
+    A registered lane with no passed `--add` holds nothing and is skipped. Development mode skips
+    the lag check; an unfinished run refuses in both modes, since it guards the run files.
     """
     unfinished = sorted(
         f"{run.lane} ({run.change_key}, run {run.run_id})"
@@ -1291,6 +1325,8 @@ def require_lanes_current(world: World, served: str, sha: str) -> None:
             f"a lane-phase run is unfinished, so no release starts: {', '.join(unfinished)}. "
             "Run its lanes-finish (or lanes-finish --restored) first."
         )
+    if mode == DEVELOPMENT:
+        return
     lagging = []
     for lane in sorted(registered_lanes(world)):
         last = last_finished(load_runs(world, lane))
@@ -1554,8 +1590,12 @@ def add_refusals(
     return refusals
 
 
-def quiet_slot_unmet(world: World, lane: str) -> list[str]:
-    """Why the lane's resource may not be redeployed now; empty when it may."""
+def quiet_slot_unmet(world: World, lane: str, mode: str) -> list[str]:
+    """Why the lane's resource may not be redeployed now; empty when it may.
+
+    Development mode has no quiet slot, so it reads neither the clock nor the listing."""
+    if mode == DEVELOPMENT:
+        return []
     unmet = []
     local = world.now().astimezone(LANDING_ZONE)
     if local.hour in LANDING_HOURS:
@@ -1573,28 +1613,38 @@ def quiet_slot_unmet(world: World, lane: str) -> list[str]:
     return unmet
 
 
-def _take_served_tag(world: World, change: Change, run: LaneRun) -> None:
-    """Resolve a sha tag to its commit and its release's lane digest. It must be the served tag."""
+def _take_release_tag(world: World, change: Change, run: LaneRun, mode: str) -> None:
+    """Resolve a sha tag to its commit on `origin/main` and its release's lane digest.
+
+    In production it must be the served tag; development takes any released commit."""
     sha = resolve_commit(world, change.commit)
-    served = pre_swap_revision(world)
-    if sha != served:
-        raise Refused(f"{change.tag} is not the served orchestrator tag sha-{served}")
+    if mode == PRODUCTION:
+        served = pre_swap_revision(world)
+        if sha != served:
+            raise Refused(f"{change.tag} is not the served orchestrator tag sha-{served}")
     run.tag, run.commit = change.tag, sha
     run.lane_digest, run.workflow_run_url = lane_release(world, sha)
 
 
-def _plan_add(world: World, args: argparse.Namespace, run: LaneRun, change: Change) -> None:
+def _plan_add(
+    world: World, args: argparse.Namespace, run: LaneRun, change: Change, mode: str
+) -> None:
     if args.schedule_written != "false":
         raise Refused(
             f"--schedule-written must be false: the session writes {SCHEDULE_VARIABLE} false "
             "before an added lane's first start"
         )
     run.resource_uuid, run.schedule = args.resource_uuid, "false"
-    _take_served_tag(world, change, run)
+    _take_release_tag(world, change, run, mode)
 
 
 def _plan_change(
-    world: World, args: argparse.Namespace, run: LaneRun, change: Change, runs: list[LaneRun]
+    world: World,
+    args: argparse.Namespace,
+    run: LaneRun,
+    change: Change,
+    runs: list[LaneRun],
+    mode: str,
 ) -> None:
     """A `--tag`, `--schedule` or `--token` replaces the lane's last finished run's values."""
     lane = run.lane
@@ -1636,20 +1686,22 @@ def _plan_change(
     if change.tag == last.tag:
         raise Refused(f"lane {lane} already runs {change.tag}")
     run.schedule = last.schedule
-    _take_served_tag(world, change, run)  # fetches first, so the descendant check sees the tag
+    _take_release_tag(world, change, run, mode)  # fetches first, so the descendant check sees it
     require_descendant(world, added.commit, run.commit)
 
 
-def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneRun]) -> None:
+def _plan(
+    world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneRun], mode: str
+) -> None:
     """Fill the run with the change, the compose it writes and the values it replaces."""
     lane, change = run.lane, _change(args)
     if change.kind == "add":
         last = last_finished(runs)
         if last is not None:
             raise Refused(f"lane {lane} was already added (run {last.run_id}); use --tag")
-        _plan_add(world, args, run, change)
+        _plan_add(world, args, run, change, mode)
     else:
-        _plan_change(world, args, run, change, runs)
+        _plan_change(world, args, run, change, runs, mode)
     run.compose_sent = _git(world, "show", f"{run.commit}:{LANE_COMPOSE.format(lane=lane)}")
     service = lane_service(run.compose_sent, lane)
     allowlist = _broker_allowlist(world, run.commit, service)
@@ -1869,7 +1921,7 @@ def _run_summary(run: LaneRun, world: World) -> dict[str, Any]:
     return {**summary, "run_file": str(_lane_dir(world, run.lane) / f"{run.run_id}.json")}
 
 
-def _lanes_prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
+def _lanes_prepare(args: argparse.Namespace, world: World, mode: str) -> dict[str, Any]:
     lane, change = args.lane, _change(args)
     with _lane_lock(world, lane):
         runs = load_runs(world, lane)
@@ -1881,7 +1933,7 @@ def _lanes_prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
             )
         fresh = _new_run(world, lane, change, WAITING, runs)
         try:
-            _plan(world, args, fresh, runs)
+            _plan(world, args, fresh, runs, mode)
         except Refused as error:
             fresh.status, fresh.reason = REFUSED, str(error)
             _save_run(world, fresh)
@@ -1913,7 +1965,7 @@ def _lanes_prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
             _save_run(world, run)
             print(run.reason, file=sys.stderr)
             raise TimedOut(run.reason)
-        unmet = quiet_slot_unmet(world, lane)
+        unmet = quiet_slot_unmet(world, lane, mode)
         run.slot_open, run.reason = not unmet, "; ".join(unmet)
         _save_run(world, run)
         if unmet:
@@ -1925,7 +1977,7 @@ def _lanes_prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
     return {"result": "prepared", "resumed": resumed is not None, **_run_summary(run, world)}
 
 
-def _lanes_recheck(args: argparse.Namespace, world: World) -> dict[str, Any]:
+def _lanes_recheck(args: argparse.Namespace, world: World, mode: str) -> dict[str, Any]:
     """The quiet-slot reads again, just before the writes. Exit 0 marks the run unfinished."""
     lane, change = args.lane, _change(args)
     with _lane_lock(world, lane):
@@ -1934,7 +1986,7 @@ def _lanes_recheck(args: argparse.Namespace, world: World) -> dict[str, Any]:
             raise Refused(f"lane {lane} has no waiting run for {change.key}; run lanes-prepare")
         if not run.slot_open:
             raise Refused(f"lanes-prepare has not found run {run.run_id}'s slot open; run it")
-        unmet = quiet_slot_unmet(world, lane)
+        unmet = quiet_slot_unmet(world, lane, mode)
         if unmet:
             run.slot_open, run.reason = False, "; ".join(unmet)
             _save_run(world, run)
@@ -2057,7 +2109,7 @@ def _lanes_restored(args: argparse.Namespace, world: World, run: LaneRun) -> dic
     return {"result": "restored", **_run_summary(run, world)}
 
 
-def _lanes_finish(args: argparse.Namespace, world: World) -> dict[str, Any]:
+def _lanes_finish(args: argparse.Namespace, world: World, mode: str) -> dict[str, Any]:
     lane, change = args.lane, _change(args)
     with _lane_lock(world, lane):
         run = _current(load_runs(world, lane), change, UNFINISHED)
@@ -2252,6 +2304,7 @@ def main(argv: Sequence[str] | None = None, world: World | None = None) -> int:
         print(json.dumps({"result": "usage", "reason": str(error)}, indent=2, sort_keys=True))
         return EXIT_USAGE
     world = world or World()
+    mode = deploy_mode(world)
     phase = {
         "prepare": _prepare,
         "recheck": _recheck,
@@ -2262,7 +2315,7 @@ def main(argv: Sequence[str] | None = None, world: World | None = None) -> int:
     }[args.phase]
     try:
         _validate(args)
-        result, code = phase(args, world), EXIT_OK
+        result, code = phase(args, world, mode), EXIT_OK
     except Usage as error:
         result, code = {"result": "usage", "reason": str(error)}, EXIT_USAGE
     except Condition as error:
@@ -2275,7 +2328,8 @@ def main(argv: Sequence[str] | None = None, world: World | None = None) -> int:
         # A missing `gh`, a timed-out subprocess: the command could not ask, so it refuses.
         reason = f"{type(error).__name__}: {error}"
         result, code = {"result": "refused", "reason": reason}, EXIT_REFUSED
-    print(json.dumps({"phase": args.phase, **result}, indent=2, sort_keys=True))
+    output = {"phase": args.phase, **result, "deploy_mode": mode}
+    print(json.dumps(output, indent=2, sort_keys=True))
     return code
 
 

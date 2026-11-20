@@ -1296,3 +1296,137 @@ def test_finish_prints_the_lane_phases_first_command_for_each_added_lane(
     )
     assert out["lane_phases"] == [command]
     assert command in err
+
+
+# --------------------------------------------------------------------------------------------
+# the deploy mode: `deploy-mode.toml` at origin/main decides the deploy gates
+# --------------------------------------------------------------------------------------------
+
+DEVELOPMENT = 'mode = "development"\n'
+
+
+def _mode_at_main(repo: Repo, text: str) -> None:
+    """Commit `deploy-mode.toml` on main and push it, leaving the checkout where it was."""
+    here = _git(repo.work, "rev-parse", "HEAD")
+    _git(repo.work, "checkout", "-q", "main")
+    _commit(repo.work, {deploy.DEPLOY_MODE_FILE: text}, "deploy mode")
+    _git(repo.work, "push", "-q", "origin", "main")
+    _git(repo.work, "checkout", "-q", here)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [None, "mode = \n", 'mode = "Development"\n', 'mode = "staging"\n', "mode = 1\n"]
+    + ['mode = "development"\nextra = true\n', "mode = development\n"],
+    ids=["missing", "malformed", "case", "unknown", "not-a-string", "extra-key", "bare-word"],
+)
+def test_anything_but_development_at_main_is_production(h: Harness, text: str | None) -> None:
+    if text is not None:
+        _mode_at_main(h.repo, text)
+    assert deploy.deploy_mode(h.world()) == deploy.PRODUCTION
+
+
+def test_development_at_main_is_development(h: Harness) -> None:
+    _mode_at_main(h.repo, '# a comment\nmode = "development"\n')
+    assert deploy.deploy_mode(h.world()) == deploy.DEVELOPMENT
+
+
+def test_the_mode_is_origin_mains_not_the_working_tree(h: Harness) -> None:
+    (h.repo.work / deploy.DEPLOY_MODE_FILE).write_text(DEVELOPMENT)
+    assert deploy.deploy_mode(h.world()) == deploy.PRODUCTION
+
+    _mode_at_main(h.repo, DEVELOPMENT)
+    (h.repo.work / deploy.DEPLOY_MODE_FILE).write_text('mode = "production"\n')
+    assert deploy.deploy_mode(h.world()) == deploy.DEVELOPMENT
+
+
+def test_every_result_carries_the_deploy_mode(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+    assert _output(capsys)[0]["deploy_mode"] == "production"
+    assert _recheck(h) == EXIT_REFUSED  # the old image is at its head: the migration hasn't run
+    assert _output(capsys)[0]["deploy_mode"] == "production"
+
+    _mode_at_main(h.repo, DEVELOPMENT)
+    assert h.finish(OTHER_DIGEST) == EXIT_CONDITION
+    assert _output(capsys)[0]["deploy_mode"] == "development"
+
+
+def test_production_still_checks_nothing_live_before_the_served_revision(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.production.live = [h.repo.migrated]
+    h.production.ledger = [_ledger_row("executing", "busy")]
+
+    assert h.prepare(h.repo.migrated) == EXIT_CONDITION
+
+    assert "busy" in _output(capsys)[0]["reason"]
+    assert h.production.paths()[0] == "/api/v1/status-ledger"
+
+
+def test_development_skips_the_nothing_live_check_without_a_migration(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mode_at_main(h.repo, DEVELOPMENT)
+    h.production.live = [h.repo.migrated]
+    h.production.ledger = [_ledger_row("executing", "busy")]
+
+    assert h.prepare(h.repo.plain) == EXIT_OK
+
+    out, _ = _output(capsys)
+    assert out["migrations"] == []
+    assert out["draft_units"] == []
+    assert "skipped" in out["nothing_live"]
+    assert "/api/v1/status-ledger" not in h.production.paths()
+    assert h.bearers == []
+
+
+def test_development_still_checks_nothing_live_for_a_migration(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mode_at_main(h.repo, DEVELOPMENT)
+    h.production.ledger = [_ledger_row("executing", "busy")]
+
+    assert h.prepare(h.repo.migrated) == EXIT_CONDITION
+
+    assert "busy" in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == []
+
+
+def test_development_checks_nothing_live_after_the_served_revision(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _mode_at_main(h.repo, DEVELOPMENT)
+    h.production.live = [h.repo.migrated]
+    h.production.ledger = [_ledger_row("executing", "busy")]
+
+    assert h.prepare(h.repo.migrated) == EXIT_CONDITION
+
+    assert "already serves" in _output(capsys)[0]["reason"]
+
+
+def test_recheck_in_development_skips_the_nothing_live_check_without_a_migration(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _state(h.repo, migrations=[]).save(h.state_path)
+    h.production.ledger = [_ledger_row("claimed", "late")]
+    assert _recheck(h) == EXIT_CONDITION
+
+    _mode_at_main(h.repo, DEVELOPMENT)
+    capsys.readouterr()
+    h.bearers.clear()
+    assert _recheck(h) == EXIT_OK
+    out, _ = _output(capsys)
+    assert (out["draft_units"], out["deploy_mode"]) == ([], "development")
+    assert "skipped" in out["nothing_live"]
+    assert h.bearers == []
+
+
+def test_recheck_in_development_still_checks_nothing_live_for_a_migration(
+    migrated: Harness,
+) -> None:
+    _mode_at_main(migrated.repo, DEVELOPMENT)
+    migrated.production.ledger = [_ledger_row("claimed", "late")]
+
+    assert _recheck(migrated) == EXIT_CONDITION
