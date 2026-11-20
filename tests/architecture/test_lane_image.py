@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 from scripts import lane_run
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -98,6 +100,7 @@ def test_the_image_copies_the_launchers_helpers_and_programs() -> None:
         "scripts/sds-*.sh",
         "scripts/sds_scope.py",
         "scripts/lane_run.py",
+        "scripts/secrets_broker.py",
         "/app/scripts/",
     ]
     assert len(list((ROOT / "scripts").glob("sds-*.sh"))) == 6
@@ -105,6 +108,30 @@ def test_the_image_copies_the_launchers_helpers_and_programs() -> None:
     assert (LANES / "lane-run").read_text().splitlines()[-1] == (
         'exec /app/.venv/bin/python -I /app/scripts/lane_run.py "$@"'
     )
+
+
+def test_the_image_copies_the_secrets_broker() -> None:
+    """The broker's compose runs the copied program on the copied allowlist, and the broker is no
+    scheduled lane: it has no crontab for the build loop or the entrypoint to find."""
+    copy = next(line for line in _instructions() if line.startswith("COPY scripts/"))
+    broker = LANES / "secrets-broker"
+    compose = yaml.safe_load((broker / "compose.yaml").read_text())
+    service = compose["services"]["secrets-broker"]
+
+    assert "scripts/secrets_broker.py" in copy.split()
+    assert "COPY lanes/ /app/lanes/" in _instructions()
+    assert service["entrypoint"] == [
+        "/app/.venv/bin/python",
+        "-I",
+        "/app/scripts/secrets_broker.py",
+        "--allowlist",
+        "/app/lanes/secrets-broker/allowlist.toml",
+        "--root",
+        "/data/sds/broker",
+    ]
+    assert (broker / "allowlist.toml").is_file()
+    assert not (broker / "crontab").exists()
+    assert "command" not in service and "ports" not in service and "labels" not in service
 
 
 def test_every_tracked_crontab_is_checked_at_build_time() -> None:

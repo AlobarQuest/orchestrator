@@ -1,0 +1,15 @@
+# The lane secrets broker's allowlist (ADR-0055 amendment 30): for each lane, every BWS secret UUID
+# that lane may read through its socket, `/data/sds/broker/<lane>/broker.sock`. The broker refuses
+# any other UUID before it calls `bws`. The image bakes this file in, so a change takes effect only
+# through a reviewed orchestrator PR and a release. The broker refuses to start if the file names a
+# lane twice or holds a malformed lane name or UUID (`scripts/secrets_broker.py`).
+#
+# One table per lane, each UUID with its registry name:
+#
+#   [lanes.<lane>]
+#   read = [
+#     "<uuid>",  # <registry name>
+#   ]
+#
+# Empty until the first lane is cut over to the broker; the broker then binds no socket.
+[lanes]

@@ -1,0 +1,29 @@
+# sds-lane-secrets-broker (ADR-0055 amendment 30): the lane secrets broker. HQ creates the resource
+# from this file. It serves nothing over the network: no port, no domain, so no Traefik labels and
+# no `networks:` entry, as `lanes/landing-ledger/compose.yaml`. It is no scheduled lane: it has no
+# crontab, and its `entrypoint:` replaces the image's cron entrypoint with the broker program,
+# `scripts/secrets_broker.py`, run as `lane_run.py` is.
+# It hands each lane in `lanes/secrets-broker/allowlist.toml` only that lane's secrets, over one
+# Unix socket per lane at `/data/sds/broker/<lane>/broker.sock` on the host bind below. Each lane's
+# compose mounts only its own directory, read-only at `/run/sds-broker`, so the socket is the lane's
+# identity. The broker creates each lane's directory (0750) and socket (0600) at start, as the
+# image's `orchestrator` user.
+# Its token is the resource's own `SECRETS_BROKER_BWS_ACCESS_TOKEN` variable; this file names it and
+# never holds a value. With it the broker reads each allowlisted secret fresh from BWS per request,
+# and caches and writes nothing.
+services:
+  secrets-broker:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    entrypoint:
+      - /app/.venv/bin/python
+      - -I
+      - /app/scripts/secrets_broker.py
+      - --allowlist
+      - /app/lanes/secrets-broker/allowlist.toml
+      - --root
+      - /data/sds/broker
+    environment:
+      BWS_ACCESS_TOKEN: ${SECRETS_BROKER_BWS_ACCESS_TOKEN}
+    volumes:
+      - /data/sds/broker:/data/sds/broker
+    restart: unless-stopped

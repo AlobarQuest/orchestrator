@@ -57,13 +57,16 @@ COPY --from=tools /out/bin/ /usr/local/bin/
 COPY --from=tools /out/node /usr/local/lib/node
 RUN for tool in node npm npx; do ln -s "../lib/node/bin/$tool" "/usr/local/bin/$tool"; done
 
-# The launchers, the six helpers they source, and the two programs they and the scheduler run.
-# Root-owned, so a lane process can't rewrite its own launcher. Each launcher sets REPO_ROOT to its
-# directory's parent, so here REPO_ROOT is /app and `$REPO_ROOT/.venv/bin/<lane>` is the
-# orchestrator image's own entry point.
-COPY scripts/run-*.sh scripts/sds-*.sh scripts/sds_scope.py scripts/lane_run.py /app/scripts/
+# The launchers, the six helpers they source, the two programs they and the scheduler run, and the
+# secrets broker's program, which `lanes/secrets-broker/compose.yaml` runs in place of the
+# entrypoint. Root-owned, so a lane process can't rewrite its own launcher. Each launcher sets
+# REPO_ROOT to its directory's parent, so here REPO_ROOT is /app and `$REPO_ROOT/.venv/bin/<lane>`
+# is the orchestrator image's own entry point.
+COPY scripts/run-*.sh scripts/sds-*.sh scripts/sds_scope.py scripts/lane_run.py \
+  scripts/secrets_broker.py /app/scripts/
 COPY lanes/lane-run /usr/local/bin/lane-run
-# Each lane's tracked crontab and compose. The entrypoint reads only `/app/lanes/<lane>/crontab`.
+# Each lane's tracked crontab and compose, and the broker's allowlist and compose. The entrypoint
+# reads only `/app/lanes/<lane>/crontab`.
 COPY lanes/ /app/lanes/
 
 # One state directory per stateful lane (decision 1, "Lane state"), owned by the user every lane
