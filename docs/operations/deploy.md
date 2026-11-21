@@ -1201,17 +1201,19 @@ orchestrator, is an HTTPS URL at the launcher's default. Its crontab runs
 02:00 to 06:00, on minute 43, which no other lane starts on. The line has no flag: the launcher
 takes none, and every pass mints.
 
-Each pass reads one secret, the orchestrator SYSTEM bearer (`221a48d5-…`), with the lane's one
-token, and runs `orchestrator mint-follow-ups --idempotency-key follow-up-mint:<UTC timestamp>
+Each pass reads one secret, the orchestrator SYSTEM bearer (`221a48d5-…`), through the lane
+secrets broker (ADR-0055 amendment 30; `docs/operations/secrets-broker.md`): the compose maps no
+token and mounts the lane's socket directory, and the broker's allowlist lists exactly that one.
+It runs `orchestrator mint-follow-ups --idempotency-key follow-up-mint:<UTC timestamp>
 --json` with `ORCHESTRATOR_API_URL`, `ORCHESTRATOR_API_TOKEN` and
 `ORCHESTRATOR_API_CREDENTIAL_KEY_ID` (`orchestrator-system`). An unreadable or empty bearer fails
 the pass before the call, and the CLI's exit 1 fails it after; either pings the check's `/fail`.
-The launcher sends no alert-hub message: the lane holds no sender token. Without
-`BWS_ACCESS_TOKEN` it refuses with one line and reads nothing. Its ping-URL secret joins its
-secrets when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane
+The launcher sends no alert-hub message: the lane holds no sender token. Outside its container
+(no broker socket and no token, `sds_in_lane_container`) it refuses with one line and reads
+nothing. Its ping-URL secret joins its secrets, and the broker's allowlist, when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane
 is in `test_deploy_lanes.py`'s `placeholders`.
 
-Until the infraops-mcp-server change in step 7 lands, infra-drift's 03:00 step also mints. Two
+Until the infraops-mcp-server change in step 9 lands, infra-drift's 03:00 step also mints. Two
 passes a day mint nothing twice: a follow-up unit's id derives from its revision
 (`follow_up_unit_id`), so the later pass reports each one `already_minted`.
 
@@ -1225,20 +1227,29 @@ following, in this order, each in its own change or act.
    moves the name lookup to install time: Devon or an interactive session on the Mac runs
    `sds_upsert_check` (`scripts/sds-install.sh`) through the broad account. The lane has no
    `install-*-launchd.sh` to call it, so this step runs it by hand with the check's payload.
-3. The lane's identity gate: the new `follow-up-mint` lane account with exactly two read grants,
-   the SYSTEM bearer (`221a48d5-…`, `SDS Operator`) and its own ping-URL secret. Then the VM
-   root's keeper commands for the lane token and `follow-up-mint-ping-url`, and the lane's
-   registry rows in this repository, in two changes: the token's row and the ping URL's row.
-4. The token's mint and the executor's write; then the ping URL's row made due and the executor's
-   write, read from the check created in step 2 (ADR-0055 amendment 23).
-5. A served release whose compose names the ping-URL secret's id, with `follow-up-mint` removed
+3. The VM root's keeper command for `follow-up-mint-ping-url`, and the ping URL's registry row
+   in this repository. The lane reads through the broker, so it has no lane account, no token of
+   its own to keep and no token to mint.
+4. The broker account's reads of the lane's two secrets (`docs/operations/secrets-broker.md`,
+   "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`) is in `SDS Operator`, which the
+   broker's account already reads for inert landing's entry. The ping-URL secret gets Devon's
+   single-secret read grant to machine account `lane-secrets-broker`, as estate landing's
+   ping-URL secret did.
+5. The ping URL's row made due and the executor's write, read from the check created in step 2
+   (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `follow-up-mint` removed
    from `test_deploy_lanes.py`'s `placeholders`.
-6. The lane's `--add`, the `lane-run --read` proof over both secrets, the schedule turned on, and
-   the first scheduled pass, which mints the due follow-up units or finds none due and pings the
-   check.
-7. The infraops-mcp-server pull request removing `drift-audit.sh`'s minting step, with its
+7. The lane's broker directory, created on the VM as root before anything mounts it:
+   `install -d -o 999 -g 999 -m 0750 /data/sds/broker/follow-up-mint`. Docker creates a missing
+   bind source root-owned, and the broker, which runs as uid 999, can't use it. Run it before the broker
+   moves to a release whose allowlist lists the lane and before the lane's `--add`.
+8. The broker moved to a release whose allowlist lists the lane (`docs/operations/secrets-broker.md`,
+   "Move the broker to a new release") and its `listening` line for the lane; then the lane's
+   `--add`, the `lane-run --read` proof over both secrets, the schedule turned on, and the first
+   scheduled pass, which mints the due follow-up units or finds none due and pings the check.
+9. The infraops-mcp-server pull request removing `drift-audit.sh`'s minting step, with its
    `BWS_ACCESS_TOKEN_SDS` Keychain read for the bearer.
-8. In this repository, after step 7 merges: the SYSTEM row's consumers in `.cred-consumers.toml`
+10. In this repository, after step 9 merges: the SYSTEM row's consumers in `.cred-consumers.toml`
    (the infraops `drift-audit.sh mint-follow-ups` reader leaves; `run-follow-up-mint.sh` joins
    the orchestrator reader's list) and the keeper's note; ADR-0007's "Scheduled trigger";
    `follow-up-scheduling.md`, "Running a pass"; and `credentials.md`'s SDS consumer paragraph.

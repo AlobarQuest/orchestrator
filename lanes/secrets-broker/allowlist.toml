@@ -45,3 +45,8 @@ read = [
   "2f708d08-ea5d-4d11-bde0-b50200c9a60b",  # factory-events-read-password
   "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
 ]
+
+[lanes.follow-up-mint]
+read = [
+  "221a48d5-3f29-4898-b300-b4820140c880",  # orchestrator-system-bearer
+]

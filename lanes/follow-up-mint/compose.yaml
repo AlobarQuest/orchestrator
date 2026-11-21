@@ -3,10 +3,13 @@
 # It joins no network beyond the resource's own, the `coolify` network included: it reaches no
 # separate Coolify database resource. The one service it calls, the orchestrator, is an HTTPS URL
 # at the launcher's default (`https://sds.alobar.net`).
-# It keeps no state (decision 1, "Lane state"), so it mounts no volume.
-# The lane's token is the resource's own `FOLLOW_UP_MINT_BWS_ACCESS_TOKEN` variable, which the VM
-# rotation executor writes; this file names it and never holds a value. With it the launcher reads
-# the orchestrator SYSTEM bearer, the lane's one work secret (`scripts/run-follow-up-mint.sh`).
+# It keeps no state (decision 1, "Lane state"), so it mounts no volume: its one mount is the
+# broker's socket directory.
+# It holds no token: it reads the orchestrator SYSTEM bearer, the lane's one work secret, through
+# the lane secrets broker (ADR-0055 amendment 30), whose socket directory
+# `/data/sds/broker/follow-up-mint` it mounts read-only at `/run/sds-broker`. `lane-run` names the
+# socket to the launcher (`scripts/run-follow-up-mint.sh`), and the broker serves it only the UUIDs
+# its entry in `lanes/secrets-broker/allowlist.toml` lists.
 # `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
 # and not the ping URL, which a later change writes here. While it's empty the outcome alarm
 # resolves no ping URL in the container and pings nothing; the pass itself still runs.
@@ -17,7 +20,8 @@ services:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["follow-up-mint"]
     environment:
-      BWS_ACCESS_TOKEN: ${FOLLOW_UP_MINT_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       SDS_DEADMAN_PING_URL_UUID: ""
+    volumes:
+      - /data/sds/broker/follow-up-mint:/run/sds-broker:ro
     restart: unless-stopped
