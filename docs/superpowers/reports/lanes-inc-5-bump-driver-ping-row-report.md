@@ -3,8 +3,9 @@ Outcome: done
 # Build report: the bump driver's ping-URL registry row, due for its first issue
 
 Worker W-255. Handoff: `lanes-inc-5-bump-driver-ping-row` (ADR-0059 increment 5, step 3g-3,
-deploy.md's bump-driver cut-over items 4 and 6). Base `origin/main` at `25ce64da`; every fact in the
-handoff was confirmed there.
+deploy.md's bump-driver cut-over items 4 and 6). Base `origin/main` at `25ce64da`. I confirmed every
+repository fact in the handoff there. The keeper's existence and the G-84 grants are the handoff's
+word: I made no BWS call.
 
 PR: [#770](https://github.com/AlobarQuest/orchestrator/pull/770), ready for review, not merged.
 The code is complete at `bb6075cd`, and this report's commit sits on top of it.
@@ -142,8 +143,8 @@ After the restore, and with `__pycache__` cleared: 8 passed.
   - Its `registered_lanes` tests (`:787`, `:801`, `:820`) use fixture worlds, not the real file.
   - `placeholders` (`:1388-1392`) still holds `bump-driver`, because the compose value stays empty
     (item 7). I didn't change it.
-- I grepped `tests/` for every test that reads the real registry, and read the ones that could pin
-  rows. None pins a count or a set of ping-URL rows:
+- I grepped `tests/` for every test that reads the real registry. The full `make check` run, with
+  the row present, passed, so no test pins rows this change breaks. The ones I read:
   - `test_registry_array_strings.py` checks for commas inside array strings. The new row has no
     array.
   - `test_standing_approval.py` reads `landing-ledger-ping-url`.
@@ -169,6 +170,12 @@ After the restore, and with `__pycache__` cleared: 8 passed.
   `bws.manifest-matches-usage` on `.bws-secrets.toml`), and one INFO judgment item.
 - `code-standards risk`: `normal`, so `vendor-review` didn't apply.
 - `/code-review` at low effort on `origin/main...HEAD`: no findings.
+
+## Deviations
+
+- `lanes/bump-driver/compose.yaml`: the handoff puts the compose in item 7's PR. I changed only its
+  comment, naming the keeper, as #765 did for estate landing. The value stays empty.
+- Handoff item 4: I left the broker's reach change as a follow-up (see "The broker's row").
 
 ## Files changed
 
@@ -227,8 +234,7 @@ The following table shows what #768 or earlier PRs had already done and what I l
 ## Self-review
 
 - The diff adds ids only. No value, ping URL or ping-URL UUID appears anywhere.
-  `430691e2-4a36-4261-a28f-b50900e064b7` is a BWS secret id. Its last group isn't a UUID inside a
-  ping URL.
+  `430691e2-4a36-4261-a28f-b50900e064b7` is a BWS secret id, not the UUID inside a ping URL.
 - The reader note's claim "pings on acting passes only, never on `--dry-run`" comes from
   `scripts/run-bump-driver.sh:120-126` (`_acting=0` for `--dry-run`, passed to
   `sds_outcome_begin`) and `scripts/sds-deadman.sh:217-225`, which resolves the URL only when

@@ -1446,7 +1446,7 @@ healthchecks_check = "sds-bump-driver"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "430691e2-4a36-4261-a28f-b50900e064b7"
-  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id and the broker's account is granted the read"
 
 # ── The lane secrets broker's token (ADR-0055 amendment 30, item 8) ───────────────
 # The one BWS token that stays manual until Phase C: anything holding it reads for any lane, so it
