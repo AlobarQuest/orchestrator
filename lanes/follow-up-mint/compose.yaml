@@ -10,9 +10,13 @@
 # `/data/sds/broker/follow-up-mint` it mounts read-only at `/run/sds-broker`. `lane-run` names the
 # socket to the launcher (`scripts/run-follow-up-mint.sh`), and the broker serves it only the UUIDs
 # its entry in `lanes/secrets-broker/allowlist.toml` lists.
-# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
-# and not the ping URL, which a later change writes here. While it's empty the outcome alarm
-# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `follow-up-mint-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose outcome alarm reads the URL from that secret through
+# the broker socket on every pass (the launcher takes no flags, so it has no `--dry-run`;
+# `scripts/sds-deadman.sh`), so the allowlist entry lists it too. The VM rotation executor writes
+# the URL there from its inbox; while the secret holds the inbox's empty marker, the alarm refuses
+# it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on
 # (`docs/operations/deploy.md`, the follow-up-mint lane's cut-over).
 services:
@@ -21,7 +25,7 @@ services:
     command: ["follow-up-mint"]
     environment:
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 46e714ca-32b7-4e89-9817-b509013363a5
     volumes:
       - /data/sds/broker/follow-up-mint:/run/sds-broker:ro
     restart: unless-stopped

@@ -50,4 +50,5 @@ read = [
 [lanes.follow-up-mint]
 read = [
   "221a48d5-3f29-4898-b300-b4820140c880",  # orchestrator-system-bearer
+  "46e714ca-32b7-4e89-9817-b509013363a5",  # follow-up-mint-ping-url
 ]
