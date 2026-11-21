@@ -132,3 +132,25 @@ def test_the_read_app_key_row_lists_the_lane_s_container_reader(
     assert reader["healthchecks_check"] == CHECK
     assert "secrets broker" in reader["note"]
     assert key["bws_uuid"] in (ROOT / LAUNCHER).read_text()
+
+
+def test_the_coolify_token_row_lists_the_lane_s_container_reader(
+    mirror: RepoMirror, origins: Origins
+) -> None:
+    """The container reads the lander's Coolify token through the broker on `--submit` passes, so
+    its hand-rotated row names that reader beside the Mac's, and the broker's allowlist entry for
+    the lane lists the id."""
+    _commit_registry(origins)
+    token = credentials(mirror)["coolify-estate-lander-token"].credential
+    readers = [
+        c
+        for c in token["consumer"]
+        if c["kind"] == "runtime-fetch"
+        and c["repo"] == "orchestrator"
+        and c["ref"] == LAUNCHER
+        and "secrets broker" in c["note"]
+    ]
+    [reader] = readers
+    assert reader["healthchecks_check"] == CHECK
+    assert "--submit" in reader["note"]
+    assert token["bws_uuid"] in load_allowlist(ALLOWLIST)[LANE]
