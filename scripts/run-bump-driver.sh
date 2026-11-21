@@ -41,9 +41,10 @@
 # job sets neither. There the launcher skips activation (the container runs the image's own code),
 # reads no Keychain item and calls no `gh`, and reads the same five secrets through the socket, or
 # with that one token in the environment, never as a process argument, each fatal as on the Mac,
-# on every pass, plus the read-only App's key (`314a966c-…`), piped straight into the mint. The
-# broker serves this lane only the UUIDs its allowlist lists
-# (`lanes/secrets-broker/allowlist.toml`), exactly the seven this launcher reads. It mints
+# on every pass, plus the factory-events chain's read password (`2f708d08-…`), the read-only
+# App's key (`314a966c-…`), piped straight into the mint, and the lane's ping-URL secret, which
+# `sds-deadman.sh` reads. The broker serves this lane only the UUIDs its allowlist lists
+# (`lanes/secrets-broker/allowlist.toml`), exactly the eight this launcher reads. It mints
 # `BUMP_DRIVER_GITHUB_TOKEN` from the read-only App, in place of `gh auth token`, for exactly the
 # repositories `bump-driver repositories` prints (the three clones and each `dependency_updates`
 # grant), with `metadata`, `pull_requests` and `contents`, read: a granted pull request's state

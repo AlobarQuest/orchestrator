@@ -434,7 +434,8 @@ container also reads the chain's read password (`factory-events-read-password`, 
 through the broker every pass and passes it to the `orchestrator.factory_chain_read` walk alone
 (ADR-0059 Amendment 13 decision item 7). ADR-0059 Amendment 17 names the broker's account,
 `lane-secrets-broker`, as the holder of the read grant on it and on the two contributor keys, one
-single-secret grant each; each grant is Devon's act at the bump driver's cut-over gate.
+single-secret grant each. Devon gave the three, and the grant on the lane's ping-URL secret, at HQ
+gate G-84 (2026-11-21); the lane's `lane-run --read` proved every read at G-86.
 
 `scripts/run-change-window.sh` holds no chain password either, and it has no Mac branch: the Mac's
 window stays infraops-mcp-server's `scripts/change-window.sh` until the lane's rollback ends. After
