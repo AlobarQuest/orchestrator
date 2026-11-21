@@ -17,7 +17,7 @@ estate landing's item 6, another broker lane.
 
 The keeper id `430691e2-4a36-4261-a28f-b50900e064b7` is a BWS secret id, not a secret, not a ping
 URL, and not a check's ping UUID. It matches `.cred-consumers.toml`'s `bump-driver-ping-url` row
-(`bws_uuid`) and `tests/rotation_worker/test_bump_driver_rows.py:32` (`KEEPER`).
+(`bws_uuid`) and `tests/rotation_worker/test_bump_driver_rows.py:33` (`KEEPER`).
 
 1. `lanes/bump-driver/compose.yaml`:
    - Line 39: `SDS_DEADMAN_PING_URL_UUID: 430691e2-4a36-4261-a28f-b50900e064b7`.
@@ -78,7 +78,7 @@ changed. The G-84 "Devon's act at the cut-over gate" text is unchanged.
 
 - `lane-run` passes `SDS_DEADMAN_PING_URL_UUID`: `scripts/lane_run.py:70`,
   `COPIED = (TOKEN, "TZ", "SDS_DEADMAN_PING_URL_UUID")`, copied into the launcher's environment at
-  `:109`; `:113-114` sets `SDS_SECRETS_SOCKET` when the socket is mounted.
+  `:109`; `:112-113` sets `SDS_SECRETS_SOCKET` when the socket is mounted.
   `test_every_compose_variable_lane_run_must_pass_is_in_its_list` passes.
 - Under the broker, the outcome alarm reads the URL by that id through the socket:
   `sds_outcome_begin` (`scripts/sds-deadman.sh:222-226`) calls `sds_deadman_resolve` on an acting
@@ -106,11 +106,12 @@ changed. The G-84 "Devon's act at the cut-over gate" text is unchanged.
 - `make check` on `66b9e614`, database `orchestrator_test_hq_w_256`, exited 0:
   - Ruff: "All checks passed!", 1039 files already formatted.
   - Pyright: 0 errors, 0 warnings.
-  - Tests: 14865 passed, 1 skipped (14866 collected).
+  - Tests: 14865 passed, 1 skipped; the log reports `10 workers [14866 items]`.
 - Security scan from the repository root: 0 BLOCK, 2 WARN, and 1 INFO, the same three #767
   reported (`bws.secret-files-gitignored`, `bws.manifest-matches-usage`,
   `bws.least-privilege-scope`). The diff causes none of them.
-- `/code-review` (low) on `origin/main...HEAD`: no findings.
+- `/code-review` (low) on `origin/main...HEAD`: the forked review returned no findings (its result
+  was empty). The vendor review covered the same diff independently.
 - `code-standards risk`: `high-risk` (secrets: `.bws-secrets.toml`,
   `lanes/secrets-broker/allowlist.toml`), so I also ran `vendor-review`: Claude and Codex both
   approve, 0 findings kept, 0 dropped. agy: off by configuration.
@@ -140,6 +141,14 @@ changed. The G-84 "Devon's act at the cut-over gate" text is unchanged.
   moves the broker before the lane's `--add`, so this needs no change; HQ keeps that order.
 - HQ merges #771 after the executor's write (item 6); its release is the served-release half of
   item 7.
+- Out of scope, so not edited: `scripts/run-bump-driver.sh:46` says the broker's allowlist lists
+  "exactly the seven this launcher reads". The entry now lists eight: those seven plus the ping-URL
+  keeper, whose id reaches the launcher from the compose, as the allowlist header (lines 20-22)
+  states. The handoff bars launcher changes; HQ may fold that one word into a later launcher change.
+  A wider sweep (`docs/operations/`, ADR-0059, the allowlist header, the launcher, the two test
+  files) found no other stale bump-driver text. ADR-0059 line 4841 ("its seven secrets", citing
+  #762) is a dated record of that commit and stays.
+- #771 is `MERGEABLE`; `mergeStateStatus` is `BLOCKED` only on required checks and review.
 - The test database `orchestrator_test_hq_w_256` still exists for HQ's teardown.
 
 ## Standards followed
