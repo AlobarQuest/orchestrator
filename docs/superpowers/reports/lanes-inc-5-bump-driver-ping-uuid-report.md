@@ -143,7 +143,7 @@ changed. The G-84 "Devon's act at the cut-over gate" text is unchanged.
   item 7.
 - Out of scope, so not edited: `scripts/run-bump-driver.sh:46` says the broker's allowlist lists
   "exactly the seven this launcher reads". The entry now lists eight: those seven plus the ping-URL
-  keeper, whose id reaches the launcher from the compose, as the allowlist header (lines 20-22)
+  keeper, whose id reaches the launcher from the compose, as the allowlist header (lines 14-16)
   states. The handoff bars launcher changes; HQ may fold that one word into a later launcher change.
   A wider sweep (`docs/operations/`, ADR-0059, the allowlist header, the launcher, the two test
   files) found no other stale bump-driver text. ADR-0059 line 4841 ("its seven secrets", citing
