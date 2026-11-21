@@ -15,19 +15,23 @@
 #
 # EXIT CODES (`orchestrator/cli.py`, `mint-follow-ups`):
 #   0  the pass ran: it minted every due follow-up unit, or found none due.
-#   1  the pass failed: no lane token, an unreadable or empty SYSTEM bearer, or the CLI's own
-#      failure (the API refused, timed out or couldn't be reached). Any other code the CLI exits
-#      with (2 is a usage error, 127 a missing binary) is reported as 1.
+#   1  the pass failed: no lane socket or token, an unreadable or empty SYSTEM bearer, or the
+#      CLI's own failure (the API refused, timed out or couldn't be reached). Any other code the
+#      CLI exits with (2 is a usage error, 127 a missing binary) is reported as 1.
 #
 # CREDENTIALS, one secret: the orchestrator SYSTEM bearer (BWS `221a48d5-…`, key id
-# `orchestrator-system`, never `orchestrator-drift-reporter`), read every pass.
+# `orchestrator-system`, never `orchestrator-drift-reporter`), read every pass through the lane
+# secrets broker (ADR-0055 amendment 30), which serves this lane only the UUIDs its allowlist lists
+# (`lanes/secrets-broker/allowlist.toml`), exactly this one.
 #
 # THE CONTAINER ONLY. The lane has no Mac job: minting runs on the Mac as a non-fatal step of
 # infraops-mcp-server's `drift-audit.sh` until a pull request there removes it. So there is no
-# Keychain branch and no activation: `lane-run` passes the lane's own token as `BWS_ACCESS_TOKEN`,
-# the bearer is read with it, in the environment, never as a process argument, and the token is
-# unset before the CLI runs, which needs none. Without `BWS_ACCESS_TOKEN` the launcher refuses
-# before it resolves a ping URL or reads anything.
+# Keychain branch and no activation: `lane-run` names the broker's mounted socket in
+# `SDS_SECRETS_SOCKET` (or passes a lane's own token as `BWS_ACCESS_TOKEN`), the bearer is read
+# through it, never as a process argument, and both variables are unset before the CLI runs, which
+# needs neither. The socket itself stays reachable, as the design accepts: the CLI runs as the same
+# user. Outside the lane's container (`sds_in_lane_container` false) the launcher refuses before it
+# resolves a ping URL or reads anything.
 #
 # Usage (in the lane's container, through `lane-run`):
 #   lane-run follow-up-mint
@@ -42,8 +46,10 @@ if [ "$#" -gt 0 ]; then
   echo "FATAL: run-follow-up-mint.sh takes no arguments" >&2
   exit 1
 fi
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the follow-up-mint lane runs only in its container, through lane-run" >&2
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the follow-up-mint lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -51,15 +57,14 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" follow-up-mint
 
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-# `sds_bws_value` with one argument takes the lane's token from the environment. An empty value
-# fails closed here, before any call: the CLI would otherwise send an empty bearer.
+# `sds_bws_value` with one argument reads through the broker's socket, or with the lane's token
+# from the environment. An empty value fails closed here, before any call: the CLI would otherwise
+# send an empty bearer.
 ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")"
 [ -n "$ORCHESTRATOR_API_TOKEN" ] || sds_outcome_fail \
-    "FATAL: could not read the orchestrator system credential from BWS (the lane's token), or it is empty"
-# The CLI needs no BWS identity, so the lane's token never reaches it.
-unset BWS_ACCESS_TOKEN
+    "FATAL: could not read the orchestrator system credential from BWS (the lane's socket or token), or it is empty"
+# The CLI needs no BWS identity, so neither the socket's marker nor a lane token reaches it.
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-system"
 export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN

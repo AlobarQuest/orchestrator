@@ -1,8 +1,9 @@
 """`scripts/run-follow-up-mint.sh` in the lane's container (ADR-0059 Amendment 10), and the
 lane's tracked files.
 
-The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it (the
-lane's token as `BWS_ACCESS_TOKEN`, a ping-URL secret id, PATH and HOME). `bws` and `curl` are
+The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it (on the
+secrets broker, `SDS_SECRETS_SOCKET` naming a stand-in broker's socket, `conftest.py`'s; or a
+lane's token as `BWS_ACCESS_TOKEN`; a ping-URL secret id, PATH and HOME). `bws` and `curl` are
 stubs on PATH and the venv's `orchestrator` is a stub that logs what reached it: nothing reads
 BWS, the Keychain, the orchestrator or Healthchecks.
 """
@@ -18,6 +19,7 @@ import pytest
 import yaml
 
 from scripts import deploy_orchestrator as deploy
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-follow-up-mint.sh")
@@ -48,7 +50,8 @@ exit 1
 """
 _TOOL = """#!/bin/bash
 echo "pass args=$* url=${ORCHESTRATOR_API_URL:-} token=${ORCHESTRATOR_API_TOKEN:-} \\
-key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-} lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 echo '{"minted":[],"skipped":[],"considered":0}'
 exit "${FAKE_PASS_RC:-0}"
 """
@@ -60,8 +63,9 @@ def _executable(path: Path, text: str) -> None:
 
 
 def _run(
-    tmp_path: Path, *args: str, **fake: str
+    tmp_path: Path, *args: str, **fake: str | None
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, list[str]]]:
+    """A `None` in `fake` removes that variable from the launcher's environment."""
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
@@ -95,7 +99,7 @@ def _run(
         [
             "/usr/bin/env",
             "-i",
-            *(f"{k}={v}" for k, v in env.items()),
+            *(f"{k}={v}" for k, v in env.items() if v is not None),
             "/bin/bash",
             str(root / "scripts" / LAUNCHER.name),
             *args,
@@ -134,7 +138,8 @@ def test_a_pass_reads_the_bearer_with_the_lanes_one_token_and_mints_as_system(
     [line] = _passes(logs["lane"])
     assert re.fullmatch(
         rf"pass args=mint-follow-ups --idempotency-key {_KEY} --json"
-        rf" url=https://sds\.alobar\.net token={SYSTEM} key=orchestrator-system lane_token=",
+        rf" url=https://sds\.alobar\.net token={SYSTEM} key=orchestrator-system lane_token="
+        r" socket=",
         line,
     ), line
     assert _pings(logs["ping"]) == [f"{PING_URL}/start", PING_URL]
@@ -174,15 +179,31 @@ def test_the_api_url_can_be_overridden_and_defaults_to_production(tmp_path: Path
     assert " url=https://orchestrator.example " in _passes(logs["lane"])[0]
 
 
-def test_without_the_lanes_token_it_refuses_and_calls_nothing(tmp_path: Path) -> None:
-    """The lane has no Mac job: without `BWS_ACCESS_TOKEN` it reads no Keychain, resolves no ping
-    URL and runs no CLI."""
-    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
+_OUTSIDE = (
+    "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the follow-up-mint lane runs only in"
+    " its container, through lane-run"
+)
+
+
+@pytest.mark.parametrize("token", [None, ""], ids=["unset", "empty"])
+def test_outside_the_container_it_refuses_and_calls_nothing(
+    tmp_path: Path, token: str | None
+) -> None:
+    """The lane has no Mac job: with neither a socket nor a token it reads no Keychain, resolves
+    no ping URL and runs no CLI."""
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN=token)
     assert result.returncode == 1
-    assert result.stderr.strip().splitlines() == [
-        "FATAL: no BWS_ACCESS_TOKEN: the follow-up-mint lane runs only in its container,"
-        " through lane-run"
-    ]
+    assert result.stderr.strip().splitlines() == [_OUTSIDE]
+    assert logs == {"lane": [], "bws": [], "ping": []}
+
+
+def test_a_socket_variable_naming_no_socket_refuses_and_calls_nothing(tmp_path: Path) -> None:
+    """`SDS_SECRETS_SOCKET` alone isn't the container: it must name a socket."""
+    not_a_socket = tmp_path / "broker.sock"
+    not_a_socket.write_text("")
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(not_a_socket))
+    assert result.returncode == 1
+    assert result.stderr.strip().splitlines() == [_OUTSIDE]
     assert logs == {"lane": [], "bws": [], "ping": []}
 
 
@@ -200,7 +221,7 @@ def test_an_unreadable_or_empty_bearer_fails_the_pass_before_the_call(
     result, logs = _run(tmp_path, **{fault: SYSTEM_UUID})
     assert result.returncode == 1
     assert "FATAL: could not read the orchestrator system credential" in result.stderr
-    assert "(the lane's token)" in result.stderr
+    assert "(the lane's socket or token)" in result.stderr
     assert _passes(logs["lane"]) == []
     assert _pings(logs["ping"]) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
 
@@ -230,6 +251,82 @@ def test_without_a_ping_url_secret_a_pass_still_runs_and_pings_nothing(tmp_path:
     ]
 
 
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+
+def _brokered(
+    tmp_path: Path, socket_path: Path, **fake: str | None
+) -> tuple[subprocess.CompletedProcess[str], dict[str, list[str]]]:
+    """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
+    return _run(tmp_path, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake)
+
+
+def test_on_the_socket_without_a_token_a_pass_reads_every_secret_through_it(
+    tmp_path: Path, broker
+) -> None:
+    """With the ping-URL secret named, the socket serves both reads and `bws` never runs. The CLI
+    gets the bearer and neither the token nor the socket's marker."""
+    socket_path = broker({SYSTEM_UUID: SYSTEM, PING_URL_UUID: PING_URL})
+    result, logs = _brokered(tmp_path, socket_path)
+    assert result.returncode == 0, result.stderr
+    assert logs["bws"] == []
+    [line] = _passes(logs["lane"])
+    assert line.endswith(f" token={SYSTEM} key=orchestrator-system lane_token= socket="), line
+    assert _pings(logs["ping"]) == [f"{PING_URL}/start", PING_URL]
+    assert SYSTEM not in result.stdout + result.stderr
+
+
+def test_on_the_socket_with_the_composes_empty_ping_id_no_lane_secret_reaches_bws(
+    tmp_path: Path, broker
+) -> None:
+    """As the compose ships: the ping-URL id is empty, so the outcome alarm falls through to the
+    name lookup, which only the broad stand-in (never in the container) reaches. The bearer still
+    comes through the socket alone."""
+    socket_path = broker({SYSTEM_UUID: SYSTEM})
+    result, logs = _brokered(
+        tmp_path, socket_path, SDS_DEADMAN_PING_URL_UUID="", BWS_ACCESS_TOKEN_BROAD="broad"
+    )
+    assert result.returncode == 0, result.stderr
+    assert not [line for line in logs["bws"] if line.startswith(SYSTEM_UUID)]
+    assert logs["ping"] == []
+    [line] = _passes(logs["lane"])
+    assert line.endswith(" lane_token= socket="), line
+
+
+@pytest.mark.parametrize(
+    ("served", "reason"),
+    [({SYSTEM_UUID: None}, "bws_failed"), ({}, "not_allowed")],
+    ids=["broker-read-failed", "not-on-the-allowlist"],
+)
+def test_a_bearer_the_socket_refuses_fails_the_pass_before_the_call(
+    tmp_path: Path, broker, served: dict[str, str | None], reason: str
+) -> None:
+    socket_path = broker({PING_URL_UUID: PING_URL, **served})
+    result, logs = _brokered(tmp_path, socket_path)
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {SYSTEM_UUID}: {reason}" in result.stderr
+    assert "FATAL: could not read the orchestrator system credential" in result.stderr
+    assert "(the lane's socket or token)" in result.stderr
+    assert logs["bws"] == []
+    assert _passes(logs["lane"]) == []
+    assert _pings(logs["ping"]) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+def test_a_dead_socket_fails_the_pass_through_the_outcome_and_never_falls_back_to_bws(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    """A mounted socket nothing listens on: the read fails by name, `sds_outcome_fail` ends the
+    pass non-zero, and no lane secret is asked of `bws`."""
+    result, logs = _brokered(
+        tmp_path, dead_socket, SDS_DEADMAN_PING_URL_UUID="", BWS_ACCESS_TOKEN_BROAD="broad"
+    )
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {SYSTEM_UUID}: no_reply" in result.stderr
+    assert "FATAL: could not read the orchestrator system credential" in result.stderr
+    assert not [line for line in logs["bws"] if line.startswith(SYSTEM_UUID)]
+    assert _passes(logs["lane"]) == []
+
+
 def test_the_console_script_is_the_orchestrator_cli() -> None:
     pyproject = Path("pyproject.toml").read_text()
     assert 'orchestrator = "orchestrator.cli:app"' in pyproject
@@ -240,17 +337,23 @@ def test_the_console_script_is_the_orchestrator_cli() -> None:
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "follow-up-mint")
-    assert deploy.add_refusals(service, "follow-up-mint") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "follow-up-mint", allowlist)
+    assert deploy.add_refusals(service, "follow-up-mint", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "follow-up-mint") == []
+    assert allowlist["follow-up-mint"] == {SYSTEM_UUID}
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["follow-up-mint"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${FOLLOW_UP_MINT_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             # Empty until the lane's ping-URL secret exists (`test_deploy_lanes.py`'s
             # `placeholders`).
             "SDS_DEADMAN_PING_URL_UUID": "",
         },
+        "volumes": ["/data/sds/broker/follow-up-mint:/run/sds-broker:ro"],
         "restart": "unless-stopped",
     }
     document = yaml.safe_load(COMPOSE.read_text())
