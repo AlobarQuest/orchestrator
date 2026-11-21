@@ -677,7 +677,7 @@ disposition = "reissue"
   repo = "orchestrator"
   ref = "scripts/run-estate-landing.sh"
   healthchecks_check = "sds-estate-landing"
-  note = "reads it on --submit passes with the narrow sds-operator identity, as ESTATE_LANDING_COOLIFY_TOKEN; pings sds-estate-landing"
+  note = "reads it on --submit passes only, as ESTATE_LANDING_COOLIFY_TOKEN, not fatal if unreadable (re-points and restores are refused by name): in the sds-lane-estate-landing container through the lane secrets broker, on the Mac with the narrow sds-operator identity; pings sds-estate-landing every pass"
 
 # ── The revision watcher's read-only Coolify token ───────────────────────────────
 # Created by Devon in Coolify on 2026-11-15 (HQ gate G-62) as `revision-watcher-read`, with `read`
@@ -1351,9 +1351,10 @@ healthchecks_check = "sds-rotation-proposer"
 # ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
 # first issue by `rotate_requested`. The ping URL's row is dated only after the token's `store` unit
 # completed, so the two issue units never waited on a mint at once. Both keepers were created in
-# Rotation / Keepers at HQ gate G-78, which also created the `inert-landing` machine account. Its
-# grants on the lane's secrets are a later act (deploy.md, the inert lander's cut-over item 4). The
-# account has no other token, so this is its only token row.
+# Rotation / Keepers at HQ gate G-78, which also created the `inert-landing` machine account. The
+# lane reads its secrets through the lane secrets broker (ADR-0055 amendment 30), whose allowlist
+# entry for the lane lists them, not with this account's token. The account has no other token, so
+# this is its only token row.
 # Neither row carries `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "inert-landing-bws-token"
@@ -1673,7 +1674,7 @@ rotated_by_sds = false
   repo = "orchestrator"
   ref = "scripts/run-bump-driver.sh"
   healthchecks_check = "sds-bump-driver"
-  note = "read in the sds-lane-bump-driver container with the lane's own token, each pass (dry or acting); held by the bump-driver lane account by Devon's grant (ADR-0059 Amendment 13 decision item 7, D-62 C); passed to the orchestrator.factory_chain_read walk alone, never factory, git, the mint or bump-driver"
+  note = "read in the sds-lane-bump-driver container through the lane secrets broker, each pass (dry or acting); ADR-0059 Amendment 17 names the broker's account, lane-secrets-broker, as the holder of the single-secret read grant Amendment 13 decision item 7 (D-62 C) authorizes, Devon's act at the bump driver's cut-over gate; passed to the orchestrator.factory_chain_read walk alone, never factory, git, the mint or bump-driver"
 
 # ── The Mac Keychain tokens this repository's launchers read for the chain (FE-5 plan follow-up 1) ──
 # Minted by Devon at FE-5 act step 0. Console-minted, hand-rotated. The act ran step 0 on 2026-11-15

@@ -411,24 +411,30 @@ item 5). Its container clears every chain variable before the pass runs.
 `scripts/run-inert-landing.sh` holds no chain password either. On the Mac it reads the orchestrator
 SYSTEM bearer and the `sds-bridge` alert sender as `sds-operator`, the change-manager READ bearer
 (`314f276d-…`) as the broad account, and takes its GitHub token from `gh auth token`. After ADR-0059
-step 3g-1's cut-over, the `inert-landing` lane account alone reads those three and the read-only
-App's key (`314a966c-…`), with the lane's own token in its container (no Keychain item), and the
-lane mints its GitHub token from that App each pass.
+step 3g-1's cut-over, the lane reads those three and the read-only App's key (`314a966c-…`)
+through the lane secrets broker's socket in its container (ADR-0055 amendment 30; no token of its
+own, no Keychain item), and mints its GitHub token from that App each pass.
 
 `scripts/run-estate-landing.sh` holds no chain password either. On the Mac it reads the orchestrator
 SYSTEM bearer, the `sds-bridge` alert sender and its Coolify token (`f9f59233-…`) as `sds-operator`,
 the change-manager READ bearer (`314f276d-…`) as the broad account, and takes its GitHub token from
-`gh auth token`. After ADR-0059 step 3g-2's cut-over, the `estate-landing` lane account alone reads
-those four and the read-only App's key (`314a966c-…`), with the lane's own token in its container
-(no Keychain item), and the lane mints its GitHub token from that App each pass.
+`gh auth token`. After ADR-0059 step 3g-2's cut-over, the lane reads those four and the read-only
+App's key (`314a966c-…`) through the lane secrets broker's socket in its container (ADR-0055
+amendment 30; no token of its own, no Keychain item), and mints its GitHub token from that App each
+pass.
 
-`scripts/run-bump-driver.sh` holds no chain password either. On the Mac it reads the orchestrator
+`scripts/run-bump-driver.sh` holds no chain password on the Mac. There it reads the orchestrator
 SYSTEM bearer and the `sds-bridge` alert sender as `sds-operator`, the change-manager READ bearer
 (`314f276d-…`) and the Code Brain and Infra Brain contributor keys (`750f737f-…`, `da8134b0-…`,
 `Brains - Contributor`) as the broad account, and takes its GitHub token from `gh auth token`.
 After ADR-0059 step 3g-3's cut-over, the lane reads those five and the read-only App's key
 (`314a966c-…`) through the lane secrets broker's socket in its container (ADR-0055 amendment 30; no
-token of its own, no Keychain item), and mints its GitHub token from that App each pass.
+token of its own, no Keychain item), and mints its GitHub token from that App each pass. The
+container also reads the chain's read password (`factory-events-read-password`, `2f708d08-…`)
+through the broker every pass and passes it to the `orchestrator.factory_chain_read` walk alone
+(ADR-0059 Amendment 13 decision item 7). ADR-0059 Amendment 17 names the broker's account,
+`lane-secrets-broker`, as the holder of the read grant on it and on the two contributor keys, one
+single-secret grant each; each grant is Devon's act at the bump driver's cut-over gate.
 
 `scripts/run-change-window.sh` holds no chain password either, and it has no Mac branch: the Mac's
 window stays infraops-mcp-server's `scripts/change-window.sh` until the lane's rollback ends. After

@@ -66,7 +66,11 @@ All in one reviewed PR, as for any lane code:
    `/data/sds/broker/<lane>:/run/sds-broker:ro`, and nothing else under, at or above
    `/data/sds/broker`. A token lane mounts none of it.
 3. In the launcher, test `sds_in_lane_container` for the host check and the empty-token check.
-4. Check that the broker's account reads the BWS project of every listed secret.
+4. Check that the broker's account reads the BWS project of every listed secret, or holds a
+   single-secret read grant on it. ADR-0059 Amendment 17 decides the second form for the bump
+   driver's three secrets in `Factory Events` and `Brains - Contributor`: one single-secret grant
+   each to `lane-secrets-broker`, not a project grant, each Devon's act at the lane's cut-over
+   gate.
 
 Then the release ships, and a session moves the broker to it ("Move the broker to a new release"),
 which creates the lane's directory and socket; its `listening` line shows it. Deploy the lane's
