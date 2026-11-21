@@ -47,7 +47,7 @@ URL, and not a check's ping UUID. It matches `.cred-consumers.toml`'s `estate-la
 5. `tests/rotation_worker/test_estate_landing_rows.py`: it asserted nothing about the keeper in the
    manifest or allowlist (the lane has no token row, so it has no declared-reach test like inert's).
    I added `test_the_ping_url_keeper_is_in_the_lane_s_manifest_secrets_and_its_broker_entry`
-   (lines 106-116), with `tomllib`, `load_allowlist` and `ALLOWLIST` (lines 11, 27, 37).
+   (lines 106-115), with `tomllib`, `load_allowlist` and `ALLOWLIST` (lines 11, 27, 37).
 6. `tests/scripts/test_run_estate_landing.py`:
    - Line 166: unchanged. It is the harness's default environment, not a copy of the compose. With
      `BWS_ACCESS_TOKEN_BROAD` set to a stand-in, it deliberately runs the dead-man helper's
