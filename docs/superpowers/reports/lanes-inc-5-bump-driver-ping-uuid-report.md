@@ -20,7 +20,7 @@ URL, and not a check's ping UUID. It matches `.cred-consumers.toml`'s `bump-driv
 (`bws_uuid`) and `tests/rotation_worker/test_bump_driver_rows.py:32` (`KEEPER`).
 
 1. `lanes/bump-driver/compose.yaml`:
-   - Line 38: `SDS_DEADMAN_PING_URL_UUID: 430691e2-4a36-4261-a28f-b50900e064b7`.
+   - Line 39: `SDS_DEADMAN_PING_URL_UUID: 430691e2-4a36-4261-a28f-b50900e064b7`.
    - Lines 23-29: the header paragraph is rewritten in `d1ea67f8`'s shape. Unlike estate's, it says
      the outcome alarm reads the URL through the broker socket on an acting pass only, never on
      `--dry-run` (`scripts/run-bump-driver.sh:120-126` passes `_acting` to `sds_outcome_begin`,
@@ -30,7 +30,7 @@ URL, and not a check's ping UUID. It matches `.cred-consumers.toml`'s `bump-driv
    `test_each_allowlisted_lane_lists_exactly_what_its_launcher_reads` already holds each entry equal
    to the launcher's UUID literals plus the compose's `SDS_DEADMAN_PING_URL_UUID`, so it needed no
    change: with the compose naming the id, it requires this line (mutation checks follow).
-3. `.bws-secrets.toml` lines 563-576: one `[[secret]]` entry after `estate-landing-ping-url`, in its
+3. `.bws-secrets.toml` lines 564-576: one `[[secret]]` entry after `estate-landing-ping-url`, in its
    comment style: `name = "bump-driver-ping-url"`, `project = "Rotation / Keepers"`,
    `lanes = ["bump-driver"]`. The comment says the lane reads it through the broker on an acting
    pass and has no token keeper.
@@ -94,8 +94,11 @@ changed. The G-84 "Devon's act at the cut-over gate" text is unchanged.
   `test_secrets_broker_allowlist.py` had 215 passed.
 - Mutation checks, each from a backup copy, restored with `cp` and confirmed with `cmp`. Control
   run: 13 passed.
-  - `lanes = ["bump-driver"]` emptied in the manifest entry: the new rows test and
-    `test_every_lanes_ping_url_secret_is_listed_for_that_lane` fail (2 failed).
+  - `lanes = ["bump-driver"]` emptied in the keeper's manifest entry only (line 576), run with
+    `test_the_repositorys_manifest_lists_the_lanes_secrets` added: the new rows test,
+    `test_every_lanes_ping_url_secret_is_listed_for_that_lane`, and the manifest test fail
+    (3 failed, 11 passed). My first run of this mutation also emptied two other `bump-driver`
+    entries (lines 266 and 272), so I reran it on line 576 alone; this is that run.
   - The allowlist line removed: the new rows test and
     `test_each_allowlisted_lane_lists_exactly_what_its_launcher_reads` fail (2 failed).
   - The compose value set back to `""`: `test_every_lanes_ping_url_secret_is_listed_for_that_lane`
