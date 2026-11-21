@@ -34,7 +34,7 @@ The code is complete at `b4156581`, and this report's commit sits on top of it.
     - The read App key reader test: follow-up minting doesn't read the App key. Its one work secret
       is the SYSTEM bearer.
   - The launcher assertion uses `sds_outcome_begin "$CHECK_NAME" follow-up-mint`
-    (`scripts/run-follow-up-mint.sh:57`). The launcher is an outcome-alarm launcher.
+    (`scripts/run-follow-up-mint.sh:58`). The launcher is an outcome-alarm launcher.
 
 I changed no compose, allowlist, `.bws-secrets.toml`, `reach_secrets`, doc or ADR.
 `46e714ca-…` is in neither the allowlist nor `reach_secrets`.
