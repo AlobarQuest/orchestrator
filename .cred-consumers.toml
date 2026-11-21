@@ -1423,6 +1423,31 @@ healthchecks_check = "sds-estate-landing"
   uuid = "11e940d7-e43a-4ebd-9026-b508017d9cef"
   note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id"
 
+# ── The bump-driver lane's ping URL (ADR-0059 increment 5) ───────────────────────
+# ADR-0055 amendment 19, item 8, for a lane on the secrets broker (amendment 30): the bump driver
+# reads every secret through the broker's socket, so it has no token of its own and no token row,
+# and this is its one row. The keeper was created in Rotation / Keepers on 2026-11-21, in the
+# session handling HQ gate G-84, by the VM root's keeper command. The broker reads it for the lane
+# once the compose names its id and the broker's account `lane-secrets-broker` is granted a read
+# on it, that secret alone; the lane's `lane-run --read` proves that read (deploy.md, the bump
+# driver's cut-over items 7 and 8). Handed to the SDS and due for its first issue by
+# `rotate_requested`. No `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "bump-driver-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "430691e2-4a36-4261-a28f-b50900e064b7"
+rotated_by_sds = true
+rotate_requested = "2026-11-21"
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-bump-driver"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "430691e2-4a36-4261-a28f-b50900e064b7"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id and the broker's account is granted the read"
+
 # ── The lane secrets broker's token (ADR-0055 amendment 30, item 8) ───────────────
 # The one BWS token that stays manual until Phase C: anything holding it reads for any lane, so it
 # is in the unlock tier. Devon minted it and pasted it into the Coolify variable on 2026-11-20, with
@@ -1478,6 +1503,8 @@ reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a1
 # with its registry rows (deploy.md, the inert lander's cut-over item 3), ahead of its account's
 # grant (item 4). The estate-landing lane's reader lands with its ping URL's row (deploy.md, estate
 # landing's cut-over item 3); it reads through the secrets broker, whose account's grant is item 4.
+# The bump-driver lane's reader lands with its ping URL's row (deploy.md, the bump driver's cut-over
+# item 4); it reads through the secrets broker, whose account reads `SDS / Lane Apps`.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -1569,6 +1596,13 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   ref = "scripts/run-estate-landing.sh"
   healthchecks_check = "sds-estate-landing"
   note = "read in the sds-lane-estate-landing container through the lane secrets broker, each pass (bare or --submit), and piped straight into sds-github-mint; pings sds-estate-landing every pass"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-bump-driver.sh"
+  healthchecks_check = "sds-bump-driver"
+  note = "read in the sds-lane-bump-driver container through the lane secrets broker, each pass (dry or acting), and piped straight into sds-github-mint; pings sds-bump-driver on acting passes only, never on --dry-run"
 
 [[credential]]
 id = "lanes-push-app-private-key"
