@@ -1161,12 +1161,12 @@ its own change or act.
    and the alert sender (`b415d03b-…`) are in `SDS Operator`, the read App key (`314a966c-…`) is in
    `SDS / Lane Apps`, and the change-manager READ bearer (`314f276d-…`) is in `Rotation / Keepers`,
    all as for inert landing's entry. The two Brain keys (`750f737f-…`, `da8134b0-…`,
-   `Brains - Contributor`) and the factory-events read password (`2f708d08-…`, `Factory Events`)
-   are outside what the broker's account reads (`.cred-consumers.toml`, the
-   `secrets-broker-bws-token` row's reach), so each needs a grant to the broker's account, Devon's
-   act at the lane's cut-over gate: until each is made,
-   `lane-run --read` refuses that UUID and every container pass fails on it. The ping-URL secret is
-   in `Rotation / Keepers` too: check that the broker's account reads it at this step.
+   `Brains - Contributor`), the factory-events read password (`2f708d08-…`, `Factory Events`) and
+   the ping-URL secret (`430691e2-…`, `Rotation / Keepers`) are outside the projects the broker's
+   account reads, so each takes a single-secret grant to the broker's account. Devon gave the four
+   at HQ gate G-84 (2026-11-21), and they are in the `secrets-broker-bws-token` row's
+   `reach_secrets` in `.cred-consumers.toml`. Without a grant, `lane-run --read` refuses that UUID
+   and every container pass fails on it.
    Devon's other act comes before step 8's dry run: the read-only App's installation on
    `AlobarQuest/code-standards`, `contents: read` (Amendment 13 decision item 7). Until then the
    mint, which names code-standards, fails, and so does every container pass.

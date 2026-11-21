@@ -69,8 +69,10 @@ All in one reviewed PR, as for any lane code:
 4. Check that the broker's account reads the BWS project of every listed secret, or holds a
    single-secret read grant on it. ADR-0059 Amendment 17 decides the second form for the bump
    driver's three secrets in `Factory Events` and `Brains - Contributor`: one single-secret grant
-   each to `lane-secrets-broker`, not a project grant, each Devon's act at the lane's cut-over
-   gate.
+   each to `lane-secrets-broker`, not a project grant. Devon gave them at HQ gate G-84
+   (2026-11-21), and the lane's `lane-run --read` proved them at G-86. The registry's
+   `secrets-broker-bws-token` row lists every grant the account holds in `reach_projects` and
+   `reach_secrets`.
 
 Then the release ships, and a session moves the broker to it ("Move the broker to a new release"),
 which creates the lane's directory and socket; its `listening` line shows it. Deploy the lane's
