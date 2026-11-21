@@ -1202,17 +1202,19 @@ orchestrator, is an HTTPS URL at the launcher's default. Its crontab runs
 02:00 to 06:00, on minute 43, which no other lane starts on. The line has no flag: the launcher
 takes none, and every pass mints.
 
-Each pass reads one secret, the orchestrator SYSTEM bearer (`221a48d5-…`), through the lane
-secrets broker (ADR-0055 amendment 30; `docs/operations/secrets-broker.md`): the compose maps no
-token and mounts the lane's socket directory, and the broker's allowlist lists exactly that one.
+Each pass reads two secrets through the lane secrets broker (ADR-0055 amendment 30;
+`docs/operations/secrets-broker.md`): the orchestrator SYSTEM bearer (`221a48d5-…`) and its
+ping-URL secret. The compose maps no token and mounts the lane's socket directory, and the broker's
+allowlist lists exactly these two.
 It runs `orchestrator mint-follow-ups --idempotency-key follow-up-mint:<UTC timestamp>
 --json` with `ORCHESTRATOR_API_URL`, `ORCHESTRATOR_API_TOKEN` and
 `ORCHESTRATOR_API_CREDENTIAL_KEY_ID` (`orchestrator-system`). An unreadable or empty bearer fails
 the pass before the call, and the CLI's exit 1 fails it after; either pings the check's `/fail`.
 The launcher sends no alert-hub message: the lane holds no sender token. Outside its container
 (no broker socket and no token, `sds_in_lane_container`) it refuses with one line and reads
-nothing. Its ping-URL secret joins its secrets, and the broker's allowlist, when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is empty and the lane
-is in `test_deploy_lanes.py`'s `placeholders`.
+nothing. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`follow-up-mint-ping-url`, which the container's outcome alarm reads the URL from through the
+socket on every pass (`scripts/sds-deadman.sh`); `.bws-secrets.toml` lists it for the lane.
 
 Until the infraops-mcp-server change in step 9 lands, infra-drift's 03:00 step also mints. Two
 passes a day mint nothing twice: a follow-up unit's id derives from its revision

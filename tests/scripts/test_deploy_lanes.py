@@ -1387,7 +1387,6 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     manifest = (ROOT / ".bws-secrets.toml").read_text()
     placeholders = {
         "change-window",
-        "follow-up-mint",
     }
     named = {}
     blank = set()
@@ -1406,6 +1405,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         "deploy-watcher",
         "estate-landing",
         "execution-watch",
+        "follow-up-mint",
         "inert-landing",
         "landing-ledger",
         "membership-check",
