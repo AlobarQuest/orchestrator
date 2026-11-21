@@ -177,3 +177,9 @@ still say infra-drift runs the pass, which the cut-over's step 10 changes.
 - Infra Brain 212 (HTTPS for public FQDNs): doesn't apply; the lane serves nothing.
 - Infra Brain 2890 (never commit a ping URL): none committed; the compose's ping id stays empty and
   the tests use `https://hc.example/...` placeholders.
+
+## CI
+
+At `f3051938`, the commit before this section: Quality passed (14,831 passed, 26 skipped),
+Rollout transcription currency passed, Runner consumer compatibility passed. The PR is
+`MERGEABLE` and `CLEAN`, ready, not merged. This section is the last commit, report text only.
