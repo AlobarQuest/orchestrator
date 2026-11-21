@@ -170,6 +170,8 @@ After the restore, and with `__pycache__` cleared: 8 passed.
   `bws.manifest-matches-usage` on `.bws-secrets.toml`), and one INFO judgment item.
 - `code-standards risk`: `normal`, so `vendor-review` didn't apply.
 - `/code-review` at low effort on `origin/main...HEAD`: no findings.
+- CI on PR head `91615f5f`: all three jobs passed. `Quality` collected and passed 14,839 tests, with 26 skipped
+  (run 44911506762).
 
 ## Deviations
 
