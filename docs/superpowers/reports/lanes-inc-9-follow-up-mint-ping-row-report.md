@@ -12,7 +12,7 @@ The code is complete at `b4156581`, and this report's commit sits on top of it.
 
 ## What I built
 
-- `.cred-consumers.toml:1452-1476`: a new block, `follow-up-mint-ping-url`, after the bump driver's.
+- `.cred-consumers.toml:1452-1478`: a new block, `follow-up-mint-ping-url`, after the bump driver's.
   - Fields: class and provider `healthchecks-ping-url`,
     `bws_uuid = "46e714ca-32b7-4e89-9817-b509013363a5"`, `rotated_by_sds = true`,
     `rotate_requested = "2026-11-21"` and `healthchecks_check = "sds-follow-up-mint"`. The keeper is
@@ -93,7 +93,7 @@ Result: 1 failed (`test_the_ping_url_row_names_only_its_keeper`), 6 passed. I re
   `{('cred.rotation-requested', 'follow-up-mint-ping-url')}`, and control minus treated is empty.
   The finding:
   `{'check': 'cred.rotation-requested', 'id': 'follow-up-mint-ping-url', 'class': 'healthchecks-ping-url', 'rotate_requested': '2026-11-21', 'rotated_by_sds': True}`.
-- Treated serves no `last_rotated` value for the row (`None`). The scratch state is empty, so this
+- Treated's `last_rotated` holds the row's id with the value `null`. The scratch state is empty, so this
   shows what the row's own fields produce, not the live state.
 
 ### 4. The rotation proposer
@@ -102,7 +102,8 @@ Result: 1 failed (`test_the_ping_url_row_names_only_its_keeper`), 6 passed. I re
   `requested` (`findings.py:131`).
 - `_generate` (`cli.py:444`) calls `plan_for` with
   `first_issue=_first_issue(last_rotated, "follow-up-mint-ping-url")` (`:462`).
-- `_first_issue` (`:436`) returns `True` for a `null` `last_rotated`.
+- `_first_issue` (`:436-441`) returns `True` when `last_rotated` holds the row's id with a `null`
+  value, which is what check 3's treated run served (the key is present, its value `null`).
 - `plan_for` (`generate.py:131`) then returns the issue plan (`:149-150`). The type has only an
   issue plan, so `None` returns it too (`:151-156`).
 - The pass generates `rotation-follow-up-mint-ping-url` revision 1: an issue plan whose machine
@@ -132,7 +133,8 @@ Result: 1 failed (`test_the_ping_url_row_names_only_its_keeper`), 6 passed. I re
 ### 5. Fixtures and existing tests
 
 - `registered_lanes` (`scripts/deploy_orchestrator.py:1308`) is `lanes_in_registry` (`:1252`). It
-  counts lane-token `coolify-env` consumers keyed `*_BWS_ACCESS_TOKEN` and skips the broker's row.
+  skips the broker's row and counts consumers that `_lane_of_token_consumer` (`:1243-1249`)
+  matches: the lane-token kind, the lane-token resource type and a `*_BWS_ACCESS_TOKEN` key.
   This row has no such consumer.
 - I ran `lanes_in_registry` on this branch's file and on `origin/main`'s. The sets are equal, 13
   lanes: `bump-proposer, change-proposer, deploy-watcher, execution-watch, inert-landing,
@@ -168,7 +170,8 @@ Result: 1 failed (`test_the_ping_url_row_names_only_its_keeper`), 6 passed. I re
     line and reran.
 - Security scan from the repo root: 0 BLOCK findings. It found two WARNs that #770 also reported
   (`bws.secret-files-gitignored`, `bws.manifest-matches-usage`) and one INFO judgment item
-  (`bws.least-privilege-scope`).
+  (`bws.least-privilege-scope`). No finding's evidence names `46e714ca-…`, so the change doesn't
+  grow either WARN.
 - `code-standards risk`: `normal`, so `vendor-review` didn't apply.
 - `/code-review` at low effort on `origin/main...HEAD`: no findings.
 
@@ -182,13 +185,15 @@ Result: 1 failed (`test_the_ping_url_row_names_only_its_keeper`), 6 passed. I re
 
 - The test file has seven tests, not the bump driver's nine. I dropped two on purpose, and "What I
   built" gives the reasons.
-- Unlike #770, I didn't change the lane's compose comment. Its comment says the ping-URL secret
-  doesn't exist yet (`lanes/follow-up-mint/compose.yaml:13-15`), which the handoff puts in item 7's
-  change along with the value.
+- Unlike #770, I didn't change the lane's compose comment, because the handoff puts the compose in
+  item 7. Two texts are therefore stale at merge: they say the ping-URL secret doesn't exist yet,
+  but the keeper has existed since G-87. They are `lanes/follow-up-mint/compose.yaml:13-15` and
+  deploy.md's "Its ping-URL secret joins its secrets, and the broker's allowlist, when it exists".
+  Item 7 must fix both.
 
 ## The broker's row (handoff item 2)
 
-The `secrets-broker-bws-token` comment (`.cred-consumers.toml:1486-1494`) lists the single-secret
+The `secrets-broker-bws-token` comment (`.cred-consumers.toml:1481-1493`) lists the single-secret
 grants in Rotation / Keepers as `change-manager/M2M_TOKEN_READ`, `inert-landing-ping-url`,
 `estate-landing-ping-url` and `bump-driver-ping-url`. It also quotes Devon's choice: "Project by
 project", with single-secret grants in Rotation / Keepers so the broker can't read every lane's
@@ -214,7 +219,8 @@ Left:
 
 1. #772 follow-up 2 (`docs/operations/deploy.md` ~1171, "Devon's other act comes before step 8's dry
    run"). The handoff didn't offer it, and it's outside the file I hold.
-2. Item 7: the compose's `SDS_DEADMAN_PING_URL_UUID` (with its comment), the broker allowlist's
+2. Item 7: the compose's `SDS_DEADMAN_PING_URL_UUID` and its stale comment, deploy.md's stale
+   "when it exists" sentence, the broker allowlist's
    `[lanes.follow-up-mint]` entry, the `.bws-secrets.toml` lane listing for `46e714ca-…`, and
    removing `follow-up-mint` from `placeholders`. When that lands, the manifest-and-allowlist test
    from `test_bump_driver_rows.py` can join `test_follow_up_mint_rows.py`.
