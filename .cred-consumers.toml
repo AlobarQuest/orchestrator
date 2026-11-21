@@ -1397,22 +1397,22 @@ healthchecks_check = "sds-inert-landing"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "35557473-f80c-44e3-892a-b507013158b1"
-  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane"
 
 # ── The estate-landing lane's ping URL (ADR-0059 increment 5) ────────────────────
 # ADR-0055 amendment 19, item 8, for a lane on the secrets broker (amendment 30): estate landing
 # reads every secret through the broker's socket, so it has no token of its own and no token row,
 # and this is its one row. The keeper was created in Rotation / Keepers at HQ gate G-81 by the VM
 # root's keeper command, and the broker's account `lane-secrets-broker` holds a read grant on it,
-# that secret alone. Handed to the SDS but not yet due: a later change adds `rotate_requested`
-# (deploy.md, estate landing's cut-over item 5). No `created`, for the reason the landing ledger's
-# block gives.
+# that secret alone. Handed to the SDS and due for its first issue by `rotate_requested`. No
+# `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "estate-landing-ping-url"
 class = "healthchecks-ping-url"
 provider = "healthchecks-ping-url"
 bws_uuid = "11e940d7-e43a-4ebd-9026-b508017d9cef"
 rotated_by_sds = true
+rotate_requested = "2026-11-21"
 # The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
 # keeps the check it pinged from the Mac (ADR-0059 decision 3).
 healthchecks_check = "sds-estate-landing"
@@ -1428,17 +1428,17 @@ healthchecks_check = "sds-estate-landing"
 # the keeper copy in Rotation / Keepers. The row is `rotated_by_sds = false`, so it has no
 # `rotate_requested` and falls to the manual checklist. No `created`, for the reason the landing
 # ledger's block gives.
-# Its reach is project-level for SDS Operator and SDS / Lane Apps, plus two single secrets in
-# Rotation / Keepers (change-manager/M2M_TOKEN_READ and inert-landing-ping-url). Devon's choice:
-# "Project by project", with single-secret grants in Rotation / Keepers so the broker can't read
-# every lane's keeper.
+# Its reach is project-level for SDS Operator and SDS / Lane Apps, plus three single secrets in
+# Rotation / Keepers (change-manager/M2M_TOKEN_READ, inert-landing-ping-url and
+# estate-landing-ping-url). Devon's choice: "Project by project", with single-secret grants in
+# Rotation / Keepers so the broker can't read every lane's keeper.
 [[credential]]
 id = "secrets-broker-bws-token"
 class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
 rotated_by_sds = false
-reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1"]
+reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef"]
 reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a157-b4fd01259df8"]
 
   [[credential.consumer]]

@@ -38,6 +38,7 @@ SECRETS = frozenset(
     {
         "314f276d-55ca-4ddc-a24d-b4a3013508cd",  # change-manager/M2M_TOKEN_READ
         "35557473-f80c-44e3-892a-b507013158b1",  # inert-landing-ping-url
+        "11e940d7-e43a-4ebd-9026-b508017d9cef",  # estate-landing-ping-url
     }
 )
 

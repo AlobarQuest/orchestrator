@@ -2,7 +2,7 @@
 
 ADR-0055 amendments 19 (item 8) and 30, and ADR-0059 increment 5: estate landing reads its secrets
 through the lane secrets broker, so it has no token row, and its one row, the ping URL's, is handed
-to the SDS and dated by a later change. The row is read here as the executor reads it, at `main`
+to the SDS and due for its first issue. The row is read here as the executor reads it, at `main`
 through `RepoMirror`, from this repository's own `.cred-consumers.toml`.
 """
 
@@ -67,9 +67,8 @@ def test_the_keeper_consumer_is_the_bws_uuid(rows: dict[str, RegistryEntry]) -> 
     assert keeper["uuid"] == credential["bws_uuid"]
 
 
-def test_the_row_is_not_yet_due(rows: dict[str, RegistryEntry]) -> None:
-    """A later change dates it (deploy.md, estate landing's cut-over item 5)."""
-    assert "rotate_requested" not in rows[PING_URL].credential
+def test_the_row_is_due_for_its_first_issue(rows: dict[str, RegistryEntry]) -> None:
+    assert rows[PING_URL].credential["rotate_requested"] == "2026-11-21"
 
 
 def test_the_row_has_no_age_anchor(rows: dict[str, RegistryEntry]) -> None:
