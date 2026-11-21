@@ -32,6 +32,7 @@ read = [
   "221a48d5-3f29-4898-b300-b4820140c880",  # orchestrator-system-bearer
   "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE (--submit only)
   "f9f59233-0794-4ea8-9806-b4f3011e6147",  # COOLIFY_TOKEN_SDS_ESTATE_LANDER (--submit only)
+  "11e940d7-e43a-4ebd-9026-b508017d9cef",  # estate-landing-ping-url
 ]
 
 [lanes.bump-driver]
