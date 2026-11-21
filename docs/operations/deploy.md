@@ -1083,12 +1083,13 @@ driver acts unless `--dry-run` is given. So the bare `lane-run bump-driver` is a
 once the lane is in `.claude/hq-gate-pass.json` an HQ cycle may run it out of schedule. The
 reporting run is `lane-run bump-driver --dry-run`, which acts on nothing and pings nothing.
 
-Its `.bws-secrets.toml` secrets are the following seven, all read through the lane secrets broker
-on every pass (ADR-0055 amendment 30; `docs/operations/secrets-broker.md`), each fatal if
-unreadable, the first six as on the Mac: the compose maps no token and mounts the lane's socket
-directory, and the broker's allowlist lists exactly these. Its ping-URL secret joins them, in the
-manifest and the allowlist, when it exists; until then the compose's `SDS_DEADMAN_PING_URL_UUID` is
-empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following seven, all read through
+the lane secrets broker (ADR-0055 amendment 30; `docs/operations/secrets-broker.md`): the compose
+maps no token and mounts the lane's socket directory, and the broker's allowlist lists exactly
+these eight. The seven are read on every pass, each fatal if unreadable, the first six as on the
+Mac. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `bump-driver-ping-url`,
+which the container's outcome alarm reads the URL from through the socket on an acting pass only,
+never on `--dry-run` (`scripts/sds-deadman.sh`).
 
 - The orchestrator SYSTEM bearer and the `sds-bridge` alert sender (read on a `--dry-run` pass
   too, which sends nothing).

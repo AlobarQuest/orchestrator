@@ -693,7 +693,7 @@ PING_URL_SECRET = "11111111-2222-4333-8444-555555555555"
 
 def _brokered(tmp_path: Path, socket_path: Path, *args: str, **fake: str | None) -> Run:
     """The container as `lane-run` starts it on the broker: no token and the socket's marker. The
-    compose's ping-URL id is empty, so an acting pass's outcome alarm asks for the broad identity;
+    harness's ping-URL id is empty, so an acting pass's outcome alarm asks for the broad identity;
     the stand-in keeps the real Keychain out of the test."""
     return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake)
 
@@ -739,7 +739,7 @@ def test_container_branch_runs_on_the_socket_without_a_token(
 
 
 def test_with_a_ping_url_named_the_socket_serves_every_read(tmp_path: Path, broker) -> None:
-    """Once the compose names the ping-URL secret (a later change), the outcome alarm reads it
+    """With a ping-URL id named, as the compose names one, the outcome alarm reads it
     through the socket too, and `bws` never runs. No broad identity: nothing falls back to the
     Mac."""
     socket_path = broker(
@@ -785,7 +785,7 @@ def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
 def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
     """The container block ends in `sds_outcome_end`, which exits, so every Keychain read and `gh`
     call after its closing `fi` is the Mac's. The outcome alarm's own Keychain read is reached only
-    without a broad identity and a ping-URL id, which the compose names once its secret exists."""
+    without a broad identity and a ping-URL id, which the compose names."""
     lines = LAUNCHER.read_text().splitlines()
     block = lines.index("if sds_in_lane_container; then")
     end = lines.index("fi", block)
@@ -863,8 +863,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
         "environment": {
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "BUMP_DRIVER_STATE_DIR": "/var/lib/sds/bump-driver",
-            # A placeholder until the lane's ping-URL secret exists.
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `bump-driver-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "430691e2-4a36-4261-a28f-b50900e064b7",
             # The work carrier's three chain settings: the chain's container inside `coolify`.
             **CHAIN_SETTINGS,
         },
@@ -921,11 +921,12 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
     """The lane's `--token` proof reads what the manifest lists for it: its seven secrets, the
-    chain's read password included. Its ping-URL secret joins them when it exists. The launcher
-    names each secret it reads."""
+    chain's read password included, and its ping-URL secret. The launcher names each secret it
+    reads, except the ping-URL secret, whose id reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "430691e2-4a36-4261-a28f-b50900e064b7"
     secrets = deploy.lane_secrets(manifest, "bump-driver")
-    assert sorted(secrets) == sorted(LANE_SECRETS)
+    assert sorted(secrets) == sorted([*LANE_SECRETS, ping_url_secret])
     launcher = LAUNCHER.read_text()
     for uuid in secrets:
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid

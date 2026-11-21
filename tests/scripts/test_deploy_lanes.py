@@ -1386,7 +1386,6 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     later change writes the id."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
     placeholders = {
-        "bump-driver",
         "change-window",
         "follow-up-mint",
     }
@@ -1401,6 +1400,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
             named[lane] = environment["SDS_DEADMAN_PING_URL_UUID"]
     assert blank == placeholders
     assert {
+        "bump-driver",
         "bump-proposer",
         "change-proposer",
         "deploy-watcher",

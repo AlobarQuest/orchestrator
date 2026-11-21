@@ -20,10 +20,13 @@
 # "TWO HOSTS, ONE LAUNCHER"), and the broker serves it only the UUIDs its entry in
 # `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
 # `BUMP_DRIVER_BWS_ACCESS_TOKEN` variable as a fallback, which this file maps to nothing.
-# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
-# secret, `bump-driver-ping-url` in `Rotation / Keepers`, created at HQ gate G-84: an id, not a
-# secret and not the ping URL. While it's empty the outcome alarm
-# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `bump-driver-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose outcome alarm reads the URL from that secret through
+# the broker socket on an acting pass only, never on `--dry-run` (`scripts/sds-deadman.sh`), so the
+# allowlist entry lists it too. The VM rotation executor writes the URL there from its inbox; while
+# the secret holds the inbox's empty marker, the alarm refuses it and pings nothing, and the pass
+# itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on
 # (`docs/operations/deploy.md`, the bump driver's cut-over).
 services:
@@ -33,7 +36,7 @@ services:
     environment:
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       BUMP_DRIVER_STATE_DIR: /var/lib/sds/bump-driver
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 430691e2-4a36-4261-a28f-b50900e064b7
       FACTORY_EVENTS_DB_HOST: b82fa1vg5whecgnjreuqb5tk
       FACTORY_EVENTS_DB_PORT: "5432"
       FACTORY_EVENTS_DB_NAME: postgres
