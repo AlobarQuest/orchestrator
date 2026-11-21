@@ -677,14 +677,7 @@ disposition = "reissue"
   repo = "orchestrator"
   ref = "scripts/run-estate-landing.sh"
   healthchecks_check = "sds-estate-landing"
-  note = "reads it on --submit passes with the narrow sds-operator identity, as ESTATE_LANDING_COOLIFY_TOKEN; pings sds-estate-landing"
-
-  [[credential.consumer]]
-  kind = "runtime-fetch"
-  repo = "orchestrator"
-  ref = "scripts/run-estate-landing.sh"
-  healthchecks_check = "sds-estate-landing"
-  note = "read in the sds-lane-estate-landing container through the lane secrets broker on --submit passes only, not fatal if unreadable (re-points and restores are refused by name), as ESTATE_LANDING_COOLIFY_TOKEN; pings sds-estate-landing every pass"
+  note = "reads it on --submit passes only, as ESTATE_LANDING_COOLIFY_TOKEN, not fatal if unreadable (re-points and restores are refused by name): in the sds-lane-estate-landing container through the lane secrets broker, on the Mac with the narrow sds-operator identity; pings sds-estate-landing every pass"
 
 # ── The revision watcher's read-only Coolify token ───────────────────────────────
 # Created by Devon in Coolify on 2026-11-15 (HQ gate G-62) as `revision-watcher-read`, with `read`
