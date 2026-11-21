@@ -20,8 +20,9 @@
 # "TWO HOSTS, ONE LAUNCHER"), and the broker serves it only the UUIDs its entry in
 # `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
 # `BUMP_DRIVER_BWS_ACCESS_TOKEN` variable as a fallback, which this file maps to nothing.
-# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
-# and not the ping URL, which a later change writes here. While it's empty the outcome alarm
+# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
+# secret, `bump-driver-ping-url` in `Rotation / Keepers`, created at HQ gate G-84: an id, not a
+# secret and not the ping URL. While it's empty the outcome alarm
 # resolves no ping URL in the container and pings nothing; the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on
 # (`docs/operations/deploy.md`, the bump driver's cut-over).
