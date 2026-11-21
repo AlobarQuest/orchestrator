@@ -5,7 +5,8 @@ Outcome: done
 Handoff: `sds-hq/state/handoffs/lanes-inc-9-follow-up-mint-broker.md`. Worker W-254. Base
 `origin/main` at `26f196d2`, confirmed unmoved by a fetch in the worktree before work started.
 Branch `hq/lanes-inc-9-follow-up-mint-broker`, PR #769 (ready, not a draft; not merged). The code
-commit is `25eefd7b`; this report is the commit after it, and the PR head is that commit.
+commit is `25eefd7b`. Later commits carry this report, a `credentials.md` rewrap, and the
+`deploy.md` step reorder in the review follow-up; the PR head is the last of them.
 
 ## What I built
 
@@ -47,26 +48,33 @@ The follow-up-mint copy of #762 (bump driver) and #761 (estate landing).
      `(the lane's socket or token)`; the compose test asserts `broker_lane`, `add_refusals(...,
      allowlist) == []`, `compose_broker_refusals == []`, the allowlist entry, and the service with
      no token and the one mount. It was the only test asserting `FOLLOW_UP_MINT_BWS_ACCESS_TOKEN`.
-5. `docs/operations/deploy.md`, the follow-up-mint section:
-   - "Each pass reads one secret" paragraph: through the lane secrets broker, compose maps no
-     token, allowlist lists exactly that one (replaces "with the lane's one token").
-   - "Without `BWS_ACCESS_TOKEN` it refuses" sentence: now "Outside its container (no broker socket
-     and no token, `sds_in_lane_container`)"; the ping-URL secret joins the allowlist too.
-   - "Until the infraops-mcp-server change in step 7" → step 9 (renumbered).
-   - Old step 3 (lane account, keeper commands for the lane token and ping URL, two registry rows)
-     → new step 3: the keeper command for `follow-up-mint-ping-url` and its registry row only; no
-     lane account, token keeper, or token mint.
-   - Old step 4 (token mint and executor write, then ping URL due) → new step 4: the broker
-     account's reads (SYSTEM bearer in `SDS Operator`, already read for inert landing; Devon's
-     single-secret grant of `follow-up-mint-ping-url` to machine account `lane-secrets-broker`,
-     as estate landing's ping-URL secret). New step 5: the ping URL's row made due and the
-     executor's write.
-   - Old 5 → new 6 unchanged. New step 7: `install -d -o 999 -g 999 -m 0750
-     /data/sds/broker/follow-up-mint`, before the broker moves to a release listing the lane and
-     before the `--add`. New step 8 (old 6): broker moved to that release and its `listening` line,
-     then the `--add`, the `--read` proof over both secrets, the schedule, the first pass.
-   - Old 7, 8 → new 9, 10 (text unchanged except "after step 9 merges").
-   - I left out HQ's gate id (G-81) from the page: nothing in this repository defines it.
+5. `docs/operations/deploy.md`, the follow-up-mint section (line numbers after the change; hunks
+   from `git diff -U0 origin/main...HEAD`):
+   - Lines 1204-1207, "Each pass reads one secret": through the lane secrets broker, compose maps
+     no token, allowlist lists exactly that one (was "with the lane's one token").
+   - Lines 1211-1213: "Without `BWS_ACCESS_TOKEN` it refuses" became "Outside its container (no
+     broker socket and no token, `sds_in_lane_container`)"; the ping-URL secret joins the
+     allowlist too.
+   - Line 1216: "step 7" became "step 9" (renumbered).
+   - Lines 1223-1228, new step 1: `install -d -o 999 -g 999 -m 0750
+     /data/sds/broker/follow-up-mint`, first in the list. It depends on nothing, and it must come
+     before the lane's `--add` (Docker creates a missing bind source root-owned) and before any
+     broker move to a release that lists the lane. The broker moves by its own act
+     (`secrets-broker.md`, "Move the broker to a new release"), and another lane's cut-over can
+     make that move first, so a later position wouldn't hold. The text names the owner as the
+     image's `orchestrator` user and keeps the handoff's command as given.
+   - Lines 1229-1235: old steps 1 and 2, renumbered 2 and 3, text unchanged.
+   - Lines 1236-1245: old step 3 (lane account, keeper commands for the lane token and ping URL,
+     two registry rows) became step 4: the ping URL's keeper command and registry row only, no
+     lane account, token keeper or token mint. Old step 4 (token mint and executor write, then
+     ping URL due) became step 5, the broker account's reads (SYSTEM bearer in `SDS Operator`,
+     already read for inert landing; Devon's single-secret grant of `follow-up-mint-ping-url` to
+     machine account `lane-secrets-broker`, as for estate landing's ping-URL secret), and step 6,
+     the ping URL's row made due and the executor's write ("the check created in step 3").
+   - Lines 1246-1251: old step 5 became 7, unchanged; step 8 (was 6) adds the broker move to a
+     release listing the lane and its `listening` line before the `--add`.
+   - Lines 1252-1257: old steps 7 and 8 became 9 and 10 ("after step 9 merges").
+   - I left HQ's gate id (G-81) out of the page: nothing in this repository defines it.
 6. Registry text: `.bws-secrets.toml` lines 25-26, the SYSTEM bearer's follow-up-mint comment now
    says it reads through the broker with no token of its own. `.cred-consumers.toml` has no
    follow-up-mint reader row, so nothing changed there. I also changed
@@ -89,7 +97,15 @@ Amendment 10 (starts line 3090):
 - Line 3214, the superseded-text table row: "Answered by decision item 3: the `follow-up-mint` lane
   account."
 
-ADR-0055: no line names the follow-up-mint lane (`grep -n follow-up-mint` is empty).
+- Lines 3099-3100, the quoted D-49 question: "lane BWS identity that reads only the SYSTEM
+  bearer (one more reader of it; you mint its token as for every lane)". It quotes Devon's
+  question, so it may stay as a record.
+- Line 3110, "Relates to": "decision 2 (the lane identity and the two TOML files)".
+
+I read Amendment 10 end to end (lines 3090-3221). ADR-0055: no line names the follow-up-mint lane
+(`grep -n follow-up-mint` is empty). ADR-0007's "Scheduled trigger" and
+`docs/operations/follow-up-scheduling.md`, "Running a pass", say nothing about a lane token; they
+still say infra-drift runs the pass, which the cut-over's step 10 changes.
 
 ## Item 8: deploy checks and crontab need no change
 
@@ -110,6 +126,8 @@ ADR-0055: no line names the follow-up-mint lane (`grep -n follow-up-mint` is emp
 
 - `make check` with `TEST_DATABASE_URL` at `orchestrator_test_hq_w_254` (migrated first): exit 0;
   14,857 collected, 14,856 passed, 1 skipped; ruff and pyright clean.
+- After the review follow-up (the `deploy.md` step reorder and report edits), the full pytest suite
+  again on the same database: 14,856 passed, 1 skipped, 11 deselected.
 - Mutation controls on the launcher, each restored after:
   - `unset BWS_ACCESS_TOKEN` alone (socket marker leaks to the CLI): 2 tests fail. The first
     run of this mutation found that one brokered test used a substring match (`socket=` inside
@@ -118,8 +136,8 @@ ADR-0055: no line names the follow-up-mint lane (`grep -n follow-up-mint` is emp
 - Security scan from the repo root: 0 BLOCK, 2 WARN, 1 INFO. The WARNs (`*-migration/` gitignore
   coverage; undeclared UUID `aaff45ca-…`) are present without this diff: the UUID isn't in it.
 - `code-standards risk`: `high-risk` (secrets: `.bws-secrets.toml`, `lanes/secrets-broker/allowlist.toml`).
-- `/code-review` low on `origin/main...HEAD`: no findings.
-- `vendor-review`: complete, 2 of 2 seats succeeded (claude, codex), both approve, 0 findings,
+- `/code-review` low on `origin/main...HEAD` at `25eefd7b`: returned `(none)`.
+- `vendor-review` at `25eefd7b`: complete, 2 of 2 seats succeeded (claude, codex), both approve, 0 findings,
   0 dropped. agy: off by configuration.
 
 ## Files changed
@@ -137,9 +155,10 @@ ADR-0055: no line names the follow-up-mint lane (`grep -n follow-up-mint` is emp
   lookup needs the broad identity, which the container doesn't have), so a refused or dead-socket
   read fails the pass with exit 1 and pings nothing until the ping-URL id lands (new step 6). That
   is the existing placeholder behaviour, not new.
-- The uid 999 in the `install -d` step is the handoff's. The image's `orchestrator` user is a
-  `useradd --system` user (`Dockerfile:38`) with no fixed uid in the file; confirm 999 on the VM
-  at that step.
+- The uid and gid 999 in the `install -d` step are the handoff's. The image's `orchestrator` user
+  and group come from `groupadd --system` and `useradd --system` (`Dockerfile:37-38`) with no fixed
+  id, and nothing in this repository records 999. Confirm it on the VM at that step
+  (`docker run --rm --entrypoint id ghcr.io/alobarquest/sds-lanes:<tag>`).
 - No logging change, and no production act of any kind.
 
 ## Standards followed

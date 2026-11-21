@@ -1220,29 +1220,31 @@ passes a day mint nothing twice: a follow-up unit's id derives from its revision
 Its cut-over (ADR-0059, "Cut-over for one lane", and Amendment 10 decision item 4) still needs the
 following, in this order, each in its own change or act.
 
-1. The orchestrator serving this release; then HQ creates `sds-lane-follow-up-mint` from the
+1. The lane's broker directory, created on the VM as root, owned by the image's `orchestrator`
+   user: `install -d -o 999 -g 999 -m 0750 /data/sds/broker/follow-up-mint`. It depends on
+   nothing, and it must come before two acts: the lane's `--add`, since Docker creates a missing
+   bind source root-owned, and any move of the broker to a release whose allowlist lists the lane,
+   which another lane's cut-over can make first ("Move the broker to a new release" in
+   `docs/operations/secrets-broker.md` is its own act).
+2. The orchestrator serving this release; then HQ creates `sds-lane-follow-up-mint` from the
    compose without deploying it.
-2. The check, `sds-follow-up-mint`, created before anything reads its ping URL. It has no Mac
+3. The check, `sds-follow-up-mint`, created before anything reads its ping URL. It has no Mac
    predecessor, and the executor reads the ping URL from the check listing. ADR-0059 decision 3
    moves the name lookup to install time: Devon or an interactive session on the Mac runs
    `sds_upsert_check` (`scripts/sds-install.sh`) through the broad account. The lane has no
    `install-*-launchd.sh` to call it, so this step runs it by hand with the check's payload.
-3. The VM root's keeper command for `follow-up-mint-ping-url`, and the ping URL's registry row
+4. The VM root's keeper command for `follow-up-mint-ping-url`, and the ping URL's registry row
    in this repository. The lane reads through the broker, so it has no lane account, no token of
    its own to keep and no token to mint.
-4. The broker account's reads of the lane's two secrets (`docs/operations/secrets-broker.md`,
+5. The broker account's reads of the lane's two secrets (`docs/operations/secrets-broker.md`,
    "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`) is in `SDS Operator`, which the
    broker's account already reads for inert landing's entry. The ping-URL secret gets Devon's
    single-secret read grant to machine account `lane-secrets-broker`, as estate landing's
    ping-URL secret did.
-5. The ping URL's row made due and the executor's write, read from the check created in step 2
+6. The ping URL's row made due and the executor's write, read from the check created in step 3
    (ADR-0055 amendment 23).
-6. A served release whose compose names the ping-URL secret's id, with `follow-up-mint` removed
+7. A served release whose compose names the ping-URL secret's id, with `follow-up-mint` removed
    from `test_deploy_lanes.py`'s `placeholders`.
-7. The lane's broker directory, created on the VM as root before anything mounts it:
-   `install -d -o 999 -g 999 -m 0750 /data/sds/broker/follow-up-mint`. Docker creates a missing
-   bind source root-owned, and the broker, which runs as uid 999, can't use it. Run it before the broker
-   moves to a release whose allowlist lists the lane and before the lane's `--add`.
 8. The broker moved to a release whose allowlist lists the lane (`docs/operations/secrets-broker.md`,
    "Move the broker to a new release") and its `listening` line for the lane; then the lane's
    `--add`, the `lane-run --read` proof over both secrets, the schedule turned on, and the first
@@ -1250,9 +1252,9 @@ following, in this order, each in its own change or act.
 9. The infraops-mcp-server pull request removing `drift-audit.sh`'s minting step, with its
    `BWS_ACCESS_TOKEN_SDS` Keychain read for the bearer.
 10. In this repository, after step 9 merges: the SYSTEM row's consumers in `.cred-consumers.toml`
-   (the infraops `drift-audit.sh mint-follow-ups` reader leaves; `run-follow-up-mint.sh` joins
-   the orchestrator reader's list) and the keeper's note; ADR-0007's "Scheduled trigger";
-   `follow-up-scheduling.md`, "Running a pass"; and `credentials.md`'s SDS consumer paragraph.
+    (the infraops `drift-audit.sh mint-follow-ups` reader leaves; `run-follow-up-mint.sh` joins
+    the orchestrator reader's list) and the keeper's note; ADR-0007's "Scheduled trigger";
+    `follow-up-scheduling.md`, "Running a pass"; and `credentials.md`'s SDS consumer paragraph.
 
 `change-window`'s tracked files (`lanes/change-window/compose.yaml` and `crontab`) don't register
 it either. It's ADR-0059 increment 8's lane: it executes the change requests change-manager holds
