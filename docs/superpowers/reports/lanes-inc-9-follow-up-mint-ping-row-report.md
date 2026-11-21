@@ -174,6 +174,9 @@ Result: 1 failed (`test_the_ping_url_row_names_only_its_keeper`), 6 passed. I re
   grow either WARN.
 - `code-standards risk`: `normal`, so `vendor-review` didn't apply.
 - `/code-review` at low effort on `origin/main...HEAD`: no findings.
+- CI on PR head `86442da1`, which differs from the code commit only in this report: all three jobs
+  passed. `Quality` collected and passed 14,847 tests, with 26 skipped (run 44938131022). Earlier
+  runs on older heads were cancelled by the next push.
 
 ## Files changed
 
