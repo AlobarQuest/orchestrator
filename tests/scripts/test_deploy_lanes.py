@@ -1388,7 +1388,6 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     placeholders = {
         "bump-driver",
         "change-window",
-        "estate-landing",
         "follow-up-mint",
     }
     named = {}
@@ -1405,6 +1404,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         "bump-proposer",
         "change-proposer",
         "deploy-watcher",
+        "estate-landing",
         "execution-watch",
         "inert-landing",
         "landing-ledger",

@@ -997,11 +997,12 @@ The flag is in the crontab line, so a scheduled pass asks for landings. The bare
 nor GHCR, but this lane arms the dead-man switch, so a bare run pings its check (ADR-0059, "It
 pings the real check").
 
-Its `.bws-secrets.toml` secrets are the following five, all read through the lane secrets broker
-(ADR-0055 amendment 30; `docs/operations/secrets-broker.md`): the compose maps no token and mounts
-the lane's socket directory, and the broker's allowlist lists exactly these. Its ping-URL secret
-joins them, in the manifest and the allowlist, when it exists; until then the compose's
-`SDS_DEADMAN_PING_URL_UUID` is empty and the lane is in `test_deploy_lanes.py`'s `placeholders`.
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following five, all read through
+the lane secrets broker (ADR-0055 amendment 30; `docs/operations/secrets-broker.md`): the compose
+maps no token and mounts the lane's socket directory, and the broker's allowlist lists exactly
+these six. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`estate-landing-ping-url`, which the container's dead-man helper reads the URL from through the
+socket on every pass (`scripts/sds-deadman.sh`).
 
 - On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer, and the read-only
   App's key.

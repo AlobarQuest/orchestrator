@@ -421,7 +421,7 @@ PING_URL_SECRET = "11111111-2222-4333-8444-555555555555"
 
 def _brokered(tmp_path: Path, socket_path: Path, *args: str, **fake: str | None) -> Run:
     """The container as `lane-run` starts it on the broker: no token and the socket's marker. The
-    compose's ping-URL id is empty, so the dead-man helper's name lookup asks for the broad
+    harness's ping-URL id is empty, so the dead-man helper's name lookup asks for the broad
     identity; the stand-in keeps the real Keychain out of the test."""
     return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake)
 
@@ -461,8 +461,8 @@ def test_container_branch_runs_on_the_socket_without_a_token(
 
 
 def test_with_a_ping_url_named_the_socket_serves_every_read(tmp_path: Path, broker) -> None:
-    """Once the compose names the ping-URL secret (a later change), the dead-man helper reads it
-    through the socket too, and `bws` never runs. No broad identity: nothing falls back to the
+    """With a ping-URL id named, as the compose names one, the dead-man helper reads it through the
+    socket too, and `bws` never runs. No broad identity: nothing falls back to the
     Mac."""
     socket_path = broker(
         {PING_URL_SECRET: "https://ping.example/x", **{u: value(u) for u in LANE_SECRETS}}
@@ -505,7 +505,7 @@ def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
 def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
     """The container block exits, so every Keychain read and `gh` call after its closing `fi` is
     the Mac's. The dead-man helper's own Keychain read is reached only without a broad identity
-    and a ping-URL id, which the container's compose names once its secret exists."""
+    and a ping-URL id, which the container's compose names."""
     lines = LAUNCHER.read_text().splitlines()
     block = lines.index("if sds_in_lane_container; then")
     end = lines.index("fi", block)
@@ -605,8 +605,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
         "environment": {
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "LANDER_STATE_DIR": "/var/lib/sds/estate-landing",
-            # A placeholder until the lane's ping-URL secret exists.
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `estate-landing-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "11e940d7-e43a-4ebd-9026-b508017d9cef",
         },
         "volumes": [
             "sds-lanes-estate-landing-state:/var/lib/sds/estate-landing",
@@ -659,11 +659,13 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 
 def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it: its five secrets. Its
-    ping-URL secret joins them when it exists. The launcher names each secret it reads."""
+    """The lane's `--token` proof reads what the manifest lists for it: its five secrets and its
+    ping-URL secret. The launcher names each secret it reads, except the ping-URL secret, whose id
+    reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "11e940d7-e43a-4ebd-9026-b508017d9cef"
     secrets = deploy.lane_secrets(manifest, "estate-landing")
-    assert sorted(secrets) == sorted(LANE_SECRETS)
+    assert sorted(secrets) == sorted([*LANE_SECRETS, ping_url_secret])
     launcher = LAUNCHER.read_text()
     for uuid in secrets:
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid
