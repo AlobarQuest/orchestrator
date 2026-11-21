@@ -8,6 +8,7 @@ through `RepoMirror`, from this repository's own `.cred-consumers.toml`.
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from rotation_worker.registry import (
     provider_entries,
     rotated_by_sds,
 )
+from scripts.secrets_broker import load_allowlist
 from tests.rotation_worker.conftest import Origins
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +34,7 @@ KEEPER = "430691e2-4a36-4261-a28f-b50900e064b7"
 CHECK = "sds-bump-driver"
 LAUNCHER = "scripts/run-bump-driver.sh"
 COMPOSE = ROOT / "lanes" / LANE / "compose.yaml"
+ALLOWLIST = ROOT / "lanes" / "secrets-broker" / "allowlist.toml"
 
 
 def _commit_registry(origins: Origins) -> None:
@@ -101,6 +104,18 @@ def test_the_lane_has_no_token_row_and_reads_through_the_broker(
     compose = COMPOSE.read_text()
     assert "BWS_ACCESS_TOKEN:" not in compose
     assert f"- /data/sds/broker/{LANE}:/run/sds-broker:ro" in compose
+
+
+def test_the_ping_url_keeper_is_in_the_lane_s_manifest_secrets_and_its_broker_entry(
+    rows: dict[str, RegistryEntry],
+) -> None:
+    """The lane reads its ping-URL secret through the broker, so the keeper the row names must be
+    both a manifest secret for the lane (its `--token` proof) and in its allowlist entry (or the
+    broker refuses the outcome alarm's read)."""
+    keeper = rows[PING_URL].credential["bws_uuid"]
+    manifest = tomllib.loads((ROOT / ".bws-secrets.toml").read_text())
+    assert keeper in {s["uuid"] for s in manifest["secret"] if LANE in s.get("lanes", [])}
+    assert keeper in load_allowlist(ALLOWLIST)[LANE]
 
 
 def test_the_read_app_key_row_lists_the_lane_s_container_reader(
