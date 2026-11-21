@@ -95,7 +95,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   moving a secret, grep the whole portfolio for the UUID, not the repos you expect to own it.
   `scripts/run-follow-up-mint.sh` (ADR-0059 increment 9, Amendment 10) reads the bearer in its
   lane's container through the lane secrets broker, whose allowlist gives the lane nothing else
-  but its own ping-URL secret once that exists. The `drift-audit.sh` read leaves when
+  but its own ping-URL secret. The `drift-audit.sh` read leaves when
   infraops-mcp-server drops its minting step (`docs/operations/deploy.md`, the follow-up-mint
   lane's cut-over).
 

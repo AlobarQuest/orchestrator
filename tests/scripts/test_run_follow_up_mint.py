@@ -30,6 +30,9 @@ CRONTAB = Path("lanes/follow-up-mint/crontab")
 SYSTEM_UUID = "221a48d5-3f29-4898-b300-b4820140c880"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/follow-up-mint"
+# The BWS secret id of `follow-up-mint-ping-url`, which the compose names: not a secret, not the
+# ping URL, and not the harness's stand-in id above.
+PING_URL_KEEPER = "46e714ca-32b7-4e89-9817-b509013363a5"
 LANE_TOKEN = "a-lane-token"
 SYSTEM = f"value-of-{SYSTEM_UUID}"
 
@@ -237,7 +240,7 @@ def test_the_clis_failure_fails_the_outcome(tmp_path: Path, code: int, expected:
 
 
 def test_without_a_ping_url_secret_a_pass_still_runs_and_pings_nothing(tmp_path: Path) -> None:
-    """The compose's empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
+    """An empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
     needs the broad identity `lane-run` doesn't pass. `/usr/bin/security` is asked there (macOS
     has it, the image doesn't), so a stand-in broad identity keeps the real Keychain out of the
     test; in the container nothing would read the Healthchecks key at all."""
@@ -276,10 +279,10 @@ def test_on_the_socket_without_a_token_a_pass_reads_every_secret_through_it(
     assert SYSTEM not in result.stdout + result.stderr
 
 
-def test_on_the_socket_with_the_composes_empty_ping_id_no_lane_secret_reaches_bws(
+def test_on_the_socket_with_an_empty_ping_id_no_lane_secret_reaches_bws(
     tmp_path: Path, broker
 ) -> None:
-    """As the compose ships: the ping-URL id is empty, so the outcome alarm falls through to the
+    """With the ping-URL id empty, the outcome alarm falls through to the
     name lookup, which only the broad stand-in (never in the container) reaches. The bearer still
     comes through the socket alone."""
     socket_path = broker({SYSTEM_UUID: SYSTEM})
@@ -342,16 +345,15 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     assert deploy.broker_lane(service, "follow-up-mint", allowlist)
     assert deploy.add_refusals(service, "follow-up-mint", allowlist) == []
     assert deploy.compose_broker_refusals(COMPOSE.read_text(), "follow-up-mint") == []
-    assert allowlist["follow-up-mint"] == {SYSTEM_UUID}
+    assert allowlist["follow-up-mint"] == {SYSTEM_UUID, PING_URL_KEEPER}
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["follow-up-mint"],
         # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
-            # Empty until the lane's ping-URL secret exists (`test_deploy_lanes.py`'s
-            # `placeholders`).
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `follow-up-mint-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": PING_URL_KEEPER,
         },
         "volumes": ["/data/sds/broker/follow-up-mint:/run/sds-broker:ro"],
         "restart": "unless-stopped",
@@ -382,9 +384,13 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
             assert 43 not in taken, lane
 
 
-def test_the_repositorys_manifest_lists_the_lanes_one_secret() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it: the SYSTEM bearer alone,
-    until its ping-URL secret joins it."""
+def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
+    """The lane's `--token` proof reads what the manifest lists for it: the SYSTEM bearer and its
+    ping-URL secret. The launcher names the bearer; the ping-URL secret's id reaches it from the
+    compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
-    assert deploy.lane_secrets(manifest, "follow-up-mint") == [SYSTEM_UUID]
-    assert SYSTEM_UUID in LAUNCHER.read_text()
+    secrets = deploy.lane_secrets(manifest, "follow-up-mint")
+    assert sorted(secrets) == sorted([SYSTEM_UUID, PING_URL_KEEPER])
+    launcher = LAUNCHER.read_text()
+    assert SYSTEM_UUID in launcher
+    assert PING_URL_KEEPER not in launcher
