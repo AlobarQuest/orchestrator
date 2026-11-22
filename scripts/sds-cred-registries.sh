@@ -31,8 +31,8 @@ SDS_CRED_REGISTRIES=(infraops-mcp-server change-manager factory-runner orchestra
 sds_anonymous_clone() {
   local repository="$1" directory="$2" out
   # git's own message is kept for the log; it holds no credential (none is configured).
-  if ! out="$(env -u BWS_ACCESS_TOKEN -u GIT_CONFIG_COUNT -u GIT_TRACE -u GIT_TRACE_CURL \
-      -u GIT_TRACE_PACKET -u GIT_CURL_VERBOSE \
+  if ! out="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET -u GIT_CONFIG_COUNT -u GIT_TRACE \
+      -u GIT_TRACE_CURL -u GIT_TRACE_PACKET -u GIT_CURL_VERBOSE \
       GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
       git clone --quiet --depth 1 --single-branch --branch main \
       "https://github.com/AlobarQuest/$repository.git" "$directory" 2>&1)"; then

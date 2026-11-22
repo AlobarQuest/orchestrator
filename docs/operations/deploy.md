@@ -1302,39 +1302,53 @@ So the digest arrives at about 04:00, not at the Mac's 07:30 outbox send: a noti
 arrival, and the lane keeps no outbox. A failed send logs one line and leaves the pass's exit as it
 was.
 
-The lane's four secrets don't exist yet, so each id is empty in the launcher, and a pass that needs
-an empty id fails closed with one line before it clones or reads anything. `test_run_change_window.py`'s
-`EMPTY_IDS` lists them, and `test_deploy_lanes.py`'s `placeholders` lists the lane for its empty
+The lane reads its four secrets, all in BWS `Rotation / Keepers`, through the lane secrets broker
+(ADR-0055 amendment 30): its compose maps no `BWS_ACCESS_TOKEN` and mounts
+`/data/sds/broker/change-window` read-only at `/run/sds-broker`, and the broker's allowlist lists
+exactly the four ids the launcher reads (`test_run_change_window.py`'s `DEFAULT_IDS`). Outside its
+container (no broker socket and no token, `sds_in_lane_container`) the launcher refuses with one
+line and reads nothing. `test_deploy_lanes.py`'s `placeholders` lists the lane for its empty
 ping-URL id. The ids live in the launcher, not the compose, because `lane-run` passes the
 launcher a fixed list of variables.
+
+One precondition holds before two acts: the lane's broker directory, created on the VM as root and
+owned by the image's `orchestrator` user (`install -d -o 999 -g 999 -m 0750
+/data/sds/broker/change-window`), exists as 999:999 0750 since HQ gate G-85. It must exist before
+any move of the broker to a release whose allowlist lists the lane, which another lane's cut-over
+can make first ("Move the broker to a new release" in `docs/operations/secrets-broker.md` is its
+own act), and before the lane's `--add`, since Docker creates a missing bind source root-owned.
 
 Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
 its own change or act.
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-change-window` from the
    compose without deploying it.
-2. The lane's identity gate and the mint gates for its four secrets and its ping URL: the new
-   `change-window` lane account with read grants on exactly those five. The four are a dedicated
-   production Coolify token for this lane only, team-wide `read`, `write` and `deploy` without
-   `read:sensitive` (D-70 A, ADR-0059 Amendment 15), change-manager's `execute` bearer
-   (`M2M_TOKEN_EXECUTE`, change-manager #168), an Anthropic API key, and an alert-hub sender token
-   for the digest. Devon creates and mints each value and grants each read. Once the `execute`
-   bearer is minted, the session reads it by UUID in one process and, through infraops, writes the
-   JSON entry holding its sha256 hash (computed in-process, never echoed) to change-manager's
-   `M2M_TOKEN_EXECUTE` in both `is_preview` rows (change-manager
-   `docs/operations/bearer-settings.md`, "The value"), restarts
-   change-manager as an announced production act, and verifies the restart by `/api/health`
-   `revision`, one `execute`-scoped read with the new bearer and a refused control bearer, all
-   before the paired pass (ADR-0059 Amendment 14 decision item 7). Then the VM root's keeper
-   commands for the lane token and `change-window-ping-url`.
-3. The lane's `.bws-secrets.toml` and `.cred-consumers.toml` rows in this repository, with the
-   secrets' UUIDs, in their own changes. In the same work, a change writes each UUID into the
-   launcher and removes it from `EMPTY_IDS`.
-4. The token's mint and the executor's write; then the ping URL's row made due and the executor's
-   write, read from `Change Manager OPs Check` (ADR-0055 amendment 23).
+2. The lane's four secrets and its ping-URL keeper, done at HQ gate G-88 (2026-11-22). The lane
+   reads through the broker, so it has no lane account, no token of its own, and no token keeper.
+   The four secrets and the ping-URL keeper `change-window-ping-url` (`1d6a0ab4-…`, no value yet)
+   are in `Rotation / Keepers`, each with Devon's single-secret read grant to machine account
+   `lane-secrets-broker`. The four are a dedicated production Coolify token for this lane only
+   (Coolify `4.0.0-beta.473`), team-wide `read`, `write` and `deploy` without `read:sensitive`
+   (D-70 A, ADR-0059 Amendment 15); change-manager's `execute` bearer (`M2M_TOKEN_EXECUTE`,
+   change-manager #168); an Anthropic API key in a workspace of its own, `sds-change-window`; and an
+   alert-hub sender token for the digest, source `report-change-window`. The `execute` bearer's
+   JSON entry holding its sha256 hash is written to change-manager's `M2M_TOKEN_EXECUTE` in both
+   `is_preview` rows (change-manager `docs/operations/bearer-settings.md`, "The value"), and
+   change-manager was restarted and checked (act `cm-execute-bearer-restart`), before the paired
+   pass (ADR-0059 Amendment 14 decision item 7).
+3. The lane's broker change in this repository: the launcher's four ids, its `sds_in_lane_container`
+   check, the compose's broker mount, the allowlist's `[lanes.change-window]`, and the lane's
+   `.bws-secrets.toml` rows and `.cred-consumers.toml` rows for the Coolify token and the Anthropic
+   key. The `execute` bearer's registry row is change-manager's. The digest sender token has no
+   registry row yet.
+4. The ping URL's row made due and the executor's write, read from `Change Manager OPs Check`
+   (ADR-0055 amendment 23). The lane has no token to mint or write.
 5. A served release whose compose names the ping-URL secret's id, with `change-window` removed from
    `test_deploy_lanes.py`'s `placeholders`.
-6. The lane's `--add`, then the `lane-run --read` proof over all five secrets.
+6. The broker moved to a release whose allowlist lists the lane
+   (`docs/operations/secrets-broker.md`, "Move the broker to a new release") and its `listening`
+   line for the lane; then the lane's `--add`, then the `lane-run --read` proof over all five
+   secrets.
 7. The paired pass: `run-window --dry-run --instance prod` on both hosts in the same minute (the
    bare `lane-run change-window` in the container), compared on exit code and on the set of ids
    each would claim. Beside it, read-only reach probes from the lane's container: `curl -fsS

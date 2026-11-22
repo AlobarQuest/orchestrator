@@ -6,11 +6,14 @@
 # container on its resource's default network reaches (HQ G-73), as estate landing reaches it.
 # It never reaches dev Coolify (D-67 C).
 # It keeps no state (decision 1, "Lane state"), so it mounts no volume: each pass clones
-# infraops-mcp-server into a directory it removes, and writes the window's report there.
-# The lane's token is the resource's own `CHANGE_WINDOW_BWS_ACCESS_TOKEN` variable, which the VM
-# rotation executor writes; this file names it and never holds a value. With it the launcher reads
-# the secrets the pass needs (`scripts/run-change-window.sh`, "CREDENTIALS"); their ids live in
-# the launcher, not here, because `lane-run` passes the launcher a fixed list of variables.
+# infraops-mcp-server into a directory it removes, and writes the window's report there. Its one
+# mount is the broker's socket directory.
+# It holds no token: it reads the secrets the pass needs (`scripts/run-change-window.sh`,
+# "CREDENTIALS") through the lane secrets broker (ADR-0055 amendment 30), whose socket directory
+# `/data/sds/broker/change-window` it mounts read-only at `/run/sds-broker`. `lane-run` names the
+# socket to the launcher, and the broker serves it only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The ids live in the launcher, not here, because
+# `lane-run` passes the launcher a fixed list of variables.
 # `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
 # and not the ping URL, which a later change writes here. While it's empty the outcome alarm
 # resolves no ping URL in the container and pings nothing; the pass itself still runs.
@@ -21,7 +24,8 @@ services:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["change-window"]
     environment:
-      BWS_ACCESS_TOKEN: ${CHANGE_WINDOW_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       SDS_DEADMAN_PING_URL_UUID: ""
+    volumes:
+      - /data/sds/broker/change-window:/run/sds-broker:ro
     restart: unless-stopped

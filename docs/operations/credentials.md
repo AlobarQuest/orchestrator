@@ -439,16 +439,17 @@ gate G-84 (2026-11-21); the lane's `lane-run --read` proved every read at G-86.
 
 `scripts/run-change-window.sh` holds no chain password either, and it has no Mac branch: the Mac's
 window stays infraops-mcp-server's `scripts/change-window.sh` until the lane's rollback ends. After
-ADR-0059 increment 8's cut-over, the `change-window` lane account is the future holder of four
-secrets that don't exist yet, each read with the lane's own token in its container (no Keychain
-item): a dedicated Coolify window token for production Coolify (D-68 B), change-manager's narrow
-`execute` bearer (`M2M_TOKEN_EXECUTE`, change-manager #168), an Anthropic API key, and an
-alert-hub sender token for the digest. The lane account reads nothing else but its own ping-URL
-secret. A bare pass reads the `execute` bearer alone. The Mac job's full change-manager bearer
-and its prod and dev Coolify tokens aren't among them: the lane never holds a
-credential that can approve a change record, and it never reaches dev Coolify (D-67 C). Each
-secret's id is empty in the launcher until its identity and mint gates create it
-(`docs/operations/deploy.md`, the change-window lane's cut-over).
+ADR-0059 increment 8's cut-over, the lane reads four secrets in `Rotation / Keepers` in its
+container through the lane secrets broker (ADR-0055 amendment 30; no Keychain item, no lane account
+and no token of its own): a dedicated Coolify window token for production Coolify (D-68 B),
+change-manager's narrow `execute` bearer (`M2M_TOKEN_EXECUTE`, change-manager #168), an Anthropic
+API key, and an alert-hub sender token for the digest. The broker's allowlist serves the lane those
+four and nothing else; its ping-URL secret joins them when the compose names it. A bare pass reads
+the `execute` bearer alone. The Mac job's full change-manager bearer and its prod and dev Coolify
+tokens aren't among them: the lane never holds a credential that can approve a change record, and
+it never reaches dev Coolify (D-67 C). Devon minted the four at HQ gate G-88 (2026-11-22), each with
+a single-secret read grant for `lane-secrets-broker` (`docs/operations/deploy.md`, the
+change-window lane's cut-over).
 
 Devon mints both new Keychain items at act step 0. Neither item has an environment override: a
 launcher reads it from the Keychain directly, so a caller's environment can't put the token in

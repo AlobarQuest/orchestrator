@@ -52,3 +52,11 @@ read = [
   "221a48d5-3f29-4898-b300-b4820140c880",  # orchestrator-system-bearer
   "46e714ca-32b7-4e89-9817-b509013363a5",  # follow-up-mint-ping-url
 ]
+
+[lanes.change-window]
+read = [
+  "aa7c76af-bd52-4796-9d13-b50a00e035de",  # change-manager/M2M_TOKEN_EXECUTE
+  "3d41395a-06c3-47d5-ac85-b50a00dfbc2f",  # change-window-coolify-token (--submit only)
+  "0e9ebf2d-5b62-4f81-a731-b50a00e0df18",  # change-window-anthropic-key (--submit only)
+  "71616bf5-14ba-4888-b3f8-b50a00e13ed2",  # ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW (--submit only)
+]
