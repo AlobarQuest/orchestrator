@@ -10,8 +10,9 @@ removed from `test_deploy_lanes.py`'s `placeholders`". It follows #774 and #771 
 - Base: `origin/main` at `0332a6ed`. The handoff's line references matched at that commit.
 - Branch: `hq/lanes-inc-8-change-window-ping-uuid`.
 - PR: #786, open and ready for review (not a draft), not merged.
-- Code head: `3af69684`, which `make check` and both reviews ran on. The report commit follows it
-  on the same branch.
+- Code head: `3af69684`, which `make check` and both reviews ran on. A follow-up commit fixes two
+  more stale texts (a comment in the compose and a sentence in `credentials.md`; neither is code),
+  after which I reran the targeted tests. The report commits follow on the same branch.
 
 ## What I built
 
@@ -21,6 +22,9 @@ URL, or a check's ping UUID. It matches `.cred-consumers.toml`'s `change-window-
 
 1. `lanes/change-window/compose.yaml`:
    - Line 32: `SDS_DEADMAN_PING_URL_UUID: 1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3`.
+   - Lines 15-16 (follow-up commit): "The ids live in the launcher, not here" becomes "The four
+     work secrets' ids live in the launcher, not here", since the compose now names the ping-URL
+     secret's id.
    - Lines 17-23: I rewrote the header paragraph in #774's shape, with the dry-run difference: the
      outcome alarm reads the URL through the socket on `--submit` passes only, because the bare
      pass is a dry run that pings nothing. That follows `scripts/run-change-window.sh` lines 14-20
@@ -69,6 +73,14 @@ URL, or a check's ping UUID. It matches `.cred-consumers.toml`'s `change-window-
    - `scripts/run-change-window.sh` lines 43-45 (comment only): the allowlist is no longer "exactly
      these four"; it now reads "these four and the ping-URL secret, whose id reaches this launcher
      from the compose through `lane-run`".
+   - `docs/operations/credentials.md` lines 446-447 (follow-up commit): "The broker's allowlist
+     serves the lane those four and nothing else; its ping-URL secret joins them when the compose
+     names it" becomes "serves the lane those four and its ping-URL secret, whose id the compose
+     names, and nothing else".
+   - The sweep: I grepped `placeholders` across `docs/operations`, `docs/decisions`, `tests`,
+     `scripts`, `lanes`, and every tracked `CLAUDE.md`. The deploy.md hits are each lane's cut-over
+     checklist item, which stay. I read deploy.md's change-window section from its start (line
+     1263), `credentials.md`, `secrets-broker.md`, and `.cred-consumers.toml`'s change-window rows.
    - Left unchanged: deploy.md item 2's "(`1d6a0ab4-…`, no value yet)" (line 1329; true until item
      4), item 6's "all five secrets" (already correct), the launcher's line 20 "It reads all four
      secrets below" (the four work secrets, still true), and ADR-0059 line 4257 (a plan statement,
@@ -97,7 +109,8 @@ changed.
 ## Tests and checks
 
 - Targeted: `test_deploy_lanes.py`, `test_run_change_window.py`, `test_change_window_rows.py`, and
-  `test_secrets_broker_allowlist.py`: 198 passed.
+  `test_secrets_broker_allowlist.py`: 198 passed, on `3af69684` and again after the follow-up
+  commit.
 - Mutation checks. Each ran from a backup copy, was restored with `cp`, and was confirmed with
   `cmp`, clearing `__pycache__` around each run. The set was the rows test file, the ping-URL
   guard, the harness's compose test, and the allowlist test file. Control: 13 passed.
@@ -112,9 +125,12 @@ changed.
   - Ruff: "All checks passed!", 1041 files already formatted.
   - Pyright: 0 errors, 0 warnings.
   - Tests: `10 workers [14892 items]`. Result: 14891 passed, 1 skipped.
-- Security scan from the repository root: 0 BLOCK, 2 WARN, 1 INFO, the same three #774 reported
-  (`bws.secret-files-gitignored`, `bws.manifest-matches-usage`, `bws.least-privilege-scope`). The
-  diff causes none of them.
+- Security scan from the repository root: 0 BLOCK, 2 WARN, 1 INFO. I read each finding:
+  - `bws.secret-files-gitignored` (WARN): `.gitignore`, "glob not covered: `*-migration/`".
+  - `bws.manifest-matches-usage` (WARN): "undeclared UUID in code: `aaff45ca-…`", not the keeper.
+  - `bws.least-privilege-scope` (INFO): "requires agent judgment".
+  None names `1d6a0ab4-…`, the change-window entry, or a file this diff changes in a way the
+  finding concerns. I didn't run a differential scan against `origin/main`.
 - `code-standards risk`: `high-risk` (secrets: `.bws-secrets.toml` and
   `lanes/secrets-broker/allowlist.toml`), so I ran `vendor-review` on `origin/main...HEAD`. Claude
   and Codex both approve, with 0 findings kept and 0 dropped. agy: off by configuration.
@@ -127,6 +143,7 @@ changed.
 - `.bws-secrets.toml`
 - `docs/operations/deploy.md`
 - `scripts/run-change-window.sh` (comments only)
+- `docs/operations/credentials.md`
 - `tests/scripts/test_deploy_lanes.py`
 - `tests/rotation_worker/test_change_window_rows.py`
 - `tests/scripts/test_run_change_window.py`
@@ -146,6 +163,14 @@ changed.
   broker before the lane's `--add`, so HQ must keep that order.
 - HQ merges #786 after the executor's write (item 4). Its release is the served-release half of
   item 5.
+- I changed two launcher comment blocks, not one: lines 33-34 (the empty-compose sentence the
+  handoff names) and lines 43-45 (the allowlist count, which item 7's "any count of the lane's
+  secrets where the text counts the allowlist" covers). The launcher's code is unchanged.
+- Out of scope, so I didn't edit them: `.cred-consumers.toml`'s `change-window-ping-url` block says
+  the broker reads the keeper "once the compose names its id" (the block comment, ~line 1880, and
+  the `bws-secret` consumer's `note`, ~line 1898). After this PR the compose names it, so both
+  read as future tense for a done step. The handoff bars other `.cred-consumers.toml` changes; HQ
+  can fold them into item 6's registry change.
 - I'm leaving the test database `orchestrator_test_hq_w_268` in place for HQ's teardown.
 
 ## Standards followed
