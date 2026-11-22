@@ -1487,8 +1487,8 @@ healthchecks_check = "sds-follow-up-mint"
 # Devon gave the bump driver's four (bump-driver-ping-url, the two Brain keys and the read
 # password) at HQ gate G-84 on 2026-11-21, and follow-up-mint-ping-url at HQ gate G-87; the
 # follow-up-mint lane's broker reads of it logged ok on its first scheduled pass, 2026-11-22.
-# Devon's choice: "Project by project", with
-# single-secret grants in Rotation / Keepers so the broker can't read every lane's keeper.
+# Devon's choice: "Project by project", with single-secret grants in Rotation / Keepers so the
+# broker can't read every lane's keeper.
 [[credential]]
 id = "secrets-broker-bws-token"
 class = "bws-lane-token"

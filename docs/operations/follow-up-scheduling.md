@@ -92,10 +92,10 @@ the `sds-follow-up-mint` check's `/fail` (`docs/operations/deploy.md`, the follo
 
 The launcher runs only in the lane's container: outside it, it refuses and reads nothing. To run
 one extra pass, run `docker exec <container> lane-run follow-up-mint` on `prod-vps`. The route is
-idempotent per revision, so a second pass the same day mints nothing twice. An operator can also run one pass by hand with
-`orchestrator mint-follow-ups --idempotency-key <key>`, with `ORCHESTRATOR_API_URL`, the SYSTEM
-bearer (`ORCHESTRATOR_API_TOKEN`) and its key id (`ORCHESTRATOR_API_CREDENTIAL_KEY_ID`) in the
-environment.
+idempotent per revision, so a second pass the same day mints nothing twice. An operator can also
+run one pass by hand with `orchestrator mint-follow-ups --idempotency-key <key>`, with
+`ORCHESTRATOR_API_URL`, the SYSTEM bearer (`ORCHESTRATOR_API_TOKEN`) and its key id
+(`ORCHESTRATOR_API_CREDENTIAL_KEY_ID`) in the environment.
 
 **The credential must be `orchestrator-system`, never `orchestrator-drift-reporter`.** The
 drift-reporter identity's registry profile is *observe and propose, never mutate*; minting a work
