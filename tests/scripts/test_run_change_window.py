@@ -545,9 +545,7 @@ def test_on_the_socket_a_dry_run_asks_for_the_execute_bearer_alone(tmp_path: Pat
     assert git.endswith(" lane_token= socket="), git
 
 
-def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(
-    tmp_path: Path, broker
-) -> None:
+def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(tmp_path: Path, broker) -> None:
     """With the ping-URL secret named, the socket serves all five reads and `bws` never runs.
     Neither `git` nor `node` gets the socket's marker or a token, and the digest's token reaches
     curl alone."""
