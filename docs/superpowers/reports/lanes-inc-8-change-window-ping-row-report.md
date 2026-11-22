@@ -136,7 +136,10 @@ The sender row's fields. Nothing requires `fingerprint_sha256_8`, `created` or `
 
 ### 4. The executor's check lookup
 
-- The adapter's `read_mint` (`adapters/healthchecks_ping_url.py`) calls
+- The VM instance builds the listing client in `rotation_worker/cli.py:137-141`
+  (`open_ping_urls`), with the Management key's BWS id from `config.toml`'s
+  `healthchecks_management_key_id` (`docs/operations/rotation-executor.md:444`).
+- The adapter's `read_mint` (`adapters/healthchecks_ping_url.py:115-127`) calls
   `PingUrls.ping_url(self._check)`, where the check is the row's `healthchecks_check`
   (`rotation_proposer/generate.py:262-271` gives the same name to the package).
 - `readers.PingUrls._read` (`src/rotation_worker/readers.py:283-318`) makes one `GET
@@ -150,7 +153,9 @@ The sender row's fields. Nothing requires `fingerprint_sha256_8`, `created` or `
   `"Change Manager OPs Check"` (`scripts/deploy_orchestrator.py:1000`), and the proposer passes the
   name into acceptance text only (`generate.py:178-179`, `:387`).
 - Not verified (no Healthchecks call): that the Management key's project is the one holding
-  `Change Manager OPs Check`. G-88's read was of the read-only listing. If the check sits in
+  `Change Manager OPs Check`. G-88's read was of the read-only listing. The runbook describes one
+  self-hosted Healthchecks project whose checks the VM's and the Mac's readers share
+  (`rotation-executor.md:888-890`), which points to the same project, but no read has shown it. If the check sits in
   another project, the read raises `ReadError` ("0 Healthchecks checks are named …") and the unit
   is refused before the claim (`worker.py:720`), never stored wrong.
 
@@ -194,9 +199,12 @@ The sender row's fields. Nothing requires `fingerprint_sha256_8`, `created` or `
   (`tests/scripts/test_deploy_lanes.py:1381-1400`) reads the composes, not the registry.
   `change-window` stays in `placeholders` (`:1388-1390`) until item 5 writes the compose's id. I
   didn't edit it.
-- I read every test under `tests/` that names `.cred-consumers` or `healthchecks-ping-url`. None
-  pins the set of registry ids or asserts on every ping-URL row, so none needed a change, and
-  `make check` confirms it.
+- I grepped `tests/` for `.cred-consumers` and `healthchecks-ping-url`, and read the registry
+  reads in `tests/scripts/test_sds_cred_registries.py`, `test_secrets_broker_row.py`,
+  `tests/architecture/test_rotation_edges.py`, `test_membership_edges.py` and
+  `tests/rotation_proposer/test_pass.py`. They use fixtures or pin the broker row's
+  `reach_secrets` (`test_secrets_broker_row.py:40-46`), which I didn't change. None pins the set of
+  this file's ids or asserts on every ping-URL row. The full `make check` passing confirms it.
 - `layers.toml` covers the new test (`tests/rotation_worker/**`, `:679`) and this report
   (`docs/superpowers/**`, `:758`).
 
@@ -211,11 +219,16 @@ The sender row's fields. Nothing requires `fingerprint_sha256_8`, `created` or `
 ### Gates
 
 - `make check` with `orchestrator_test_hq_w_267`: exit 0. ruff and pyright clean; pytest 14890 passed, 1 skipped, 11 warnings (5 min 41 s).
+- CI on `dc7c88d6` (run `45036661888`): `Quality` passed (14865 passed, 26 skipped; 14,891
+  collected, the same total as the local run, so the new file's seven tests ran),
+  `Rollout transcription currency` and `Runner consumer compatibility` passed.
 - The security scan from the repo root: no BLOCK. Two WARNs (`bws.secret-files-gitignored`,
   `bws.manifest-matches-usage`) and one INFO (`bws.least-privilege-scope`). A clean archive of
   `origin/main` gives the same three, so none is this change's.
 - `code-standards risk`: `normal`, so `vendor-review` doesn't apply.
-- `/code-review` (low) on `origin/main...HEAD`: no findings.
+- `/code-review` (low) on `origin/main...HEAD`: the forked review returned an empty result,
+  `(none)`, with no finding listed. I can't tell an explicit no-findings verdict from an empty
+  return.
 
 ## Files changed
 
@@ -236,6 +249,9 @@ The sender row's fields. Nothing requires `fingerprint_sha256_8`, `created` or `
 
 - I placed both blocks after the Anthropic-key row, the end of the file, so the change-window rows
   stay together. The sender block comes first, matching the other two non-rotated rows.
+- The deploy.md rewrap: the first statement's edit made its line too long, so I rewrapped the
+  rest of that paragraph (`:1284-1288`). Its words are unchanged, but the diff touches three
+  lines beyond the statement.
 - I set `created` and `disposition` on the sender row. Neither is required (check 2), but the
   in-file precedent sets both, and `created` lets the row age.
 
@@ -243,9 +259,11 @@ The sender row's fields. Nothing requires `fingerprint_sha256_8`, `created` or `
 
 - Not verified: that the Management key's project lists `Change Manager OPs Check` (check 4). A
   wrong project refuses the unit before the claim. Nothing is written.
-- Not verified: that keeper `1d6a0ab4-…` holds the inbox's empty marker. The executor's
-  `checks._check_issue_fact` reads it before the claim and refuses an issue on anything else. Per
-  the earlier rows' comments, `create-keeper` writes that marker.
+- Not verified by a read: that keeper `1d6a0ab4-…` holds the inbox's empty marker.
+  `create-keeper` stores `Value(EMPTY)` and refuses to overwrite an existing secret
+  (`rotation_worker/cli.py:378-402`), so a keeper it made holds the marker until something writes
+  it. The executor's `checks._check_issue_fact` (`checks.py:178`) reads it before the claim and
+  refuses an issue on anything else.
 - The Mac job still pings `Change Manager OPs Check` until cut-over item 8. The executor reads the
   check's URL and pings nothing, so the issue doesn't disturb the Mac job's alarm.
 - No Code Brain or Infra Brain concern falls outside the handoff's Standards section.
