@@ -4,7 +4,8 @@ Outcome: done
 
 Worker W-262, handoff `lanes-inc-9-follow-up-mint-records`. Branch
 `hq/lanes-inc-9-follow-up-mint-records`, base `origin/main` at `5e1a408a`. PR #780, ready (not a
-draft), not merged. Code head `f7d982c1`; the commit that adds this report is one more on top of it.
+draft), not merged. The gates and CI ran at head `c512e407`; the commit that records them is the
+next one.
 
 ## What I built
 
@@ -110,13 +111,30 @@ Hits from a wider search (`drift-audit` and `mint-follow-ups`) outside history:
   `drift-audit.sh` as the precedent for an identity override. I left them unchanged, as HQ
   directed; see the concerns section.
 
+A last sweep at the head searched for `infra-drift` or `infraops` together with `mint` or
+`follow-up`, outside history, uncut. It returned 33 lines:
+
+- The lines this diff changed, and deploy.md items 9 and 10.
+- `deploy.md:1201` ("after infra-drift's 03:00 audit") gives the order of the schedule, which is
+  still true.
+- ADR-0059 lines 823, 1079-1083 and Amendments 9 and 10 (2981-3218): decision records, left
+  unchanged. I read line 823's row in full: it lists minting among infra-drift's duties, and
+  Amendment 9's table (line 3074) already supersedes that row. Line 3199 names ADR-0007,
+  `follow-up-scheduling.md` and `credentials.md` as the records increment 9 changes, and all three
+  are in this diff.
+- Lines that don't describe minting: `PROJECT.md` (backlog history), `deploy.md:1322`,
+  `ADR-0059:4356` and `test_follow_up_mint_rows.py:81`.
+- `scripts/run-follow-up-mint.sh:72`: "The key form infra-drift's Node CLI sends; the route accepts
+  it and never reads it." I left it unchanged; see the concerns section.
+
 ## Tests and checks
 
-- `make check` with `orchestrator_test_hq_w_262`: ruff "All checks passed!", pyright "0 errors, 0
-  warnings, 0 informations", pytest 14,874 collected, 14,873 passed, 1 skipped (310 s). It ran at
-  `1dff3530`. The later commits change only the wrapping in `.cred-consumers.toml` comments and one
-  doc paragraph, plus the answered-question file. After them I reran
-  `tests/rotation_worker/` and `tests/scripts/test_run_follow_up_mint.py`: 1,685 passed.
+- `make check` with `orchestrator_test_hq_w_262`, at `c512e407`: ruff "All checks passed!",
+  pyright "0 errors, 0 warnings, 0 informations", pytest 14,873 passed and 1 skipped (317 s).
+  `pytest --collect-only -q` reports "14874/14885 tests collected (11 deselected)". An earlier run
+  at `1dff3530` gave the same pass count.
+- CI on PR #780 at `c512e407` (run 45021730118): `Quality` passed (14,848 passed and 26 skipped in
+  the job log), and so did `Rollout transcription currency` and `Runner consumer compatibility`.
 - Mutation proof for `test_secrets_broker_row.py`. I copied both files to a backup directory
   outside the worktree and cleared `tests/**/__pycache__` around each run. The assertion is a set
   equality (`declared_reach(...) == (PROJECTS, SECRETS)`).
@@ -126,7 +144,7 @@ Hits from a wider search (`drift-audit` and `mint-follow-ups`) outside history:
   - Id removed from the test's `SECRETS`: 1 failed, 5 passed. Restored with `cp`, and `cmp` showed
     identical files.
   - After restoring: 6 passed, and `git status` was clean.
-- Security scan from the repo root: BLOCK 0, WARN 2 (`bws.secret-files-gitignored`,
+- Security scan from the repo root, at `c512e407`: BLOCK 0, WARN 2 (`bws.secret-files-gitignored`,
   `bws.manifest-matches-usage`), INFO 1 (`bws.least-privilege-scope`). I couldn't run a baseline
   scan of `origin/main` in a scratch directory (the command was denied). This diff changes no
   gitignore, no `.bws-secrets.toml` and no code reference to a secret id, so it can't add either
@@ -137,7 +155,8 @@ Hits from a wider search (`drift-audit` and `mint-follow-ups`) outside history:
   - agy is off by configuration.
   - Blast radius: the registry and the docs that cite it. `test_secrets_broker_row.py` and the
     `test_sds_bws.py` docstring have no dependents.
-- `/code-review` (low) on `origin/main...HEAD`: no findings.
+- `/code-review` (low) on `origin/main...HEAD`: I ran it twice, the second time at `c512e407`.
+  Both runs returned an empty result (`(none)`), not an explicit verdict.
 
 ## Files changed
 
@@ -173,6 +192,10 @@ Hits from a wider search (`drift-audit` and `mint-follow-ups`) outside history:
   precedent for overriding the identity for a single foreign call". At `c7de0b70`,
   `drift-audit.sh` reads only its own `BWS_ACCESS_TOKEN` and overrides no identity, so the
   precedent is gone. Both are other lanes' launchers.
+- **One more stale launcher comment, not in HQ's answer.** `scripts/run-follow-up-mint.sh:72`
+  says "The key form infra-drift's Node CLI sends". `c7de0b70` removed the Node CLI's
+  `mint-follow-ups` command, so "sends" is now "sent". I left it because HQ's answer covered lines
+  27-28 of that launcher only. It's a candidate for the same follow-up.
 - **Lane image drift (accepted by HQ).** The launcher and crontab comment edits ship in the lane
   image, so the running release's copies differ until the next lane release. The difference is in
   comments only.
