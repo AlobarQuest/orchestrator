@@ -1052,7 +1052,8 @@ Its plan is the orchestrator adapter's, AC-001 to AC-009, and both units are cla
 The adapter named `change-manager-attested` runs the same units with a human act between them, for
 a bearer one of whose readers has no read: a person attests that reader at `/review` with the new
 value's fingerprint. The `full` bearer needs it for `drift-audit.sh`, whose change-manager calls
-only log a warning when they fail. The other four use `change-manager`.
+only log a warning when they fail. The `read`, `propose`, and `observe` bearers use
+`change-manager`.
 
 What differs from the orchestrator's bearers:
 
@@ -1090,7 +1091,7 @@ writes nothing, and goes on to store. To undo instead, in Coolify set the variab
 `{"<scope>":{"token_hash":"<previous.token_hash>"}}`, both rows, restart, then delete the staging
 secret. A value that doesn't parse grants nothing for that one scope and leaves the others
 working; a rule broken across scopes stops change-manager booting, so read the entries of the
-other three before restarting.
+other four before restarting.
 
 ## Postgres role passwords
 
