@@ -119,9 +119,8 @@ The launcher's exit status is the other half, and is what a scheduled run actual
 ## Running it
 
 ```
-scripts/run-landing-ledger.sh              # record, then audit
-scripts/run-landing-ledger.sh --dry-run    # writes nothing; prints what it would
-scripts/install-landing-ledger-launchd.sh  # daily at 07:30, operator-run
+lane-run landing-ledger              # record, then audit
+lane-run landing-ledger --dry-run    # writes nothing; prints what it would
 ```
 
 ### Which repositories it covers

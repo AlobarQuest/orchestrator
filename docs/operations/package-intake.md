@@ -78,8 +78,8 @@ Nothing needs doing per record. The scheduled pass reads every approved work pro
 verifies a payload for each, and registers it.
 
 ```bash
-scripts/run-work-carrier.sh              # inspect: prints what it would register, writes nothing
-scripts/run-work-carrier.sh --register   # registers
+lane-run work-carrier              # inspect: prints what it would register, writes nothing
+lane-run work-carrier --register   # registers
 ```
 
 Exit codes: 0 clean, 1 tool failure, 2 unusable input, 3 a record needs a person. A record it

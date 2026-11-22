@@ -33,7 +33,6 @@ from scripts.layers import load
 from tests.architecture.edge_table import (
     ALERT_HUB_PERMITS,
     DEADMAN,
-    GH_AUTH_TOKEN,
     READ_BEARER,
     SDS_BRIDGE_ALERT_BEARER,
     SYSTEM_BEARER,
@@ -49,7 +48,7 @@ from tests.architecture.test_bridge_edges import _landing_policy_permits
 # Landing Part 3b. The estate lander's Coolify token (BWS `COOLIFY_TOKEN_SDS_ESTATE_LANDER`).
 COOLIFY_TOKEN = "f9f59233-0794-4ea8-9806-b4f3011e6147"
 # The read-only lane App `alobar-sds-lanes-read`'s key, which each lander's container mints its
-# GitHub read token from (ADR-0059 increment 5, steps 3g-1 and 3g-2). The Mac keeps `gh auth token`.
+# GitHub read token from (ADR-0059 increment 5, steps 3g-1 and 3g-2).
 READ_APP_KEY = "314a966c-5654-4e3c-8358-b4fd01268775"
 
 _HELD_CLOSE = ("POST", "/api/v1/held-pr-close")
@@ -82,7 +81,6 @@ EDGES: dict[str, Edge] = {
             SYSTEM_BEARER,
             READ_BEARER,
             SDS_BRIDGE_ALERT_BEARER,
-            GH_AUTH_TOKEN,
             COOLIFY_TOKEN,
             READ_APP_KEY,
         },
@@ -103,8 +101,7 @@ EDGES: dict[str, Edge] = {
         ),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=_ALERTS,  # through lander.held_alerts
-        bearers=DEADMAN
-        | {SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN, READ_APP_KEY},
+        bearers=DEADMAN | {SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, READ_APP_KEY},
     ),
 }
 

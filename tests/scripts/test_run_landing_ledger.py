@@ -1,10 +1,8 @@
 """`scripts/run-landing-ledger.sh` in the lane's container (ADR-0059 increment 3): which secrets it
 reads with the lane's token, the GitHub mint's exact arguments, and that `gh` is never asked.
 
-The Mac path's scope handling is held by `test_launcher_scope.py`, whose runs set no
-`BWS_ACCESS_TOKEN`; its GitHub credential, the `gh` login, by one test here. Here the
-launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's token
-as `BWS_ACCESS_TOKEN`, and no Keychain identity. `bws`, `gh` and `curl` are stubs on PATH; the
+The launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's
+token as `BWS_ACCESS_TOKEN`, and no Keychain identity. `bws`, `gh` and `curl` are stubs on PATH; the
 venv's `python -m scripts.sds_scope`, `sds-github-mint` and `landing-ledger` are stubs that log.
 Nothing reads the real Keychain, BWS, GitHub or Healthchecks.
 """
@@ -23,7 +21,6 @@ from scripts import deploy_orchestrator as deploy
 LAUNCHER = Path("scripts/run-landing-ledger.sh")
 COMPOSE = Path("lanes/landing-ledger/compose.yaml")
 CRONTAB = Path("lanes/landing-ledger/crontab")
-PLIST = Path("scripts/com.devon.landing-ledger.plist")
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
@@ -228,22 +225,12 @@ def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
     assert "alerting disabled this run" in result.stdout
 
 
-def test_on_the_mac_the_github_token_is_the_gh_login_and_nothing_is_minted(tmp_path: Path) -> None:
-    """The Mac path, unchanged until increment 6: no lane token, a Keychain identity (stood in
-    for, so `/usr/bin/security` is never asked) and the operator's `gh` login."""
-    result, logs = _run(
-        tmp_path,
-        BWS_ACCESS_TOKEN="",
-        BWS_ACCESS_TOKEN_SDS="narrow",
-        BWS_ACCESS_TOKEN_BROAD="broad",
-        SDS_DEADMAN_PING_URL_UUID="",
-    )
-    assert result.returncode == 0, result.stderr
-    assert logs["gh"] == ["gh auth token"]
-    assert not any(line.startswith(("mint", "stdin=")) for line in logs["lane"])
-    assert READ_APP_KEY_UUID not in "\n".join(logs["bws"])
-    assert all("github=gh-token" in line for line in logs["lane"] if line.startswith("ledger"))
-    assert sum(line.startswith("ledger") for line in logs["lane"]) == 2
+def test_outside_the_container_it_refuses_and_reads_nothing(tmp_path: Path) -> None:
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
+    assert result.returncode == 1
+    assert "FATAL: no BWS_ACCESS_TOKEN" in result.stderr
+    assert "runs only in its container, through lane-run" in result.stderr
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": []}
 
 
 # ---- the lane's tracked files --------------------------------------------------------------
@@ -267,17 +254,13 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     assert "landing-ledger" not in deploy.STATEFUL_LANES
 
 
-def test_the_crontab_runs_the_pass_daily_at_0730_as_the_mac_job_does() -> None:
+def test_the_crontab_runs_the_pass_daily_at_0730() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["30 7 * * * lane-run landing-ledger"]
-    plist = PLIST.read_text()
-    assert "<key>Hour</key>\n        <integer>7</integer>" in plist
-    assert "<key>Minute</key>\n        <integer>30</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-landing-ledger.sh</string>\n    </array>" in plist
 
 
 def test_the_repositorys_manifest_lists_the_ledgers_secrets() -> None:

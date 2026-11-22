@@ -1,11 +1,10 @@
 """`scripts/run-membership-check.sh` in the lane's container (ADR-0059 increment 3, amendment 5):
 which secrets it reads with the lane's token, the repositories it derives, the GitHub mint's exact
 arguments, the anonymous clone of intent-packages and its line in the report, and the failure codes;
-and that the Mac branch keeps its reads and clones nothing. `tests/scripts/test_launcher_scope.py`
-covers the Mac pass's credentials and outcome pings.
+and that outside the container it refuses.
 
 The launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's
-token as `BWS_ACCESS_TOKEN` (the container), or the stand-in Keychain identities (the Mac). `bws`,
+token as `BWS_ACCESS_TOKEN`. `bws`,
 `gh`, `git` and `curl` are stubs on PATH; the venv's `python -m scripts.sds_scope`,
 `sds-github-mint` and `membership-check` are stubs that log. Nothing reads the real Keychain, BWS,
 GitHub, the member record or Healthchecks, and nothing is cloned.
@@ -29,11 +28,10 @@ from tests.scripts.test_run_unit_verifier import lane_start_minutes
 LAUNCHER = Path("scripts/run-membership-check.sh")
 COMPOSE = Path("lanes/membership-check/compose.yaml")
 CRONTAB = Path("lanes/membership-check/crontab")
-PLIST = Path("scripts/com.devon.sds-membership-check.plist")
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 CHANGE_MANAGER_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
-# The Healthchecks key the Mac's dead-man lookup by check name reads with the broad identity.
+# The Healthchecks key the dead-man's lookup by check name reads with the broad identity.
 HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/membership-check"
@@ -56,7 +54,7 @@ case " $BWS_REFUSES " in *" $3 "*) exit 1 ;; esac
 printf '{{"value": "value-of-%s"}}' "$3"
 """
 _GH = '#!/bin/sh\necho "gh $*" >> "$GH_LOG"\necho gh-token\n'
-# A ping's URL arrives on stdin as curl's config; anything else (the Mac's check listing) fails.
+# A ping's URL arrives on stdin as curl's config; anything else (the check listing) fails.
 _CURL = """#!/bin/sh
 for argument in "$@"; do [ "$argument" = "-" ] && { cat >> "$PING_LOG"; exit 0; }; done
 exit 1
@@ -105,13 +103,6 @@ lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
 echo "the program's report"
 exit "${FAKE_CHECK_RC:-0}"
 """
-# The Mac path: no lane token, stand-in Keychain identities so `/usr/bin/security` is never asked.
-MAC = {
-    "BWS_ACCESS_TOKEN": "",
-    "BWS_ACCESS_TOKEN_SDS": "narrow",
-    "BWS_ACCESS_TOKEN_BROAD": "broad",
-    "SDS_DEADMAN_PING_URL_UUID": "",
-}
 
 
 def _executable(path: Path, text: str) -> None:
@@ -416,30 +407,20 @@ def test_the_programs_code_is_the_passs_code(
     assert len(_check_runs(logs["lane"])) == 1
 
 
-# ---- the Mac ---------------------------------------------------------------------------------
+# ---- outside the container -------------------------------------------------------------------
 
 
-def test_on_the_mac_the_reads_are_unchanged_and_nothing_is_cloned_or_minted(
+def test_outside_the_container_it_refuses_through_the_outcome_alarm_and_reads_nothing(
     tmp_path: Path,
 ) -> None:
-    """The Mac path, unchanged until increment 6: the narrow identity reads the observer bearer,
-    the broad one the change-manager bearer and the dead-man's Healthchecks key, the GitHub token
-    is the operator's `gh` login, and the standing packages come from the default checkout."""
-    result, logs, _ = _run(tmp_path, **MAC)
-    assert result.returncode == 0, result.stderr
-    assert logs["bws"] == [
-        f"{HEALTHCHECKS_KEY_UUID} token=broad",
-        f"{OBSERVER_UUID} token=narrow",
-        f"{CHANGE_MANAGER_UUID} token=broad",
-    ]
-    assert logs["gh"] == ["gh auth token"]
-    assert logs["git"] == []
-    assert not any(line.startswith(("scope", "mint", "stdin=")) for line in logs["lane"])
-    assert _check_runs(logs["lane"]) == [
-        f"check args= github=gh-token gh= observer={OBSERVER} "
-        f"change_manager={CHANGE_MANAGER} packages=unset lane_token="
-    ]
-    assert "intent-packages clone" not in result.stdout
+    """It refuses before the alarm is begun: no secret is read, not even the Healthchecks key, and
+    no ping is sent."""
+    result, logs, _ = _run(tmp_path, BWS_ACCESS_TOKEN="")
+    assert result.returncode == 1
+    assert "FATAL: no BWS_ACCESS_TOKEN" in result.stdout + result.stderr
+    assert "runs only in its container, through lane-run" in result.stdout + result.stderr
+    assert logs["bws"] == [] and logs["ping"] == []
+    assert logs["lane"] == [] and logs["gh"] == [] and logs["git"] == []
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -460,26 +441,24 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
         "restart": "unless-stopped",
     }
     assert set(yaml.safe_load(COMPOSE.read_text())) == {"services"}
-    # Stateless (ADR-0059 decision 1): no volume, and the outcome alarm's check is the Mac's.
+    # Stateless (ADR-0059 decision 1): no volume.
     assert "membership-check" not in deploy.STATEFUL_LANES
     assert deploy.LANE_CHECKS["membership-check"] == "sds-membership-check"
 
 
-def test_the_crontab_runs_the_pass_daily_beside_the_mac_jobs_time() -> None:
+def test_the_crontab_runs_the_pass_daily() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["47 7 * * * lane-run membership-check"]
-    plist = PLIST.read_text()
-    assert "<key>Hour</key><integer>7</integer><key>Minute</key><integer>45</integer>" in plist
     # The image's zone, which the landing ledger's 07:30 runs in too.
     assert "ENV TZ=America/New_York" in Path("lanes/Dockerfile").read_text()
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
-    """Minute 47 is clear of execution-watch's quarter-hours (the Mac job's 45), the unit
+    """Minute 47 is clear of execution-watch's quarter-hours, the unit
     verifier's 2-52/10, the deploy watcher's 20, the pin watcher's 25, the landing ledger's 30 and
     the revision watcher's 40."""
     minutes = lane_start_minutes()

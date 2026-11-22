@@ -46,28 +46,25 @@
 # BARE INVOCATION IS A DRY RUN. `--submit` is the flag that separates reporting from writing, and
 # this wrapper must not supply it for you: an operator reaching for "just look at what it would
 # do" would otherwise mint approved change records and authority-grant rows in the tamper-evident
-# chain. The scheduled job passes `--submit` explicitly, in the plist, where it is visible.
+# chain. The lane's container passes `--submit` explicitly, in its compose, where it is visible.
 #
-# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 4). A set `BWS_ACCESS_TOKEN` means the lane's
+# THE LANE'S CONTAINER ONLY (ADR-0059 increments 4 and 6). A set `BWS_ACCESS_TOKEN` means the lane's
 # container: `lane-run` passes the lane's own token as its one secret, and every secret is read with
-# it, in the environment, never as a process argument:
+# it, in the environment, never as a process argument. Anywhere else the launcher refuses. The
+# container runs the image's own code:
 #   - the observer bearer (BWS `f793576f-…`), every run, which also derives the mint's repositories;
-#   - the change-manager PROPOSE bearer (BWS `acccb346-…`), only on `--submit`, as on the Mac;
+#   - the change-manager PROPOSE bearer (BWS `acccb346-…`), only on `--submit`;
 #   - the read-only App `alobar-sds-lanes-read`'s key (BWS `314a966c-…`), piped straight into
 #     `sds-github-mint`. The pass's GitHub token is minted from it each pass, dry run or not, for the
 #     repositories `change-proposer repositories` prints and the three read permissions the
-#     program's calls use. `gh` is never asked there.
+#     program's calls use.
 # A repository list that can't be derived exits 2 before anything is minted (or the derivation's own
-# code when it fails otherwise). Without the token this is the Mac's launchd job, unchanged until
-# increment 6: two Keychain identities and the operator's `gh` login. Either way the BWS token is
-# unset before the program runs, which needs neither it nor the App's key. The container runs the
-# image's own code, so activation is the Mac's alone.
+# code when it fails otherwise). The BWS token is unset before the program runs, which needs
+# neither it nor the App's key.
 #
 # Usage:
 #   scripts/run-change-proposer.sh              # dry run: reports, writes nothing
 #   scripts/run-change-proposer.sh --submit     # proposes
-# Install as a scheduled job with:
-#   scripts/install-change-proposer-launchd.sh
 set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo).
@@ -80,35 +77,20 @@ READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
 READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
-# Dependabot cascade stops at the merge, which is complete for a repository whose landing redeploys
-# a hosted application and incomplete for this one, whose code runs from a working copy here
-# (orchestrator ADR-0031). Best-effort by construction: the helper prints one `[activation]` line
-# and returns 0 whatever it finds, so this job is never gated on being able to update itself. It
-# re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
-# and the file it just rewrote is this one.
-# Skipped in the container, which has no `activate-checkout.sh`, rather than logged as missing.
+
+# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
+# armed here, the switch would ping the production check.
 if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-    _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-    if [ -r "$_SDS_ACTIVATE" ]; then
-        # shellcheck source=/dev/null
-        . "$_SDS_ACTIVATE"
-    else
-        activate_checkout() {
-            echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-                 "this run is not activated"
-        }
-    fi
-    activate_checkout "$REPO_ROOT" "$0" "$@"
+  echo "FATAL: no BWS_ACCESS_TOKEN: the change-proposer lane runs only in its container, through lane-run" >&2
+  exit 1
 fi
 
-# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-fork-sync-watch`'s is. `launchd`
+# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-fork-sync-watch`'s is. the scheduler
 # discards this script's exit code, so the codes above reach a person only through Healthchecks:
 # `/start` before the pass, then success on 0 or `/fail` on anything else, with the pass's report
 # as the body, which alert-hub delivers. A finding pages; a pass that stops pinging goes down after
 # the grace. Only a `--submit` run pings: a dry run is a person looking, and must neither page nor
-# reset the timer of a schedule that may have stopped. Resolved AFTER activation, because
-# `activate_checkout` may `exec`. An unresolved check logs one line and never stops the pass.
+# reset the timer of a schedule that may have stopped. An unresolved check logs one line and never stops the pass.
 CHECK_NAME="sds-change-proposer"
 case " $* " in
   *" --submit "*) SUBMITTING=1 ;;
@@ -134,9 +116,7 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 # scope authority: which repositories this lane considers is read from it, so even a dry run needs
 # the read. Landing Part 3b reads the same bearer a second time, for `GET /api/v1/opened-reverts`:
 # which open pull requests are the SDS's own reverts, filed as `dependency-revert` and never as a
-# bump, so a dry run reports them truly too. It lives in `Rotation / Keepers`. On the Mac the narrow
-# read-only `sds-operator` identity reads it by a direct grant and the broad identity cannot, so it
-# has its own Keychain item and its own variable; in the container the lane's token reads it. It is
+# bump, so a dry run reports them truly too. It lives in `Rotation / Keepers`. The lane's token reads it. It is
 # exported only as `SDS_MEMBERS_OBSERVER_TOKEN`: this lane files no observation.
 OBSERVER_BEARER_UUID="${CHANGE_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
 
@@ -192,49 +172,6 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     sds_outcome_fail "FATAL: could not mint the change proposer's GitHub token from the read-only App (sds-github-mint exited $mint_rc)"
   fi
   export CHANGE_PROPOSER_GITHUB_TOKEN
-else
-  # THE BROAD IDENTITY IS NEVER EXPORTED. The propose keeper is in `Rotation / Keepers`, which only the
-  # broad machine account reads (a direct grant), so this launcher reads that account's token into a
-  # local variable and hands it to the one `bws` call that needs it, as `run-estate-landing.sh` does.
-  # It used to export it as `BWS_ACCESS_TOKEN`, which made it the identity of every process started
-  # after it, the tool and `gh` included, though neither reads BWS.
-  if [ "$SUBMITTING" -eq 1 ]; then
-    BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-      -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-    [ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
-      "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)"
-    CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
-    export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
-  fi
-
-  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
-    "FATAL: no narrow BWS identity for the observer bearer (service Claude)"
-  SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
-  [ -n "$SDS_MEMBERS_OBSERVER_TOKEN" ] || sds_outcome_fail \
-    "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
-  export SDS_MEMBERS_OBSERVER_TOKEN
-
-  # `set -e` is deliberately not used here (the watcher's launcher does the same), so a failed
-  # fetch would otherwise leave this EMPTY and fall through. The tool refuses an empty credential
-  # and would exit 2 -- which is fail-closed but reports "unusable input" for what is actually a
-  # credential failure. Name it here so the exit code means what this header says it means.
-  if [ "$SUBMITTING" -eq 1 ] && [ -z "${CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
-    sds_outcome_fail "FATAL: could not read the propose-scoped change-manager credential from BWS"
-  fi
-
-  # ON THE MAC THE GITHUB CREDENTIAL IS THE OPERATOR'S `gh` LOGIN, until increment 6 retires this
-  # path: a scheduled job resting on an interactive login breaks the moment the login is
-  # re-issued. The scheduled run then pings `/fail` with the reason (ADR-0021 amendment 2). The
-  # container never takes it (above).
-  if [ -z "${CHANGE_PROPOSER_GITHUB_TOKEN:-}" ]; then
-    CHANGE_PROPOSER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
-    export CHANGE_PROPOSER_GITHUB_TOKEN
-  fi
-  if [ -z "${CHANGE_PROPOSER_GITHUB_TOKEN:-}" ]; then
-    sds_outcome_fail "FATAL: no GitHub token (set CHANGE_PROPOSER_GITHUB_TOKEN or run gh auth login)"
-  fi
 fi
 # The program needs no BWS identity, so the lane's token never reaches it.
 unset BWS_ACCESS_TOKEN

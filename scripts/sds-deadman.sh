@@ -38,14 +38,13 @@
 # else, so the lane holds the narrowest credential there is. The value must be an `https://` URL: a
 # secret still holding the inbox's empty marker, or anything else, is refused by its shape and
 # disables the run's pings, with one reason logged. A lane whose compose doesn't name the variable
-# yet (`execution-watch` until its cut-over) falls through to the name lookup below, which in a
-# container finds no broad identity, so it pings nothing and logs that reason. A revoked lane token
+# falls through to the name lookup below, which in a container finds no broad identity, so it pings
+# nothing and logs that reason. A revoked lane token
 # fails the read itself: no `/start` is sent, so the check is never left `started`, and it goes
 # down after its grace.
 #
-# WHY A LANE STILL ON THE MAC LOOKS UP THE CHECK BY NAME RATHER THAN READING A PING URL FROM AN
-# ENV FILE. Two patterns
-# exist in this estate and the difference grows with every check. `infraops-mcp-server`'s
+# WHY THE ACTIVATION SWEEP, THE ONE LAUNCHER LEFT ON THE MAC, LOOKS UP ITS CHECK BY NAME RATHER THAN
+# READING A PING URL FROM AN ENV FILE. Two patterns exist in this estate and the difference grows with every check. `infraops-mcp-server`'s
 # `drift-audit.sh` reads a ping URL from an env file: one secret per check, and this estate has
 # already been bitten by a credential copied per repository and rotated in only some of the copies
 # (`FACTORY_PR_TOKEN`, two dead copies surviving a rotation for two weeks). `vps-backup`'s

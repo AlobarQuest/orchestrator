@@ -40,7 +40,6 @@ from sds_members import cli as members_cli
 from sds_members import client as members_client
 from tests.architecture.edge_table import (
     DEADMAN,
-    GH_AUTH_TOKEN,
     OBSERVER_BEARER,
     READ_BEARER,
     Edge,
@@ -48,7 +47,6 @@ from tests.architecture.edge_table import (
     built_clients,
     captured_permits,
     launcher_bearers,
-    launcher_text,
     near_misses,
     route_disagreements,
 )
@@ -93,7 +91,7 @@ CHECK_EDGE = Edge(
     # Its own bearers: the observer and change-manager READ credentials, the operator's `gh`
     # login on the Mac, the read-only lane App's key its container mints from (ADR-0059 amendment
     # 5), and the dead-man check's API key and ping (`sds-deadman.sh`).
-    bearers=DEADMAN | {OBSERVER_BEARER, READ_BEARER, READ_APP_KEY, GH_AUTH_TOKEN},
+    bearers=DEADMAN | {OBSERVER_BEARER, READ_BEARER, READ_APP_KEY},
 )
 
 ORCHESTRATOR_PROBES = frozenset(
@@ -582,23 +580,24 @@ def test_each_credential_goes_into_the_variable_the_program_reads() -> None:
     assert check_cli.GITHUB_TOKEN_VARIABLE == "SDS_MEMBERS_GITHUB_TOKEN"
     assert f'OBSERVER_BEARER_UUID="{OBSERVER_BEARER}"' in text
     assert f'CHANGE_MANAGER_READ_UUID="{READ_BEARER}"' in text
+    # The container's reads each pass one argument: the lane's token reaches `bws` in the
+    # environment, never as an argument.
     assert re.search(
-        r'SDS_MEMBERS_OBSERVER_TOKEN="\$\(sds_bws_value "\$OBSERVER_BEARER_UUID" '
-        r'"\$NARROW_IDENTITY"\)"',
-        text,
+        r'SDS_MEMBERS_OBSERVER_TOKEN="\$\(sds_bws_value "\$OBSERVER_BEARER_UUID"\)"', text
     )
     assert re.search(
-        r'SDS_MEMBERS_CHANGE_MANAGER_TOKEN="\$\(sds_bws_value "\$CHANGE_MANAGER_READ_UUID" '
-        r'"\$BROAD_IDENTITY"\)"',
+        r'SDS_MEMBERS_CHANGE_MANAGER_TOKEN="\$\(sds_bws_value "\$CHANGE_MANAGER_READ_UUID"\)"',
         text,
     )
-    assert "SDS_MEMBERS_GITHUB_TOKEN" in text and "gh auth token" in text
+    assert re.search(r'SDS_MEMBERS_GITHUB_TOKEN="\$\(sds_bws_value "\$READ_APP_KEY_UUID"', text)
     assert "export SDS_MEMBERS_OBSERVER_TOKEN SDS_MEMBERS_CHANGE_MANAGER_TOKEN" in text
 
 
-def test_the_launcher_reads_its_two_bws_identities_from_the_keychain() -> None:
-    accounts = set(re.findall(r"-a '(BWS_ACCESS_TOKEN[A-Z_]*)'", launcher_text(LAUNCHER)))
-    assert accounts == {"BWS_ACCESS_TOKEN_SDS", "BWS_ACCESS_TOKEN_VPS_BACKUP"}
+def test_the_launcher_reads_no_keychain_item_and_no_gh_login() -> None:
+    # The launcher's own text: the dead-man helper it sources keeps a by-name Keychain read.
+    code = LAUNCHER.read_text("utf-8")
+    assert "security find-generic-password" not in code
+    assert "gh auth token" not in code
 
 
 def test_the_observer_key_id_is_the_one_the_member_reader_names() -> None:

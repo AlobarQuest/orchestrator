@@ -6,11 +6,10 @@
 #
 # WHAT IS DUE IS infraops' ANSWER, NOT THIS PROGRAM'S. The pass runs
 # `node $ROTATION_PROPOSER_INFRAOPS_CHECKOUT/dist/cli/security-drift-cli.js cred-findings`, which
-# reads the registries listed in `cred-consumers.list` and the rotation state and prints JSON: on
-# the Mac, both in ~/.config/infra-drift; in the lane's container, where the compose's two settings
-# name. Neither file is opened by this program, and the subcommand writes nothing. An infraops
+# reads the registries listed in `cred-consumers.list` and the rotation state and prints JSON, in
+# the lane's container, where the compose's two settings name. Neither file is opened by this program, and the subcommand writes nothing. An infraops
 # checkout that predates the subcommand answers "unknown command" and the pass exits 2: land the
-# infraops change and pull that checkout before scheduling this.
+# infraops change before scheduling this.
 #
 # WHAT A WRITING PASS DOES, IN TWO PASSES. For a due credential whose standing package
 # `rotation-<credential_id>` does not yet carry the rotation, it files the observation, revises
@@ -38,7 +37,7 @@
 #      package in a state this lane never writes, a check infraops reported that this program
 #      cannot read, a cause that could not be filed (nothing revised), a refused proposal, a
 #      record stranded by a newer revision, or a revision committed and not published. In the
-#      lane's container only, also a due credential the registry hasn't handed over to the SDS
+#      also a due credential the registry hasn't handed over to the SDS
 #      (`manual-exposure`, `manual-request`, `manual-age`), which a person rotates.
 #
 # A WRITING PASS TELLS A PERSON through alert-hub (`rotation_proposer/alerts.py`): each finding, and
@@ -48,8 +47,9 @@
 # BARE INVOCATION IS A DRY RUN, and it needs no credential at all: it reads infraops and the
 # checkout and writes nothing and sends nothing. `--submit` is never supplied by this wrapper.
 #
-# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 4, step 3f-5). A set `BWS_ACCESS_TOKEN` means the
-# lane's container, and the block after the `--submit` test runs that pass and exits. There:
+# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4, step 3f-5). A set `BWS_ACCESS_TOKEN` means the
+# lane's container, and the block after the `--submit` test runs that pass and exits; without it the
+# launcher refuses. In the container:
 #   - `INFRADRIFT_CONFIG_DIR` and `SECURITY_DRIFT_STATE_DIR` come from the compose alone; either
 #     unset or empty, or `cred-rotation-state.json` missing from the second, exits 2 before the
 #     pass's clones, secrets or program. The state file lives on the lane's volume (ADR-0059
@@ -67,11 +67,10 @@
 #     program variable holds the push token; only git's extraheader does.
 #   - The lifecycle runs under the image's interpreter with the clone's `src` on `PYTHONPATH`. No
 #     chain setting reaches the program: this lane holds no chain credential (D-43 B).
-#   - It unsets `BWS_ACCESS_TOKEN` before git or any program runs, and reads no Keychain item.
+#   - It unsets `BWS_ACCESS_TOKEN` before git or any program runs.
 #   - It always sets `ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER=1`, whatever the environment held:
 #     the pass then reports a due credential not handed over as a finding and alerts on it
-#     (ADR-0059 Amendment 12 decision item 4). The Mac's branch unsets it, because there the
-#     03:00 infra-drift scan still files those as change-manager items.
+#     (ADR-0059 Amendment 12 decision item 4).
 # Exit 1 there also covers a failed mint, clone or list write; exit 2 also covers the fence and a
 # clone without its registry file.
 #
@@ -109,20 +108,11 @@ PUSH_APP_BOT_EMAIL="354576843+alobar-sds-lanes[bot]@users.noreply.github.com"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# RUN FROM THE MAIN TREE, NEVER FROM A BUILD WORKTREE. This pass commits to and publishes from the
-# packages checkout, and a scheduled lane runs the main tree's working copy and `.venv` by absolute
-# path; a pass started from a worktree runs code that was never merged against a checkout every
-# lane shares. The Mac alone runs this check: the lane's container (a set `BWS_ACCESS_TOKEN`, as in
-# the container block below) runs the image's own code from `/app`, which is no git checkout, so
-# there is no worktree to refuse and both `git rev-parse` calls would fail.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-install.sh"
+# Refused before the dead-man switch arms or any secret is read.
 if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  sds_refuse_linked_worktree "$REPO_ROOT"
+  echo "FATAL: no BWS_ACCESS_TOKEN: the rotation-proposer lane runs only in its container, through lane-run" >&2
+  exit 1
 fi
-
-export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME/Projects/intent-packages}"
-export ROTATION_PROPOSER_INFRAOPS_CHECKOUT="${ROTATION_PROPOSER_INFRAOPS_CHECKOUT:-$HOME/Projects/infraops-mcp-server}"
 
 # The dead-man switch, armed before any credential fetch so that a fetch failure is reported too.
 # It reports and never gates; until a Healthchecks check named sds-rotation-proposer exists it
@@ -143,11 +133,9 @@ esac
 
 # ---- THE LANE'S CONTAINER (ADR-0059 increment 4, step 3f-5) -----------------------------------
 # A set `BWS_ACCESS_TOKEN` means the lane's container: `lane-run` passes the lane's own token as its
-# one secret, and the Mac never sets it (its identities are Keychain items, read below). This block
-# runs the whole pass and exits, so everything after it is the Mac's launchd job, unchanged until
-# increment 6. It skips activation (the container runs the image's own code and clones its
-# checkouts fresh each pass), reads no Keychain item, and reads every secret with that one token in
-# the environment, never as a process argument.
+# one secret. This block runs the whole pass and exits. The container runs the image's own code,
+# clones its checkouts fresh each pass, and reads every secret with that one token in the
+# environment, never as a process argument.
 if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # THE FENCE: WHERE infraops' TWO FILES LIVE IS THE COMPOSE'S (ADR-0059 decision 5; Amendment 12
   # decision 1). `cred-findings` reads `cred-consumers.list` from `INFRADRIFT_CONFIG_DIR` and
@@ -234,7 +222,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   export BUMP_PROPOSER_PACKAGES_CHECKOUT="$PACKAGES_CLONE"
   export ROTATION_PROPOSER_INFRAOPS_CHECKOUT="$INFRAOPS_CLONE"
 
-  # THE SECRETS, `--submit` only, as on the Mac: a dry run reads infraops and the checkout, writes
+  # THE SECRETS, `--submit` only: a dry run reads infraops and the checkout, writes
   # nothing and sends nothing, so it needs none. Each is read with the lane's one token.
   unset _PUSH_TOKEN
   if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
@@ -315,75 +303,3 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     || echo "[clone] could not discard the clones under $_CLONE_ROOT; the next pass removes them" >&2
   exit "$rc"
 fi
-
-# THE PACKAGES CHECKOUT IS ACTIVATED BEFORE THE PASS READS IT, on a `--submit` run only (ADR-0031
-# amendment 1), for the reason `run-bump-proposer.sh` gives: a revision committed on a behind
-# `main` can't be published, and every later pass refuses it until a person reconciles. After the
-# worktree refusal, so a pass started from a build worktree never moves the shared checkout; after
-# the switch is armed, which is safe because one argument never re-execs (this script doesn't live
-# there); before any bearer is fetched, because the helper may run `uv sync` in that checkout. A
-# dry run writes nothing, so it leaves the checkout alone.
-_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-if [ -r "$_SDS_ACTIVATE" ]; then
-    # shellcheck source=/dev/null
-    . "$_SDS_ACTIVATE"
-else
-    activate_checkout() {
-        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-             "this run is not activated"
-    }
-fi
-if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
-  activate_checkout "$BUMP_PROPOSER_PACKAGES_CHECKOUT"
-else
-  echo "[activation] dry run: leaving ${BUMP_PROPOSER_PACKAGES_CHECKOUT/#$HOME/~} as it is"
-fi
-
-if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
-  # TWO BWS IDENTITIES, each read from its own Keychain item into its own variable and passed to
-  # the one fetch that needs it, so neither is ever ambient (docs/operations/credentials.md).
-  BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-  if [ -z "$BROAD_IDENTITY" ]; then
-    echo "FATAL: no broad BWS identity for the change-manager credential (service Claude)" >&2
-    exit 1
-  fi
-  ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
-  export ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN
-  if [ -z "${ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
-    echo "FATAL: could not read the propose-scoped change-manager credential from BWS (broad)" >&2
-    exit 1
-  fi
-
-  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  if [ -z "$SDS_IDENTITY" ]; then
-    echo "FATAL: no narrow BWS identity for the observer bearer (service Claude)" >&2
-    exit 1
-  fi
-  ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
-  ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
-  ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
-  export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
-  if [ -z "${ORCHESTRATOR_API_TOKEN:-}" ]; then
-    echo "FATAL: could not read the orchestrator observer bearer from BWS (narrow)" >&2
-    exit 1
-  fi
-
-  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
-  export SDS_BRIDGE_ALERT_TOKEN
-  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
-    echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)" >&2
-    exit 1
-  fi
-  unset BROAD_IDENTITY SDS_IDENTITY
-fi
-
-if [ ! -x "$REPO_ROOT/.venv/bin/rotation-proposer" ]; then
-  echo "FATAL: no rotation-proposer in $REPO_ROOT/.venv (run uv sync)" >&2
-  exit 1
-fi
-# The container's switch, never the Mac's, whatever the calling environment held: here the 03:00
-# infra-drift scan still reports a credential not handed over, as a change-manager item.
-unset ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER
-"$REPO_ROOT/.venv/bin/rotation-proposer" "$@"

@@ -21,21 +21,13 @@
 #      must not page; `execution-watch-unread` is the page, after two hours.
 # Anything else is reported as 1.
 #
-# ONE BWS IDENTITY, whichever host runs the pass. In the lane's container (ADR-0059), `lane-run`
-# passes the lane's own token as `BWS_ACCESS_TOKEN`, its one secret, and every fetch below reads
-# through it in the environment, never as a process argument. On the Mac, while the lane is still
-# there, it is the narrow `sds-operator` account read from the Keychain into a variable that is
-# never exported, so it can serve only the fetches below. Either way the token is unset before the
-# program runs, which needs neither. The alert token is fetched only on a --submit pass: a pass
-# that sends nothing needs none.
-#
-# ACTIVATION is the Mac's: the container has no `activate-checkout.sh`, so there the fallback below
-# logs one line and the pass runs the image's own code.
+# ONE BWS IDENTITY. The lane runs only in its container (ADR-0059): `lane-run` passes the lane's
+# own token as `BWS_ACCESS_TOKEN`, its one secret, and every fetch below reads through it in the
+# environment, never as a process argument. The token is unset before the program runs, which needs
+# none. The alert token is fetched only on a --submit pass: a pass that sends nothing needs none.
 #
 # Usage:
 #   scripts/run-execution-watch.sh [--seed | --submit]
-# Install as a scheduled job with:
-#   scripts/install-execution-watch-launchd.sh
 set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
@@ -44,22 +36,14 @@ SDS_BRIDGE_ALERT_UUID="${EXECUTION_WATCH_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Activation: best-effort, so a merged change is live on this machine before the pass runs.
-_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-if [ -r "$_SDS_ACTIVATE" ]; then
-  # shellcheck source=/dev/null
-  . "$_SDS_ACTIVATE"
-else
-  activate_checkout() {
-    echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-         "this run is not activated"
-  }
+if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+  echo "FATAL: no BWS_ACCESS_TOKEN: the execution-watch lane runs only in its container, through lane-run" >&2
+  exit 1
 fi
-activate_checkout "$REPO_ROOT" "$0" "$@"
 
-# The dead-man switch, armed only by the scheduled pass (--submit), after activation (which may
-# exec) and before any credential fetch, so a fetch failure is reported too. A bare or --seed run
-# is an operator inspecting the lane and must not reset the timer of a schedule that stopped.
+# The dead-man switch, armed only by the scheduled pass (--submit) and before any credential fetch,
+# so a fetch failure is reported too. A bare or --seed run is an operator inspecting the lane and
+# must not reset the timer of a schedule that stopped.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 case " $* " in
@@ -75,18 +59,8 @@ sds_deadman_arm sds-execution-watch --finding 2 "${_arm_args[@]}"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-  # The lane's container: read through the token already in the environment.
-  _lane_secret() { sds_bws_value "$1"; }
-else
-  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  if [ -z "$SDS_IDENTITY" ]; then
-    echo "FATAL: no BWS identity for the observer bearer (BWS_ACCESS_TOKEN, or service Claude)" >&2
-    exit 1
-  fi
-  _lane_secret() { sds_bws_value "$1" "$SDS_IDENTITY"; }
-fi
+# Read through the token already in the environment.
+_lane_secret() { sds_bws_value "$1"; }
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
 ORCHESTRATOR_API_TOKEN="$(_lane_secret "$OBSERVER_BEARER_UUID")"
@@ -104,7 +78,7 @@ if [ "$_submitting" -eq 1 ]; then
     exit 1
   fi
 fi
-unset SDS_IDENTITY BWS_ACCESS_TOKEN
+unset BWS_ACCESS_TOKEN
 
 if [ ! -x "$REPO_ROOT/.venv/bin/execution-watch" ]; then
   echo "FATAL: no execution-watch in $REPO_ROOT/.venv (run uv sync)" >&2

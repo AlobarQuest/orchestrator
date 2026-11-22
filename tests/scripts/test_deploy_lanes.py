@@ -1358,9 +1358,6 @@ def test_the_execution_watch_crontab_runs_the_scheduled_pass_every_fifteen_minut
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["*/15 * * * * lane-run execution-watch --submit"]
-    # The Mac job's cadence, which this replaces.
-    plist = (ROOT / "scripts/com.devon.execution-watch.plist").read_text()
-    assert re.search(r"<key>StartInterval</key>\s*<integer>900</integer>", plist)
 
 
 def test_the_repositorys_manifest_lists_execution_watchs_secrets() -> None:

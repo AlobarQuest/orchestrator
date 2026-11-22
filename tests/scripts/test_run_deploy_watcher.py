@@ -1,11 +1,10 @@
-"""`scripts/run-deploy-watcher.sh` on both hosts (ADR-0059 increment 3): in the lane's container,
-which secrets it reads with the lane's token, the GitHub mint's exact arguments, and that `gh` is
-never asked; on the Mac, the two Keychain identities and the `gh` login, unchanged.
+"""`scripts/run-deploy-watcher.sh` in the lane's container (ADR-0059 increment 3): which secrets it
+reads with the lane's token, the GitHub mint's exact arguments, that `gh` is never asked, and that
+it refuses to run anywhere else.
 
 The launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's
-token as `BWS_ACCESS_TOKEN` (the container), or the stand-in Keychain identities (the Mac). `bws`,
-`gh` and `curl` are stubs on PATH; the venv's `deploy-watcher` and `sds-github-mint` are stubs
-that log. Nothing reads the real Keychain, BWS, GitHub or Healthchecks.
+token as `BWS_ACCESS_TOKEN`. `bws`, `gh` and `curl` are stubs on PATH; the venv's `deploy-watcher`
+and `sds-github-mint` are stubs that log. Nothing reads the real BWS, GitHub or Healthchecks.
 """
 
 from __future__ import annotations
@@ -23,12 +22,9 @@ from scripts import deploy_orchestrator as deploy
 LAUNCHER = Path("scripts/run-deploy-watcher.sh")
 COMPOSE = Path("lanes/deploy-watcher/compose.yaml")
 CRONTAB = Path("lanes/deploy-watcher/crontab")
-PLIST = Path("scripts/com.devon.deploy-watcher.plist")
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 CHANGE_MANAGER_UUID = "3b9503da-eb7e-401d-b4a7-b4a400c07efb"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
-# The Healthchecks key the Mac's dead-man lookup by check name reads with the broad identity.
-HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/deploy-watcher"
 LANE_TOKEN = "a-lane-token"
@@ -74,13 +70,6 @@ echo "mint lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
 [ "${FAKE_MINT_RC:-0}" -eq 0 ] || { echo "FATAL: refused" >&2; exit "$FAKE_MINT_RC"; }
 printf '%s' "$FAKE_MINTED"
 """
-# The Mac path: no lane token, stand-in Keychain identities so `/usr/bin/security` is never asked.
-MAC = {
-    "BWS_ACCESS_TOKEN": "",
-    "BWS_ACCESS_TOKEN_SDS": "narrow",
-    "BWS_ACCESS_TOKEN_BROAD": "broad",
-    "SDS_DEADMAN_PING_URL_UUID": "",
-}
 
 
 def _executable(path: Path, text: str) -> None:
@@ -151,9 +140,6 @@ CM = f"value-of-{CHANGE_MANAGER_UUID}"
 OBSERVER = f"value-of-{OBSERVER_UUID}"
 
 
-# ---- the container ---------------------------------------------------------------------------
-
-
 def test_the_pass_mints_its_github_token_with_exactly_these_arguments(tmp_path: Path) -> None:
     result, logs = _run(tmp_path)
     assert result.returncode == 0, result.stderr
@@ -187,7 +173,7 @@ def test_every_read_uses_the_lanes_one_token_and_gh_is_never_asked(tmp_path: Pat
         assert secret not in result.stdout + result.stderr
 
 
-def test_the_container_skips_activation_rather_than_logging_it_missing(tmp_path: Path) -> None:
+def test_the_container_runs_the_images_own_code_with_no_activation(tmp_path: Path) -> None:
     result, _ = _run(tmp_path)
     assert "[activation]" not in result.stdout + result.stderr
 
@@ -293,50 +279,27 @@ def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
     assert len(_watcher_runs(logs["lane"])) == 2
 
 
-# ---- the Mac ---------------------------------------------------------------------------------
-
-
-def test_on_the_mac_two_identities_and_the_gh_login_and_nothing_is_minted(tmp_path: Path) -> None:
-    """The Mac path, unchanged until increment 6: the broad identity reads change-manager's
-    bearer, the narrow one the observer's, and the GitHub token is the operator's `gh` login."""
-    result, logs = _run(tmp_path, **MAC)
-    assert result.returncode == 0, result.stderr
-    assert logs["bws"] == [
-        f"{HEALTHCHECKS_KEY_UUID} token=broad",
-        f"{CHANGE_MANAGER_UUID} token=broad",
-        f"{OBSERVER_UUID} token=narrow",
-    ]
-    assert logs["gh"] == ["gh auth token"]
-    assert not any(line.startswith(("repositories", "mint", "stdin=")) for line in logs["lane"])
-    assert _watcher_runs(logs["lane"]) == [
-        f"watch github=gh-token cm={CM} observer={OBSERVER} lane_token=",
-        f"recheck github=gh-token cm={CM} observer={OBSERVER} lane_token=",
-    ]
-
-
-def test_on_the_mac_preset_tokens_are_kept(tmp_path: Path) -> None:
+def test_preset_bearers_are_kept_and_only_the_mint_key_is_read(tmp_path: Path) -> None:
     result, logs = _run(
         tmp_path,
-        **MAC,
-        DEPLOY_WATCHER_GITHUB_TOKEN="gh-preset",
         DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN="cm-preset",
         DEPLOY_WATCHER_ORCHESTRATOR_TOKEN="observer-preset",
     )
     assert result.returncode == 0, result.stderr
-    assert logs["bws"] == [f"{HEALTHCHECKS_KEY_UUID} token=broad"]
-    assert logs["gh"] == []
+    assert logs["bws"] == [
+        f"{PING_URL_UUID} token={LANE_TOKEN}",
+        f"{READ_APP_KEY_UUID} token={LANE_TOKEN}",
+    ]
     assert _watcher_runs(logs["lane"])[0] == (
-        "watch github=gh-preset cm=cm-preset observer=observer-preset lane_token="
+        f"watch github={MINTED} cm=cm-preset observer=observer-preset lane_token="
     )
 
 
-def test_on_the_mac_a_missing_gh_login_exits_1(tmp_path: Path) -> None:
-    # A `gh` that prints nothing stands for a missing login.
-    result, logs = _run(tmp_path, **MAC, gh='#!/bin/sh\necho "gh $*" >> "$GH_LOG"\n')
+def test_outside_the_container_it_refuses_and_runs_nothing(tmp_path: Path) -> None:
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
     assert result.returncode == 1
-    assert "no GitHub token" in result.stderr
-    assert logs["gh"] == ["gh auth token"]
-    assert _watcher_runs(logs["lane"]) == []
+    assert "the deploy-watcher lane runs only in its container, through lane-run" in result.stderr
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": []}
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -360,16 +323,13 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     assert "deploy-watcher" not in deploy.STATEFUL_LANES
 
 
-def test_the_crontab_runs_the_pass_hourly_as_the_mac_job_does() -> None:
+def test_the_crontab_runs_the_pass_hourly() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["20 * * * * lane-run deploy-watcher"]
-    plist = PLIST.read_text()
-    assert "<key>StartInterval</key>\n    <integer>3600</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-deploy-watcher.sh</string>\n    </array>" in plist
 
 
 def test_the_repositorys_manifest_lists_the_watchers_secrets() -> None:

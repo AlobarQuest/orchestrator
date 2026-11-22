@@ -35,26 +35,25 @@
 # `factory` alone as PYTHONPATH. A claim that can't be produced refuses the decomposition. `factory`
 # runs on an allowlist of variables holding only the Brain keys as secrets (`cli.py`).
 #
-# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-3). `sds_in_lane_container` means the
-# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
-# (ADR-0055 amendment 30), or passes a lane's own token as its one secret, and the Mac's launchd
-# job sets neither. There the launcher skips activation (the container runs the image's own code),
-# reads no Keychain item and calls no `gh`, and reads the same five secrets through the socket, or
-# with that one token in the environment, never as a process argument, each fatal as on the Mac,
-# on every pass, plus the factory-events chain's read password (`2f708d08-…`), the read-only
-# App's key (`314a966c-…`), piped straight into the mint, and the lane's ping-URL secret, which
-# `sds-deadman.sh` reads. The broker serves this lane only the UUIDs its allowlist lists
-# (`lanes/secrets-broker/allowlist.toml`), exactly the eight this launcher reads. It mints
-# `BUMP_DRIVER_GITHUB_TOKEN` from the read-only App, in place of `gh auth token`, for exactly the
-# repositories `bump-driver repositories` prints (the three clones and each `dependency_updates`
-# grant), with `metadata`, `pull_requests` and `contents`, read: a granted pull request's state
+# THE LANE'S CONTAINER ONLY (ADR-0059 increment 6). `sds_in_lane_container` means the lane's
+# container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret. Anywhere else the
+# launcher refuses before it reads a secret. The container runs the image's own code. It reads the
+# five secrets through the socket, or with that one token in the environment, never as a process
+# argument, each fatal, on every pass, plus the factory-events chain's read password
+# (`2f708d08-…`), the read-only App's key (`314a966c-…`), piped straight into the mint, and the
+# lane's ping-URL secret, which `sds-deadman.sh` reads. The broker serves this lane only the UUIDs
+# its allowlist lists (`lanes/secrets-broker/allowlist.toml`), exactly the eight this launcher
+# reads. It mints `BUMP_DRIVER_GITHUB_TOKEN` from the read-only App for exactly the repositories
+# `bump-driver repositories` prints (the three clones and each `dependency_updates` grant), with
+# `metadata`, `pull_requests` and `contents`, read: a granted pull request's state
 # (`GitHub.pull_state`), and the shallow clones of the mirrors and of decision 1. It clones
 # intent-packages, project-standards and security-standards, shallow at `main`, through
-# `scripts/sds-git.sh` into `$HOME/Projects/`, and code-standards into `$HOME/Developer/`, the paths
-# the Mac reads, under the new `HOME` that `lane-run` gives the pass and removes after it.
-# `factory` and `code-standards` are shims running the image's interpreter on their clones' `src`,
-# as the bump proposer runs intent-packages' lifecycle; no venv is built and nothing is fetched
-# beyond the clones.
+# `scripts/sds-git.sh` into `$HOME/Projects/`, and code-standards into `$HOME/Developer/`, under
+# the new `HOME` that `lane-run` gives the pass and removes after it. `factory` and
+# `code-standards` are shims running the image's interpreter on their clones' `src`, as the bump
+# proposer runs intent-packages' lifecycle; no venv is built and nothing is fetched beyond the
+# clones.
 #
 # THE MAC'S CONFORMANCE FACTS (ADR-0059 Amendment 13, D-62 C). The claim's other two Mac-only
 # inputs, the infra-drift report and the LaunchAgent and hook wiring, come from the newest
@@ -73,14 +72,11 @@
 # credential before the driver runs. The socket itself stays reachable, as the design accepts: the
 # driver already runs as the same user. A missing `BUMP_DRIVER_STATE_DIR` fails the pass: the
 # lock, the alerts and the mirrors must be on the lane's volume. The container block runs the
-# whole pass and exits, so everything after it is the Mac's launchd job, unchanged until
-# increment 6. Exit 1 there also covers a failed mint
-# or clone; a member record the repository list couldn't be read from exits 3.
+# whole pass and exits. Exit 1 also covers a failed mint or clone; a member record the repository
+# list couldn't be read from exits 3.
 #
 # Usage:
 #   scripts/run-bump-driver.sh [--dry-run]
-# Install as a scheduled job with:
-#   scripts/install-bump-driver-launchd.sh
 set -uo pipefail
 
 CHECK_NAME="sds-bump-driver"
@@ -98,24 +94,14 @@ READ_APP_ID="5684758"
 FACTORY_EVENTS_READ_UUID="2f708d08-ea5d-4d11-bde0-b50200c9a60b"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Sourced before activation, whose host test is its `sds_in_lane_container`.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
-# ACTIVATION: these launchers run the working copy, so a merged change is live here only once it
-# is pulled. Best-effort: the helper prints one `[activation]` line and returns 0 whatever it finds.
-# Skipped in the container, which runs the image's own code and has no `activate-checkout.sh`.
+
+# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
+# armed here, the switch would ping the production check.
 if ! sds_in_lane_container; then
-  _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-  if [ -r "$_SDS_ACTIVATE" ]; then
-      # shellcheck source=/dev/null
-      . "$_SDS_ACTIVATE"
-  else
-      activate_checkout() {
-          echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-               "this run is not activated"
-      }
-  fi
-  activate_checkout "$REPO_ROOT" "$0" "$@"
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the bump-driver lane runs only in its container, through lane-run" >&2
+  exit 1
 fi
 
 _acting=1
@@ -127,7 +113,7 @@ source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" bump-driver "$_acting"
 
 # ---- THE LANE'S CONTAINER (ADR-0059 increment 5, step 3g-3) -----------------------------------
-# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read is `sds_bws_value` with one argument:
+# See "THE LANE'S CONTAINER ONLY" in the header. Every read is `sds_bws_value` with one argument:
 # through the broker's socket, or with the lane's one token from the environment, so no token
 # appears in a process argument, and each secret is always read, never taken from the environment.
 # Every failure is `sds_outcome_fail`, which names it and pings `/fail` with it as the body.
@@ -164,7 +150,7 @@ if sds_in_lane_container; then
   unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
     FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
 
-  # The five the Mac reads, in its order, each fatal as there, on every pass.
+  # The five secrets, each fatal, on every pass.
   ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID")"
   [ -n "$ORCHESTRATOR_API_TOKEN" ] || sds_outcome_fail \
     "FATAL: could not read the orchestrator system credential from BWS$FROM"
@@ -237,8 +223,7 @@ if sds_in_lane_container; then
   unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
   # DECISION 1'S CLONES, shallow, at `main`, with the read token through git's environment, into
-  # `$HOME/Projects/` and `$HOME/Developer/`: the Mac's paths, so `FACTORY_PYTHONPATH` is the Mac's
-  # string and project-standards' checkers find security-standards and code-standards where they
+  # `$HOME/Projects/` and `$HOME/Developer/`, so `FACTORY_PYTHONPATH` names project-standards' checkers find security-standards and code-standards where they
   # look for them (Amendment 13 decision item 1 for code-standards). `HOME` is the new directory
   # `lane-run` gives this pass and removes after it, so the pass discards the clones. git's own
   # message is kept for the report; it never holds the header (no trace is on).
@@ -258,7 +243,7 @@ if sds_in_lane_container; then
       "FATAL: could not clone AlobarQuest/$_clone into $_dest: $_clone_out"
   done
   # The driver's own git commands build their environment from the token (`Mirrors.environment`),
-  # and `factory`'s is an allowlist, so git's credential goes now, as the Mac's pass has none.
+  # and `factory`'s is an allowlist, so git's credential goes now.
   unset GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_TERMINAL_PROMPT GIT_CONFIG_COUNT \
     GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
@@ -343,50 +328,3 @@ print(summary)
   esac
   sds_outcome_end "$rc" --told 2
 fi
-
-# ---- THE MAC, unchanged until increment 6 ------------------------------------------------------
-NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-  -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-[ -n "$NARROW_IDENTITY" ] || sds_outcome_fail \
-    "FATAL: no BWS identity for the orchestrator credential (Keychain Claude/BWS_ACCESS_TOKEN_SDS)"
-BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-  -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-[ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
-    "FATAL: no BWS identity for the change-manager credential (Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP)"
-ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$NARROW_IDENTITY")"
-[ -n "$ORCHESTRATOR_API_TOKEN" ] || sds_outcome_fail \
-    "FATAL: could not read the orchestrator system credential from BWS"
-SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$NARROW_IDENTITY")"
-[ -n "$SDS_BRIDGE_ALERT_TOKEN" ] || sds_outcome_fail \
-    "FATAL: could not read the alert-hub sender credential from BWS"
-CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
-[ -n "$CHANGE_MANAGER_TOKEN" ] || sds_outcome_fail \
-    "FATAL: could not read the change-manager READ credential from BWS"
-CODE_BRAIN_KEY="$(sds_bws_value "$CODE_BRAIN_KEY_UUID" "$BROAD_IDENTITY")"
-[ -n "$CODE_BRAIN_KEY" ] || sds_outcome_fail \
-    "FATAL: could not read the Code Brain key from BWS"
-INFRA_BRAIN_KEY="$(sds_bws_value "$INFRA_BRAIN_KEY_UUID" "$BROAD_IDENTITY")"
-[ -n "$INFRA_BRAIN_KEY" ] || sds_outcome_fail \
-    "FATAL: could not read the Infra Brain key from BWS"
-unset NARROW_IDENTITY BROAD_IDENTITY
-BUMP_DRIVER_GITHUB_TOKEN="${BUMP_DRIVER_GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}"
-[ -n "$BUMP_DRIVER_GITHUB_TOKEN" ] || sds_outcome_fail \
-    "FATAL: no GitHub credential. Set BUMP_DRIVER_GITHUB_TOKEN, or authenticate gh."
-
-ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
-ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-system"
-PATH="$REPO_ROOT/.venv/bin:$HOME/Projects/intent-packages/.venv/bin:$PATH"
-FACTORY_PYTHONPATH="$HOME/Projects/project-standards/src:$HOME/Projects/security-standards/src"
-export PATH FACTORY_PYTHONPATH ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID \
-  ORCHESTRATOR_API_TOKEN SDS_BRIDGE_ALERT_TOKEN CHANGE_MANAGER_TOKEN CODE_BRAIN_KEY \
-  INFRA_BRAIN_KEY BUMP_DRIVER_GITHUB_TOKEN
-
-"$REPO_ROOT/.venv/bin/bump-driver" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
-rc=$?
-# A code outside {0,1,2,3} is the program dying in a way it doesn't describe (127 is a missing
-# binary); report it as the tool failing rather than folding it to 0.
-case "$rc" in
-  0|1|2|3) ;;
-  *) echo "FATAL: bump-driver exited $rc" >> "$SDS_OUTCOME_REPORT"; rc=1 ;;
-esac
-sds_outcome_end "$rc" --told 2

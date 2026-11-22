@@ -1,5 +1,7 @@
 """The landing ledger and the activation sweep take their scope from the member record.
-The membership check is an outcome alarm that reads the record itself.
+The membership check is an outcome alarm that reads the record itself. The ledger and the
+membership check run on their container path (a lane token in `BWS_ACCESS_TOKEN`); the sweep stays
+on the Mac.
 
 Each launcher runs from a throwaway tree holding copies of its helper scripts and a fake
 `.venv/bin`: `python -m scripts.sds_scope <population>` is a stub that answers from the
@@ -39,6 +41,8 @@ printf '%s\\n' "$3" >> "$BWS_LOG"
 printf '{"value": "value-of-%s"}' "$3"
 """
 _CURL = "#!/bin/sh\nexit 1\n"
+# The read-only App's mint: the key arrives on stdin, the minted token is `minted`.
+_MINT = "#!/bin/sh\ncat > /dev/null\necho minted\n"
 
 
 def _executable(path: Path, text: str) -> None:
@@ -49,6 +53,7 @@ def _executable(path: Path, text: str) -> None:
 def _run(
     tmp_path: Path, launcher: Path, programs: list[str], **fake: str
 ) -> tuple[int, list[str], list[str], list[str]]:
+    """The sweep, or the ledger on its container path."""
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
     for name in (launcher.name, "sds-deadman.sh", "sds-bws.sh", "sds-token.sh"):
@@ -58,6 +63,7 @@ def _run(
     _executable(venv / "python", _PYTHON)
     for program in programs:
         _executable(venv / program, _LANE)
+    _executable(venv / "sds-github-mint", _MINT)
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     _executable(stubs / "bws", _BWS)
@@ -80,10 +86,6 @@ def _run(
         "BWS_LOG": str(logs["bws"]),
         **fake,
     }
-    if launcher == LEDGER:
-        # A set `BWS_ACCESS_TOKEN` is the ledger's container path (`test_run_landing_ledger.py`);
-        # these tests hold its Mac path, which launchd starts with PATH and HOME alone.
-        del env["BWS_ACCESS_TOKEN"]
     result = subprocess.run(
         [
             "/usr/bin/env",
@@ -181,15 +183,13 @@ def test_sweep_does_not_swallow_an_unrecognised_scope_failure(tmp_path: Path) ->
 
 MEMBERSHIP = Path("scripts/run-membership-check.sh")
 CHANGE_MANAGER_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
+READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
 
 _CHECK_PROGRAM = """#!/bin/bash
 printf 'args=%s observer=%s change_manager=%s github=%s\\n' "$*" "$SDS_MEMBERS_OBSERVER_TOKEN" \\
   "$SDS_MEMBERS_CHANGE_MANAGER_TOKEN" "$SDS_MEMBERS_GITHUB_TOKEN" >> "$LANE_LOG"
 echo "the report"
 exit "${FAKE_CHECK_RC:-0}"
-"""
-_REAL_PYTHON = """#!/bin/bash
-exec "$REAL_PYTHON" "$@"
 """
 _RECORDING_BWS = """#!/bin/sh
 printf '%s\\n' "$3" >> "$BWS_LOG"
@@ -202,7 +202,7 @@ case "$*" in
   *) printf '{"checks": [{"name": "sds-membership-check", "ping_url": "https://hc.test/p"}]}' ;;
 esac
 """
-_GH = "#!/bin/sh\necho gh-token\n"
+_GIT = "#!/bin/sh\nexit 0\n"
 
 
 def _membership(tmp_path: Path, **fake: str) -> tuple[int, list[str], list[str], list[str]]:
@@ -212,24 +212,27 @@ def _membership(tmp_path: Path, **fake: str) -> tuple[int, list[str], list[str],
         shutil.copy(Path("scripts") / name, root / "scripts" / name)
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
-    _executable(venv / "python", _REAL_PYTHON)
+    _executable(venv / "python", _PYTHON)
     _executable(venv / "membership-check", _CHECK_PROGRAM)
+    _executable(venv / "sds-github-mint", _MINT)
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     _executable(stubs / "bws", _RECORDING_BWS)
     _executable(stubs / "curl", _PINGING_CURL)
-    _executable(stubs / "gh", _GH)
+    _executable(stubs / "git", _GIT)
     home = tmp_path / "home"
     home.mkdir()
-    logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "ping")}
+    logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "ping", "scope")}
     for log in logs.values():
         log.write_text("")
     env = {
         "PATH": f"{stubs}:/usr/bin:/bin",
         "HOME": str(home),
         "REAL_PYTHON": sys.executable,
-        "BWS_ACCESS_TOKEN_SDS": "not-a-real-identity",
+        "BWS_ACCESS_TOKEN": "not-a-real-identity",
         "BWS_ACCESS_TOKEN_BROAD": "not-a-real-identity",
+        "FAKE_LEDGER": "o/one\no/intent-packages",
+        "SCOPE_LOG": str(logs["scope"]),
         "LANE_LOG": str(logs["lane"]),
         "BWS_LOG": str(logs["bws"]),
         "PING_LOG": str(logs["ping"]),
@@ -260,9 +263,14 @@ def test_membership_check_hands_each_credential_to_the_program(tmp_path: Path) -
     assert rc == 0
     assert lane == [
         f"args= observer=value-of-{OBSERVER_UUID} "
-        f"change_manager=value-of-{CHANGE_MANAGER_UUID} github=gh-token"
+        f"change_manager=value-of-{CHANGE_MANAGER_UUID} github=minted"
     ]
-    assert set(bws) == {OBSERVER_UUID, CHANGE_MANAGER_UUID, HEALTHCHECKS_KEY_UUID}
+    assert set(bws) == {
+        OBSERVER_UUID,
+        CHANGE_MANAGER_UUID,
+        HEALTHCHECKS_KEY_UUID,
+        READ_APP_KEY_UUID,
+    }
 
 
 def test_membership_check_pings_start_then_success_with_the_report(tmp_path: Path) -> None:

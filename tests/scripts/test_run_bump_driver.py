@@ -1,4 +1,4 @@
-"""`scripts/run-bump-driver.sh` in the lane's container and on the Mac, and the lane's files.
+"""`scripts/run-bump-driver.sh` in the lane's container, and the lane's files.
 
 The real launcher runs under `env -i` from a throwaway tree, with what `lane-run` passes it in the
 container: the lane's token as `BWS_ACCESS_TOKEN` (or, on the secrets broker, `SDS_SECRETS_SOCKET`
@@ -8,12 +8,9 @@ naming a stand-in broker's socket, `conftest.py`'s), the state directory, `PATH`
 `code-standards` shims run for real. In the venv, `bump-driver` and `sds-github-mint` are stubs
 that log what reached them, and `python` runs the real interpreter (`sds-bws.sh` parses BWS's JSON
 with it, and the shims run it) except for `-m orchestrator.factory_chain_read`, the chain walk,
-which a stand-in answers with `$FAKE_WALK` after logging what reached it. On the Mac the two
-identities are stand-ins, so no test reads the Keychain. Nothing reads BWS, GitHub,
-change-manager, the orchestrator, alert-hub, the Brains or Healthchecks.
-
-`tests/bump_driver/test_launcher.py` pins the Mac's lines as they were before the container
-branch, unedited.
+which a stand-in answers with `$FAKE_WALK` after logging what reached it. A broad-identity
+stand-in keeps the real Keychain out of the outcome alarm's by-name lookup. Nothing reads BWS,
+GitHub, change-manager, the orchestrator, alert-hub, the Brains or Healthchecks.
 """
 
 from __future__ import annotations
@@ -36,7 +33,6 @@ LAUNCHER = Path("scripts/run-bump-driver.sh")
 HELPERS = ("sds-deadman.sh", "sds-bws.sh", "sds-git.sh")
 COMPOSE = Path("lanes/bump-driver/compose.yaml")
 CRONTAB = Path("lanes/bump-driver/crontab")
-PLIST = Path("scripts/com.devon.bump-driver.plist")
 
 SYSTEM_UUID = "221a48d5-3f29-4898-b300-b4820140c880"
 ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
@@ -46,7 +42,7 @@ INFRA_BRAIN_UUID = "da8134b0-565f-45c8-8965-b48200ea1c40"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
 CHAIN_READ_UUID = "2f708d08-ea5d-4d11-bde0-b50200c9a60b"
 HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
-# The Mac's five, in the Mac's order, then the chain's read password and the App key the mint needs.
+# The launcher's five, then the chain's read password and the App key the mint needs.
 FIVE = (SYSTEM_UUID, ALERT_UUID, READ_UUID, CODE_BRAIN_UUID, INFRA_BRAIN_UUID)
 LANE_SECRETS = (*FIVE, CHAIN_READ_UUID, READ_APP_KEY_UUID)
 CLONES = ("intent-packages", "project-standards", "security-standards", "code-standards")
@@ -66,7 +62,6 @@ VERIFIED_WALK = (
 LANE_TOKEN = "a-lane-token"
 READ_TOKEN = "ghs-minted-read-token"
 BROAD_STANDIN = "broad-stand-in"
-NARROW_STANDIN = "narrow-stand-in"
 REPOSITORIES = (
     "AlobarQuest/change-manager",
     "AlobarQuest/intent-packages",
@@ -287,17 +282,6 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
         check=False,
     )
     return Run(result, {name: log.read_text().splitlines() for name, log in logs.items()}, home)
-
-
-def _mac(tmp_path: Path, *args: str, **fake: str | None) -> Run:
-    return _run(
-        tmp_path,
-        *args,
-        BWS_ACCESS_TOKEN=None,
-        BUMP_DRIVER_STATE_DIR=None,
-        BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN,
-        **fake,
-    )
 
 
 # ---- the secrets, read with the lane's one token ---------------------------------------------
@@ -675,14 +659,13 @@ def test_the_programs_code_is_the_passs(tmp_path: Path, rc: int, expected: int) 
         assert "FATAL: bump-driver exited 127" in run.result.stdout
 
 
-# ---- the container and the Mac ---------------------------------------------------------------
+# ---- the container ---------------------------------------------------------------
 
 
-def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path) -> None:
-    run = _run(tmp_path, BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN)
+def test_the_container_asks_gh_nothing_and_prints_no_activation(tmp_path: Path) -> None:
+    run = _run(tmp_path)
     assert run.code == 0, run.output
     assert "[activation]" not in run.output
-    assert NARROW_STANDIN not in [token for _, token in run.reads()]
     assert run.logs["gh"] == []
 
 
@@ -707,7 +690,7 @@ def test_container_branch_runs_on_the_socket_without_a_token(
     assert run.code == 0, run.output
     # Every lane secret came through the socket: the only `bws` call is an acting pass's outcome
     # alarm reading the Healthchecks key, by the broad stand-in that exists only in this test, and
-    # the Mac's steps never ran.
+    # `gh` was never asked.
     assert run.reads() == ([] if args else [(HEALTHCHECKS_KEY_UUID, BROAD_STANDIN)])
     assert "[activation]" not in run.output
     assert run.logs["gh"] == []
@@ -740,8 +723,8 @@ def test_container_branch_runs_on_the_socket_without_a_token(
 
 def test_with_a_ping_url_named_the_socket_serves_every_read(tmp_path: Path, broker) -> None:
     """With a ping-URL id named, as the compose names one, the outcome alarm reads it
-    through the socket too, and `bws` never runs. No broad identity: nothing falls back to the
-    Mac."""
+    through the socket too, and `bws` never runs. No broad identity: nothing falls back to
+    the by-name lookup."""
     socket_path = broker(
         {PING_URL_SECRET: "https://ping.example/x", **{u: value(u) for u in LANE_SECRETS}}
     )
@@ -768,82 +751,30 @@ def test_a_secret_the_socket_refuses_fails_the_pass_before_the_driver(
     assert run.passes() == [] and run.lines("mint") == []
 
 
-def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
+def test_a_dead_socket_fails_the_pass_and_never_falls_back_to_bws(
     tmp_path: Path, dead_socket: Path
 ) -> None:
     run = _brokered(tmp_path, dead_socket)
     assert run.code == 1, run.output
     assert "FATAL: could not read the orchestrator system credential" in run.output
     # Only the outcome alarm's Healthchecks key, by the broad stand-in: no lane secret fell back
-    # to `bws`, and no Mac identity was read.
+    # to `bws`.
     assert run.reads() == [(HEALTHCHECKS_KEY_UUID, BROAD_STANDIN)]
     assert run.logs["gh"] == []
     assert "[activation]" not in run.output
     assert run.lines("derive") == [] and run.lines("mint") == [] and run.passes() == []
 
 
-def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
-    """The container block ends in `sds_outcome_end`, which exits, so every Keychain read and `gh`
-    call after its closing `fi` is the Mac's. The outcome alarm's own Keychain read is reached only
-    without a broad identity and a ping-URL id, which the compose names."""
-    lines = LAUNCHER.read_text().splitlines()
-    block = lines.index("if sds_in_lane_container; then")
-    end = lines.index("fi", block)
-    assert lines[end - 1].strip() == 'sds_outcome_end "$rc" --told 2'
-    code = [(i, line) for i, line in enumerate(lines) if not line.lstrip().startswith("#")]
-    keychain = [i for i, line in code if "/usr/bin/security" in line]
-    gh = [i for i, line in code if "gh auth token" in line]
-    assert len(keychain) == 2 and len(gh) == 1
-    assert all(end < i for i in (*keychain, *gh))
-
-
-@pytest.mark.parametrize("args", [(), ("--dry-run",)], ids=["acting", "dry-run"])
-def test_on_the_mac_the_identities_and_gh_are_as_before_and_nothing_is_minted(
-    tmp_path: Path, args: tuple[str, ...]
-) -> None:
-    run = _mac(tmp_path, *args)
-    assert run.code == 0, run.output
-    assert "[activation] helper missing" in run.output
-    assert run.lines("mint") == [] and run.lines("derive") == [] and run.logs["git"] == []
-    assert run.logs["gh"] == ["gh auth token"]
-    expected = [] if args else [(HEALTHCHECKS_KEY_UUID, BROAD_STANDIN)]
-    expected += [
-        (SYSTEM_UUID, NARROW_STANDIN),
-        (ALERT_UUID, NARROW_STANDIN),
-        (READ_UUID, BROAD_STANDIN),
-        (CODE_BRAIN_UUID, BROAD_STANDIN),
-        (INFRA_BRAIN_UUID, BROAD_STANDIN),
-    ]
-    assert run.reads() == expected
-    env = run.env()
-    root = tmp_path / "tree"
-    assert env["BUMP_DRIVER_GITHUB_TOKEN"] == "gh-token"
-    assert env["ORCHESTRATOR_API_URL"] == "https://sds.alobar.net"
-    assert env["PATH"].startswith(
-        f"{root}/.venv/bin:{run.home}/Projects/intent-packages/.venv/bin:"
-    )
-    assert env["FACTORY_PYTHONPATH"] == (
-        f"{run.home}/Projects/project-standards/src:{run.home}/Projects/security-standards/src"
-    )
-    assert "BUMP_DRIVER_STATE_DIR" not in env and "BWS_ACCESS_TOKEN" not in env
-    # The Mac reads its own files (Amendment 13 decision item 2): no chain walk, no read password,
-    # no facts file, so the driver holds nothing for the chain and writes nothing under HOME.
-    assert run.passes() == [f"driver args={' '.join(args)}"]
-    assert run.lines("walk") == [] and run.lines("driver-facts") == []
-    assert CHAIN_READ_UUID not in [uuid for uuid, _ in run.reads()]
-    assert not (run.home / "Developer").exists()
-
-
-def test_on_the_mac_a_preset_github_token_is_used_as_before(tmp_path: Path) -> None:
-    run = _mac(tmp_path, BUMP_DRIVER_GITHUB_TOKEN="preset-gh")
-    assert run.code == 0, run.output
-    assert run.logs["gh"] == []
-    assert run.env()["BUMP_DRIVER_GITHUB_TOKEN"] == "preset-gh"
-
-
-@pytest.mark.parametrize("rc", [0, 2, 3])
-def test_on_the_mac_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> None:
-    assert _mac(tmp_path, FAKE_DRIVER_RC=str(rc)).code == rc
+def test_outside_the_container_it_refuses_and_reads_and_runs_nothing(tmp_path: Path) -> None:
+    run = _run(tmp_path, "--dry-run", BWS_ACCESS_TOKEN=None, BUMP_DRIVER_STATE_DIR=None)
+    assert run.code == 1, run.output
+    assert (
+        "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the bump-driver lane runs only in "
+        "its container, through lane-run"
+    ) in run.output
+    assert run.logs["bws"] == [] and run.logs["ping"] == [] and run.logs["gh"] == []
+    assert run.passes() == [] and run.lines("derive") == [] and run.lines("mint") == []
+    assert run.logs["git"] == []
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -896,23 +827,19 @@ def test_every_compose_variable_lane_run_must_pass_is_in_its_list() -> None:
     assert set(environment) - passed == {"LANE_SCHEDULE_ENABLED"}
 
 
-def test_the_crontab_runs_a_flagless_pass_hourly_at_51_beside_the_mac_jobs_50() -> None:
+def test_the_crontab_runs_a_flagless_pass_hourly_at_51() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["51 * * * * lane-run bump-driver"]
-    plist = PLIST.read_text()
-    assert "<integer>50</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-bump-driver.sh</string>" in plist
-    assert "--dry-run" not in plist
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
     minutes = lane_start_minutes()
     assert minutes["bump-driver"] == {51}
-    # 50, the Mac job's minute, is the rotation decomposer's.
+    # 50 is the rotation decomposer's.
     assert 50 in minutes["rotation-decomposer"]
     for lane, taken in minutes.items():
         if lane != "bump-driver":
