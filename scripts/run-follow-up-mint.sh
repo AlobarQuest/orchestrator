@@ -24,8 +24,8 @@
 # secrets broker (ADR-0055 amendment 30), which serves this lane only the UUIDs its allowlist lists
 # (`lanes/secrets-broker/allowlist.toml`), exactly this one.
 #
-# THE CONTAINER ONLY. The lane has no Mac job: minting runs on the Mac as a non-fatal step of
-# infraops-mcp-server's `drift-audit.sh` until a pull request there removes it. So there is no
+# THE CONTAINER ONLY. The lane has no Mac job, and nothing on the Mac mints: infraops-mcp-server's
+# `drift-audit.sh` no longer has a minting step (#173, `c7de0b70`). So there is no
 # Keychain branch and no activation: `lane-run` names the broker's mounted socket in
 # `SDS_SECRETS_SOCKET` (or passes a lane's own token as `BWS_ACCESS_TOKEN`), the bearer is read
 # through it, never as a process argument, and both variables are unset before the CLI runs, which

@@ -1451,9 +1451,10 @@ healthchecks_check = "sds-bump-driver"
 # 2026-11-21, in the session handling HQ gate G-87, by the VM root's keeper command. The lane is
 # new: it has no Mac job, so there was no Mac check to keep, and since ADR-0059 decision 3 moves
 # the check's name lookup to install time, `sds-follow-up-mint` was made by hand at G-87
-# (deploy.md, the follow-up-mint cut-over's item 3). The broker reads the keeper for the lane once
-# the compose names its id and the broker's account `lane-secrets-broker` is granted a read on it,
-# that secret alone, which the lane's `lane-run --read` proves (deploy.md, the follow-up-mint
+# (deploy.md, the follow-up-mint cut-over's item 3). The broker reads the keeper for the lane: the
+# compose names its id, and the broker's account `lane-secrets-broker` holds a read grant on it,
+# that secret alone, which Devon gave at G-87 on 2026-11-21 and the lane's first scheduled pass
+# proved on 2026-11-22, when the broker logged `ok` for it (deploy.md, the follow-up-mint
 # cut-over's items 5, 7 and 8). Handed to the SDS and due for its first issue by
 # `rotate_requested`. No `created`, for the reason the landing ledger's block gives.
 [[credential]]
@@ -1470,7 +1471,7 @@ healthchecks_check = "sds-follow-up-mint"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "46e714ca-32b7-4e89-9817-b509013363a5"
-  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id and the broker's single-secret grant is made"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane through its single-secret grant"
 
 # ── The lane secrets broker's token (ADR-0055 amendment 30, item 8) ───────────────
 # The one BWS token that stays manual until Phase C: anything holding it reads for any lane, so it
