@@ -101,7 +101,7 @@ class Adapter:
 
 
 def _change_manager(context: AdapterContext) -> Provider:
-    # change-manager's four bearers hold four values, so an overlap is always possible.
+    # change-manager's five bearers hold five values, so an overlap is always possible.
     if context.host_without_overlap:
         raise ContractError("a change-manager bearer always hosts with an overlap")
     siblings, readers_mid_run = change_manager.registry_reads(

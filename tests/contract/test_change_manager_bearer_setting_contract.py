@@ -25,7 +25,7 @@ from orchestrator.identity.auth import (
 from orchestrator.main import _previous_hash
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "m2m_bearer_setting.json"
-CONTRACT_SHA256 = "caa7e5a797b3756a72f4e8013a59f1d0b81cbd0e9565ff1f054df8e7fd826238"
+CONTRACT_SHA256 = "7bdecabc59e45088cb72c99ac268adce3adfab83daec1a323d347462c33e3156"
 
 
 def _fixture() -> dict[str, Any]:

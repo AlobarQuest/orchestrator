@@ -566,6 +566,7 @@ def test_the_registry_names_the_siblings_and_every_readers_check(
         "read": 'healthchecks_check = "check-read"',
         "propose": 'healthchecks_check = "check-propose"',
         "observe": 'observation_source = "drift_digest"\n  observation_subject = "coolify:prod"',
+        "execute": "",
         "full": "",
     }
     text = "".join(
