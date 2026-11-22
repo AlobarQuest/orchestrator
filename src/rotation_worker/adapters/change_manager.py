@@ -1,4 +1,4 @@
-"""The change-manager adapter: the executor rotates one of change-manager's four machine bearers.
+"""The change-manager adapter: the executor rotates one of change-manager's five machine bearers.
 
 ADR-0055 amendment 9, "change-manager's overlap, built and verified" and "The change-manager
 adapter". change-manager holds each bearer as a sha256 in its own Coolify variable, one JSON
@@ -29,7 +29,7 @@ registry's other bearers on the same application) and refuses a host or retire w
 value is one of them. A hand edit in Coolify that no keeper holds is invisible to this check.
 
 **THE RESTART WAITS FOR CHANGE-MANAGER'S OWN CLIENTS.** Its clients are the scheduled readers of
-its four bearers, several of which run inside the `live_estate` window. Before writing and again
+its five bearers, several of which run inside the `live_estate` window. Before writing and again
 before each restart, the provider asks Healthchecks whether any reader the registry names for any
 change-manager bearer is mid-run, and waits (`GATE_WAIT`) until none is. The worker asks the same
 before claiming a unit that writes, so a busy reader usually costs a pass, not an attempt. A reader
@@ -96,6 +96,7 @@ VARIABLES: Final[Mapping[str, str]] = {
     "M2M_TOKEN_READ": "read",
     "M2M_TOKEN_PROPOSE": "propose",
     "M2M_TOKEN_OBSERVE": "observe",
+    "M2M_TOKEN_EXECUTE": "execute",
 }
 BEARER_BYTES: Final = 32
 DETERMINATE: Final = frozenset({200, 401})

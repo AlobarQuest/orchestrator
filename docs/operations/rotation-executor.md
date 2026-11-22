@@ -1033,8 +1033,8 @@ would spend an attempt with the rotation half done.
 
 ## change-manager's bearers
 
-The `change-manager` adapter rotates one of change-manager's four machine bearers (`full`,
-`read`, `propose`, `observe`; ADR-0055 amendment 9, "The change-manager adapter"). Each bearer's
+The `change-manager` adapter rotates one of change-manager's five machine bearers (`full`,
+`read`, `propose`, `observe`, `execute`; ADR-0055 amendment 9, "The change-manager adapter"). Each bearer's
 Coolify variable holds one JSON entry keyed by its scope: the bearer's sha256 and, during an
 overlap, a `previous` hash with its `until` (change-manager's `docs/operations/bearer-settings.md`).
 Its destination names the variable and the scope:
@@ -1052,7 +1052,7 @@ Its plan is the orchestrator adapter's, AC-001 to AC-009, and both units are cla
 The adapter named `change-manager-attested` runs the same units with a human act between them, for
 a bearer one of whose readers has no read: a person attests that reader at `/review` with the new
 value's fingerprint. The `full` bearer needs it for `drift-audit.sh`, whose change-manager calls
-only log a warning when they fail. The other three use `change-manager`.
+only log a warning when they fail. The other four use `change-manager`.
 
 What differs from the orchestrator's bearers:
 
@@ -1065,12 +1065,12 @@ What differs from the orchestrator's bearers:
   scope's current hash. The executor can't read the other variables, so it reads the other
   bearers' keepers (the registry's change-manager credentials on the same application) and
   refuses a host or retire whose old or new value is one of them. The registry must name exactly
-  one keeper for each other variable, and all four keepers must be in `Rotation / Keepers`,
+  one keeper for each other variable, and all five keepers must be in `Rotation / Keepers`,
   readable by the root, before the first change-manager rotation; a sibling keeper it can't find
   or read fails host before anything is written. A hand edit in Coolify that no
   keeper holds is invisible to this check.
 - **The restart waits for change-manager's clients.** Its clients are the scheduled readers of its
-  four bearers, and several run inside the window. A unit that writes waits unclaimed while any
+  five bearers, and several run inside the window. A unit that writes waits unclaimed while any
   reader the registry names with a `healthchecks_check`, for any change-manager bearer, shows as
   started in Healthchecks. Host and retire ask again before writing and before restarting, wait
   up to five minutes, then refuse. A reader with no check can't be asked: a restart at 03:00 can
@@ -1078,7 +1078,7 @@ What differs from the orchestrator's bearers:
   Every wait in a step has a deadline, but together they can outlast the 15-minute lease; a
   lapsed rotation claim is released, never reclaimed, and the next claim re-derives where the
   rotation stands.
-- **Host never runs without an overlap.** The four bearers hold four values, so the adapter
+- **Host never runs without an overlap.** The five bearers hold five values, so the adapter
   refuses `host_without_overlap: true`.
 - **The wait logs no `overlap_until`.** It reads the orchestrator's identities, which don't hold
   change-manager's entries; host's evidence time plus seven days is the backstop.

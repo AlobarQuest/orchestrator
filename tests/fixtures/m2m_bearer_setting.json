@@ -5,7 +5,8 @@
     "M2M_TOKEN": "full",
     "M2M_TOKEN_READ": "read",
     "M2M_TOKEN_PROPOSE": "propose",
-    "M2M_TOKEN_OBSERVE": "observe"
+    "M2M_TOKEN_OBSERVE": "observe",
+    "M2M_TOKEN_EXECUTE": "execute"
   },
   "token_hash": "sha256 hex digest, lowercase, of the bearer presented after 'Bearer ', stripped",
   "max_previous_overlap_seconds": 691200,
