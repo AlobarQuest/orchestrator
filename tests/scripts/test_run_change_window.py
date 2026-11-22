@@ -16,6 +16,7 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -511,7 +512,7 @@ _BROKERED = {DEFAULT_IDS[variable]: f"brokered-{variable}" for variable in DEFAU
 _NO_SEAMS: dict[str, str | None] = dict.fromkeys(SEAMS)
 
 
-def _recording(values: dict[str, str | None], asked: list[str]):
+def _recording(values: Mapping[str, str | None], asked: list[str]) -> Callable[[str], str | None]:
     def fetch(uuid: str) -> str | None:
         asked.append(uuid)
         return values.get(uuid)
