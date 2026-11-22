@@ -30,8 +30,8 @@
 # THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), and it is the window's existing check,
 # `Change Manager OPs Check` (slug `operations-check`; change-manager's `.cred-consumers.toml`): the
 # phase keeps the same checks. A `--submit` pass pings `/start`, then success on 0 or `/fail` with
-# the report on anything else. In the container the ping URL comes from the lane's ping-URL secret
-# (`SDS_DEADMAN_PING_URL_UUID`); while the compose leaves it empty, nothing is pinged.
+# the report on anything else. In the container the ping URL comes from the lane's ping-URL secret,
+# whose BWS id the compose names in `SDS_DEADMAN_PING_URL_UUID`.
 #
 # THE DIGEST is the run's `<date>.change-window.md`, sent to alert-hub as an `info` NOTICE at once
 # (`docs/operations/deploy.md`'s change-window paragraphs, under "Registered lanes and the
@@ -40,8 +40,9 @@
 #
 # CREDENTIALS, four secrets in BWS `Rotation / Keepers`, each read through the lane secrets broker
 # (ADR-0055 amendment 30), which serves this lane only the UUIDs its allowlist lists
-# (`lanes/secrets-broker/allowlist.toml`), exactly these four. Each value arrives on the socket,
-# never as a process argument. The lane has no BWS token of its own.
+# (`lanes/secrets-broker/allowlist.toml`): these four and the ping-URL secret, whose id reaches
+# this launcher from the compose through `lane-run`. Each value arrives on the socket, never as a
+# process argument. The lane has no BWS token of its own.
 #
 # THE CONTAINER ONLY. The Mac job stays infraops' `scripts/change-window.sh` until rollback ends, so
 # there is no Keychain branch and no activation: `lane-run` names the broker's mounted socket in

@@ -1385,9 +1385,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     named in `placeholders`; a lane added before its ping-URL secret exists is named there until a
     later change writes the id."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
-    placeholders = {
-        "change-window",
-    }
+    placeholders: set[str] = set()
     named = {}
     blank = set()
     for path in sorted((ROOT / "lanes").glob("*/compose.yaml")):
@@ -1402,6 +1400,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         "bump-driver",
         "bump-proposer",
         "change-proposer",
+        "change-window",
         "deploy-watcher",
         "estate-landing",
         "execution-watch",
