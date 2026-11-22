@@ -1216,9 +1216,10 @@ nothing. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
 `follow-up-mint-ping-url`, which the container's outcome alarm reads the URL from through the
 socket on every pass (`scripts/sds-deadman.sh`); `.bws-secrets.toml` lists it for the lane.
 
-Until the infraops-mcp-server change in step 9 lands, infra-drift's 03:00 step also mints. Two
-passes a day mint nothing twice: a follow-up unit's id derives from its revision
-(`follow_up_unit_id`), so the later pass reports each one `already_minted`.
+The lane is the one scheduled minting pass: infraops-mcp-server #173 (`c7de0b70`, step 9) removed
+infra-drift's minting step. A second pass the same day, such as a hand run, mints nothing twice: a
+follow-up unit's id derives from its revision (`follow_up_unit_id`), so the later pass reports each
+one `already_minted`.
 
 Its cut-over (ADR-0059, "Cut-over for one lane", and Amendment 10 decision item 4) still needs the
 following, in this order, each in its own change or act.

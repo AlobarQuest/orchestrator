@@ -47,7 +47,7 @@ rotated_by_sds = true
   kind = "keychain"
   service = "Claude"
   account = "BWS_ACCESS_TOKEN_SDS"
-  note = "the keeper. Every reader reads it fresh on each run, so it switches with the item. Scheduled readers with a Healthchecks check are the rows below. Verified by this item's read-back alone (Devon, 2026-10-23): infraops-mcp-server scripts/drift-audit.sh's mint-follow-ups step, whose check pings success when the read fails; and on demand, scripts/deploy_orchestrator.py, scripts/exit_probe.py, scripts/replay_deploy_signal.py, infraops-mcp-server scripts/cred-consumer-sweep.py, and factory-validation-kit-restart-recovery, which inherits an ambient BWS_ACCESS_TOKEN when run by hand"
+  note = "the keeper. Every reader reads it fresh on each run, so it switches with the item. Scheduled readers with a Healthchecks check are the rows below. Verified by this item's read-back alone (Devon, 2026-10-23): on demand, scripts/deploy_orchestrator.py, scripts/exit_probe.py, scripts/replay_deploy_signal.py, infraops-mcp-server scripts/cred-consumer-sweep.py, and factory-validation-kit-restart-recovery, which inherits an ambient BWS_ACCESS_TOKEN when run by hand"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -213,12 +213,7 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
-  ref = "scripts/run-activation-sweep.sh, run-bump-driver.sh, run-estate-landing.sh, run-inert-landing.sh, run-rotation-decomposer.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py, deploy_orchestrator.py"
-
-  [[credential.consumer]]
-  kind = "runtime-fetch"
-  repo = "infraops-mcp-server"
-  ref = "scripts/drift-audit.sh mint-follow-ups (03:00)"
+  ref = "scripts/run-activation-sweep.sh, run-bump-driver.sh, run-estate-landing.sh, run-follow-up-mint.sh, run-inert-landing.sh, run-rotation-decomposer.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py, deploy_orchestrator.py"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -1485,11 +1480,13 @@ healthchecks_check = "sds-follow-up-mint"
 # ledger's block gives.
 # Its reach is project-level for SDS Operator and SDS / Lane Apps, plus single-secret grants:
 # - Rotation / Keepers: change-manager/M2M_TOKEN_READ, inert-landing-ping-url,
-#   estate-landing-ping-url and bump-driver-ping-url.
+#   estate-landing-ping-url, bump-driver-ping-url and follow-up-mint-ping-url.
 # - Brains - Contributor: CODE_BRAIN_CONTRIBUTOR_KEY and INFRA_BRAIN_CONTRIBUTOR_KEY.
 # - Factory Events: factory-events-read-password.
 # Devon gave the bump driver's four (bump-driver-ping-url, the two Brain keys and the read
-# password) at HQ gate G-84 on 2026-11-21. Devon's choice: "Project by project", with
+# password) at HQ gate G-84 on 2026-11-21, and follow-up-mint-ping-url at HQ gate G-87; the
+# follow-up-mint lane's broker reads of it logged ok on its first scheduled pass, 2026-11-22.
+# Devon's choice: "Project by project", with
 # single-secret grants in Rotation / Keepers so the broker can't read every lane's keeper.
 [[credential]]
 id = "secrets-broker-bws-token"
@@ -1497,7 +1494,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
 rotated_by_sds = false
-reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7"]
+reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5"]
 reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a157-b4fd01259df8"]
 
   [[credential.consumer]]
