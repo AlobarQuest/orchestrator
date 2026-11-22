@@ -59,4 +59,5 @@ read = [
   "3d41395a-06c3-47d5-ac85-b50a00dfbc2f",  # change-window-coolify-token (--submit only)
   "0e9ebf2d-5b62-4f81-a731-b50a00e0df18",  # change-window-anthropic-key (--submit only)
   "71616bf5-14ba-4888-b3f8-b50a00e13ed2",  # ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW (--submit only)
+  "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3",  # change-window-ping-url
 ]

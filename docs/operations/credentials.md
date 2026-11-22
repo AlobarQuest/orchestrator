@@ -444,7 +444,7 @@ container through the lane secrets broker (ADR-0055 amendment 30; no Keychain it
 and no token of its own): a dedicated Coolify window token for production Coolify (D-68 B),
 change-manager's narrow `execute` bearer (`M2M_TOKEN_EXECUTE`, change-manager #168), an Anthropic
 API key, and an alert-hub sender token for the digest. The broker's allowlist serves the lane those
-four and nothing else; its ping-URL secret joins them when the compose names it. A bare pass reads
+four and its ping-URL secret, whose id the compose names, and nothing else. A bare pass reads
 the `execute` bearer alone. The Mac job's full change-manager bearer and its prod and dev Coolify
 tokens aren't among them: the lane never holds a credential that can approve a change record, and
 it never reaches dev Coolify (D-67 C). Devon minted the four at HQ gate G-88 (2026-11-22), each with

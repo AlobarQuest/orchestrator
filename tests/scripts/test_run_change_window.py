@@ -36,6 +36,9 @@ ANTHROPIC_UUID = "44444444-4444-4444-8444-444444444444"
 SENDER_UUID = "55555555-5555-4555-8555-555555555555"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/change-window"
+# The BWS secret id of `change-window-ping-url`, which the compose names: not a secret, not the
+# ping URL, and not the harness's stand-in id above.
+PING_URL_KEEPER = "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3"
 # The launcher's own defaults, the four secrets' BWS ids (the handoff's table; HQ gate G-88).
 DEFAULT_IDS = {
     "CHANGE_MANAGER_EXECUTE_UUID": "aa7c76af-bd52-4796-9d13-b50a00e035de",
@@ -661,21 +664,21 @@ def test_the_launcher_reads_no_keychain_and_runs_no_gh_or_npm() -> None:
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "change-window")
-    # A broker lane: it mounts its socket and the allowlist names it, with the launcher's four ids.
+    # A broker lane: it mounts its socket and the allowlist names it, with the launcher's four ids
+    # and the compose's ping-URL secret id.
     allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
     assert deploy.broker_lane(service, "change-window", allowlist)
     assert deploy.add_refusals(service, "change-window", allowlist) == []
     assert deploy.compose_broker_refusals(COMPOSE.read_text(), "change-window") == []
-    assert allowlist["change-window"] == set(DEFAULT_IDS.values())
+    assert allowlist["change-window"] == {*DEFAULT_IDS.values(), PING_URL_KEEPER}
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["change-window"],
         # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
-            # Empty until the lane's ping-URL secret exists (`test_deploy_lanes.py`'s
-            # `placeholders`).
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `change-window-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": PING_URL_KEEPER,
         },
         "volumes": ["/data/sds/broker/change-window:/run/sds-broker:ro"],
         "restart": "unless-stopped",

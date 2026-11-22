@@ -12,11 +12,15 @@
 # "CREDENTIALS") through the lane secrets broker (ADR-0055 amendment 30), whose socket directory
 # `/data/sds/broker/change-window` it mounts read-only at `/run/sds-broker`. `lane-run` names the
 # socket to the launcher, and the broker serves it only the UUIDs its entry in
-# `lanes/secrets-broker/allowlist.toml` lists. The ids live in the launcher, not here, because
-# `lane-run` passes the launcher a fixed list of variables.
-# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists: an id, not a secret
-# and not the ping URL, which a later change writes here. While it's empty the outcome alarm
-# resolves no ping URL in the container and pings nothing; the pass itself still runs.
+# `lanes/secrets-broker/allowlist.toml` lists. The four work secrets' ids live in the launcher,
+# not here, because `lane-run` passes the launcher a fixed list of variables.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `change-window-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose outcome alarm reads the URL from that secret through
+# the broker socket on `--submit` passes only (the bare pass is a dry run, which pings nothing;
+# `scripts/sds-deadman.sh`), so the allowlist entry lists it too. The VM rotation executor writes
+# the URL there from its inbox; while the secret holds the inbox's empty marker, the alarm refuses
+# it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on
 # (`docs/operations/deploy.md`, the change-window lane's cut-over).
 services:
@@ -25,7 +29,7 @@ services:
     command: ["change-window"]
     environment:
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3
     volumes:
       - /data/sds/broker/change-window:/run/sds-broker:ro
     restart: unless-stopped

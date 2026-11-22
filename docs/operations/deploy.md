@@ -1303,14 +1303,16 @@ So the digest arrives at about 04:00, not at the Mac's 07:30 outbox send: a noti
 arrival, and the lane keeps no outbox. A failed send logs one line and leaves the pass's exit as it
 was.
 
-The lane reads its four secrets, all in BWS `Rotation / Keepers`, through the lane secrets broker
-(ADR-0055 amendment 30): its compose maps no `BWS_ACCESS_TOKEN` and mounts
+The lane reads its four secrets and its ping-URL secret, all in BWS `Rotation / Keepers`, through
+the lane secrets broker (ADR-0055 amendment 30): its compose maps no `BWS_ACCESS_TOKEN` and mounts
 `/data/sds/broker/change-window` read-only at `/run/sds-broker`, and the broker's allowlist lists
-exactly the four ids the launcher reads (`test_run_change_window.py`'s `DEFAULT_IDS`). Outside its
-container (no broker socket and no token, `sds_in_lane_container`) the launcher refuses with one
-line and reads nothing. `test_deploy_lanes.py`'s `placeholders` lists the lane for its empty
-ping-URL id. The ids live in the launcher, not the compose, because `lane-run` passes the
-launcher a fixed list of variables.
+exactly the four ids the launcher reads (`test_run_change_window.py`'s `DEFAULT_IDS`) and the
+ping-URL secret's. Outside its container (no broker socket and no token, `sds_in_lane_container`)
+the launcher refuses with one line and reads nothing. The four ids live in the launcher, not the
+compose, because `lane-run` passes the launcher a fixed list of variables. Its compose names
+`SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `change-window-ping-url`, which the container's
+outcome alarm reads the URL from through the socket on `--submit` passes only
+(`scripts/sds-deadman.sh`); `.bws-secrets.toml` lists it for the lane.
 
 One precondition holds before two acts: the lane's broker directory, created on the VM as root and
 owned by the image's `orchestrator` user (`install -d -o 999 -g 999 -m 0750
