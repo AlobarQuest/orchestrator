@@ -44,6 +44,11 @@ SECRETS = frozenset(
         "da8134b0-565f-45c8-8965-b48200ea1c40",  # INFRA_BRAIN_CONTRIBUTOR_KEY
         "2f708d08-ea5d-4d11-bde0-b50200c9a60b",  # factory-events-read-password
         "46e714ca-32b7-4e89-9817-b509013363a5",  # follow-up-mint-ping-url
+        "3d41395a-06c3-47d5-ac85-b50a00dfbc2f",  # change-window-coolify-token
+        "aa7c76af-bd52-4796-9d13-b50a00e035de",  # change-manager/M2M_TOKEN_EXECUTE
+        "0e9ebf2d-5b62-4f81-a731-b50a00e0df18",  # change-window-anthropic-key
+        "71616bf5-14ba-4888-b3f8-b50a00e13ed2",  # ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW
+        "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3",  # change-window-ping-url
     }
 )
 

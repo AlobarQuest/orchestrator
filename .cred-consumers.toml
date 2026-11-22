@@ -1481,12 +1481,16 @@ healthchecks_check = "sds-follow-up-mint"
 # ledger's block gives.
 # Its reach is project-level for SDS Operator and SDS / Lane Apps, plus single-secret grants:
 # - Rotation / Keepers: change-manager/M2M_TOKEN_READ, inert-landing-ping-url,
-#   estate-landing-ping-url, bump-driver-ping-url and follow-up-mint-ping-url.
+#   estate-landing-ping-url, bump-driver-ping-url, follow-up-mint-ping-url,
+#   change-window-coolify-token, change-manager/M2M_TOKEN_EXECUTE, change-window-anthropic-key,
+#   ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW and change-window-ping-url.
 # - Brains - Contributor: CODE_BRAIN_CONTRIBUTOR_KEY and INFRA_BRAIN_CONTRIBUTOR_KEY.
 # - Factory Events: factory-events-read-password.
 # Devon gave the bump driver's four (bump-driver-ping-url, the two Brain keys and the read
 # password) at HQ gate G-84 on 2026-11-21, and follow-up-mint-ping-url at HQ gate G-87; the
 # follow-up-mint lane's broker reads of it logged ok on its first scheduled pass, 2026-11-22.
+# Devon gave the change window's five at HQ gate G-88 on 2026-11-22, and the session handling HQ
+# gate G-89 proved them the same day: `lane-run change-window --read` printed `ok` for all five.
 # Devon's choice: "Project by project", with single-secret grants in Rotation / Keepers so the
 # broker can't read every lane's keeper.
 [[credential]]
@@ -1495,7 +1499,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
 rotated_by_sds = false
-reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5"]
+reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5", "3d41395a-06c3-47d5-ac85-b50a00dfbc2f", "aa7c76af-bd52-4796-9d13-b50a00e035de", "0e9ebf2d-5b62-4f81-a731-b50a00e0df18", "71616bf5-14ba-4888-b3f8-b50a00e13ed2", "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3"]
 reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a157-b4fd01259df8"]
 
   [[credential.consumer]]
@@ -1877,11 +1881,11 @@ disposition = "reissue"
 # own and no token row. The keeper was created in Rotation / Keepers on 2026-11-22, in the session
 # handling HQ gate G-88, by the VM root's `create-keeper`. The lane keeps the Mac window's check,
 # `Change Manager OPs Check` (no new check), which G-88's read of the self-hosted listing found
-# exactly one of. The broker reads the keeper for the lane once the compose names its id (deploy.md,
-# the change-window cut-over's item 5), through a read grant on that secret alone for its account
-# `lane-secrets-broker`, which Devon gave at G-88; item 6's `lane-run --read` is its proof. Handed
-# to the SDS and due for its first issue by `rotate_requested`. No `created`, for the reason the
-# landing ledger's block gives.
+# exactly one of. The broker reads the keeper for the lane: the compose names its id (deploy.md,
+# the change-window cut-over's item 5), and the broker's account `lane-secrets-broker` holds a read
+# grant on that secret alone, which Devon gave at G-88 and G-89's `lane-run --read` proved on
+# 2026-11-22 (the cut-over's item 6). Handed to the SDS and due for its first issue by
+# `rotate_requested`. No `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "change-window-ping-url"
 class = "healthchecks-ping-url"
@@ -1896,4 +1900,4 @@ healthchecks_check = "Change Manager OPs Check"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3"
-  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane through its single-secret grant"
