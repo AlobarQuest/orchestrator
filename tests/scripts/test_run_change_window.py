@@ -1,10 +1,11 @@
 """`scripts/run-change-window.sh` in the lane's container (ADR-0059 increment 8), and the lane's
 tracked files.
 
-The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it (the
-lane's token as `BWS_ACCESS_TOKEN`, a ping-URL secret id, PATH and HOME), plus the test seams that
-name the four secret ids, which are empty in the launcher until their secrets exist. `bws`, `git`,
-`node` and `curl` are stubs on PATH that log what reached them: nothing reads BWS, clones
+The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it (on the
+secrets broker, `SDS_SECRETS_SOCKET` naming a stand-in broker's socket, `conftest.py`'s; or a
+lane's token as `BWS_ACCESS_TOKEN`; a ping-URL secret id, PATH and HOME), plus the test seams that
+name the four secret ids, unless a test removes them to read the launcher's own defaults. `bws`,
+`git`, `node` and `curl` are stubs on PATH that log what reached them: nothing reads BWS, clones
 infraops-mcp-server, runs the window, or reaches change-manager, Coolify, alert-hub or
 Healthchecks.
 """
@@ -21,6 +22,7 @@ import pytest
 import yaml
 
 from scripts import deploy_orchestrator as deploy
+from scripts.secrets_broker import load_allowlist
 
 LAUNCHER = Path("scripts/run-change-window.sh")
 HELPERS = ("sds-deadman.sh", "sds-bws.sh", "sds-cred-registries.sh")
@@ -33,6 +35,13 @@ ANTHROPIC_UUID = "44444444-4444-4444-8444-444444444444"
 SENDER_UUID = "55555555-5555-4555-8555-555555555555"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/change-window"
+# The launcher's own defaults, the four secrets' BWS ids (the handoff's table; HQ gate G-88).
+DEFAULT_IDS = {
+    "CHANGE_MANAGER_EXECUTE_UUID": "aa7c76af-bd52-4796-9d13-b50a00e035de",
+    "COOLIFY_WINDOW_TOKEN_UUID": "3d41395a-06c3-47d5-ac85-b50a00dfbc2f",
+    "ANTHROPIC_KEY_UUID": "0e9ebf2d-5b62-4f81-a731-b50a00e0df18",
+    "DIGEST_SENDER_UUID": "71616bf5-14ba-4888-b3f8-b50a00e13ed2",
+}
 LANE_TOKEN = "a-lane-token"
 SECRETS = {
     uuid: f"value-of-{uuid}"
@@ -62,7 +71,7 @@ printf '{{"value": "value-of-%s"}}' "$3"
 """
 # `git clone ... <url> <directory>`: makes the directory, with the bundle unless `$FAKE_NO_BUNDLE`.
 _GIT = """#!/bin/bash
-echo "git $* lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "git $* lane_token=${BWS_ACCESS_TOKEN:+set} socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 echo "git $*" >> "$ARGV_LOG"
 [ -n "${FAKE_CLONE_FAILS:-}" ] && { echo "fatal: unable to access" >&2; exit 128; }
 directory="${@: -1}"
@@ -153,8 +162,9 @@ class Run:
         return [line.split()[0] for line in self.bws if not line.startswith(PING_URL_UUID)]
 
 
-def _run(tmp_path: Path, *args: str, **fake: str) -> Run:
-    """`fake` is added to the environment; `NO_NODE="1"` leaves `node` off PATH instead."""
+def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
+    """`fake` is added to the environment, and a `None` in it removes that variable;
+    `NO_NODE="1"` leaves `node` off PATH instead."""
     no_node = fake.pop("NO_NODE", "") == "1"
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
@@ -198,7 +208,7 @@ def _run(tmp_path: Path, *args: str, **fake: str) -> Run:
         [
             "/usr/bin/env",
             "-i",
-            *(f"{k}={v}" for k, v in env.items()),
+            *(f"{k}={v}" for k, v in env.items() if v is not None),
             "/bin/bash",
             str(root / "scripts" / LAUNCHER.name),
             *args,
@@ -311,7 +321,7 @@ def test_the_lanes_token_reaches_neither_git_nor_node(tmp_path: Path, mode: tupl
     run = _run(tmp_path, *mode)
     assert run.returncode == 0, run.stderr
     [git] = run.gits()
-    assert git.endswith(" lane_token=")
+    assert git.endswith(" lane_token= socket=")
     assert "https://github.com/AlobarQuest/infraops-mcp-server.git" in git
     assert "--depth 1" in git and "--branch main" in git
     assert run.node_env is not None
@@ -411,33 +421,6 @@ def test_a_failed_dry_run_exits_1_and_pings_nothing(tmp_path: Path) -> None:
     assert run.pings == []
 
 
-@pytest.mark.parametrize(
-    ("mode", "seam"),
-    [
-        ((), "CHANGE_WINDOW_CHANGE_MANAGER_UUID"),
-        *((("--submit",), seam) for seam in SEAMS),
-    ],
-    ids=["bare-change-manager", *(f"submit-{seam}" for seam in SEAMS)],
-)
-def test_an_empty_secret_id_the_pass_needs_fails_closed_before_anything_runs(
-    tmp_path: Path, mode: tuple[str], seam: str
-) -> None:
-    run = _run(tmp_path, *mode, **{seam: ""})
-    assert run.returncode == 1
-    variable = SEAMS[seam][0]
-    assert run.stderr.strip().splitlines() == [
-        f"FATAL: {variable} is empty: its secret doesn't exist yet, so this pass can't run"
-    ]
-    assert run.gits() == [] and run.nodes() == [] and run.secret_reads() == []
-    assert run.pings == ([f"{PING_URL}/start", f"{PING_URL}/fail"] if mode else [])
-
-
-@pytest.mark.parametrize("seam", [s for s in SEAMS if s != "CHANGE_WINDOW_CHANGE_MANAGER_UUID"])
-def test_a_dry_run_needs_none_of_the_windows_other_secret_ids(tmp_path: Path, seam: str) -> None:
-    run = _run(tmp_path, **{seam: ""})
-    assert run.returncode == 0, run.stderr
-
-
 @pytest.mark.parametrize("fault", ["BWS_REFUSES", "BWS_EMPTY"], ids=["refused", "empty"])
 @pytest.mark.parametrize("uuid", list(SECRETS))
 def test_an_unreadable_or_empty_secret_fails_the_pass_before_the_window(
@@ -446,7 +429,7 @@ def test_an_unreadable_or_empty_secret_fails_the_pass_before_the_window(
     run = _run(tmp_path, "--submit", **{fault: uuid})
     assert run.returncode == 1
     assert "FATAL: could not read the" in run.stderr
-    assert "(the lane's token), or it is empty" in run.stderr
+    assert "(the lane's socket or token), or it is empty" in run.stderr
     assert run.nodes() == []
     assert run.send == []
     assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
@@ -491,16 +474,156 @@ def test_a_failed_clone_exits_1_before_any_secret_is_read(tmp_path: Path) -> Non
     assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
 
 
-def test_without_the_lanes_token_it_refuses_and_calls_nothing(tmp_path: Path) -> None:
-    """No Mac branch: without `BWS_ACCESS_TOKEN` it reads no Keychain, resolves no ping URL,
-    clones nothing and runs nothing."""
-    run = _run(tmp_path, "--submit", BWS_ACCESS_TOKEN="")
+_OUTSIDE = (
+    "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the change-window lane runs only in its"
+    " container, through lane-run"
+)
+
+
+@pytest.mark.parametrize("mode", [(), ("--submit",)], ids=["bare", "submit"])
+@pytest.mark.parametrize("token", [None, ""], ids=["unset", "empty"])
+def test_outside_the_container_it_refuses_and_calls_nothing(
+    tmp_path: Path, mode: tuple[str], token: str | None
+) -> None:
+    """No Mac branch: with neither a socket nor a token it reads no Keychain, resolves no ping
+    URL, clones nothing and runs nothing."""
+    run = _run(tmp_path, *mode, BWS_ACCESS_TOKEN=token)
     assert run.returncode == 1
-    assert run.stderr.strip().splitlines() == [
-        "FATAL: no BWS_ACCESS_TOKEN: the change-window lane runs only in its container,"
-        " through lane-run"
+    assert run.stderr.strip().splitlines() == [_OUTSIDE]
+    assert run.argv == [] and run.bws == [] and run.pings == []
+
+
+def test_a_socket_variable_naming_no_socket_refuses_and_calls_nothing(tmp_path: Path) -> None:
+    """`SDS_SECRETS_SOCKET` alone isn't the container: it must name a socket."""
+    not_a_socket = tmp_path / "broker.sock"
+    not_a_socket.write_text("")
+    run = _run(tmp_path, "--submit", BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(not_a_socket))
+    assert run.returncode == 1
+    assert run.stderr.strip().splitlines() == [_OUTSIDE]
+    assert run.argv == [] and run.bws == [] and run.pings == []
+
+
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+# The launcher's own ids, as the broker serves them: the seams are removed, so the launcher reads
+# its defaults.
+_BROKERED = {DEFAULT_IDS[variable]: f"brokered-{variable}" for variable in DEFAULT_IDS}
+_NO_SEAMS: dict[str, str | None] = dict.fromkeys(SEAMS)
+
+
+def _recording(values: dict[str, str | None], asked: list[str]):
+    def fetch(uuid: str) -> str | None:
+        asked.append(uuid)
+        return values.get(uuid)
+
+    return fetch
+
+
+def _brokered(tmp_path: Path, socket_path: Path, *args: str, **fake: str | None) -> Run:
+    """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
+    return _run(
+        tmp_path,
+        *args,
+        BWS_ACCESS_TOKEN=None,
+        SDS_SECRETS_SOCKET=str(socket_path),
+        **{**_NO_SEAMS, **fake},
+    )
+
+
+def test_on_the_socket_a_dry_run_asks_for_the_execute_bearer_alone(tmp_path: Path, broker) -> None:
+    asked: list[str] = []
+    values = {**_BROKERED, PING_URL_UUID: PING_URL}
+    run = _brokered(tmp_path, broker(values, _recording(values, asked)))
+    assert run.returncode == 0, run.stderr
+    assert asked == [DEFAULT_IDS["CHANGE_MANAGER_EXECUTE_UUID"]]
+    assert run.bws == [] and run.pings == []
+    assert run.node_env is not None
+    assert run.node_env["CHANGE_MGR_M2M_TOKEN"] == "brokered-CHANGE_MANAGER_EXECUTE_UUID"
+    for name in ("SDS_SECRETS_SOCKET", "BWS_ACCESS_TOKEN"):
+        assert name not in run.node_env, name
+    [git] = run.gits()
+    assert git.endswith(" lane_token= socket="), git
+
+
+def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(
+    tmp_path: Path, broker
+) -> None:
+    """With the ping-URL secret named, the socket serves all five reads and `bws` never runs.
+    Neither `git` nor `node` gets the socket's marker or a token, and the digest's token reaches
+    curl alone."""
+    asked: list[str] = []
+    values = {**_BROKERED, PING_URL_UUID: PING_URL}
+    run = _brokered(tmp_path, broker(values, _recording(values, asked)), "--submit")
+    assert run.returncode == 0, run.stderr
+    assert asked == [
+        PING_URL_UUID,
+        DEFAULT_IDS["CHANGE_MANAGER_EXECUTE_UUID"],
+        DEFAULT_IDS["COOLIFY_WINDOW_TOKEN_UUID"],
+        DEFAULT_IDS["ANTHROPIC_KEY_UUID"],
+        DEFAULT_IDS["DIGEST_SENDER_UUID"],
     ]
-    assert run.argv == [] and run.pings == []
+    assert run.bws == []
+    [git] = run.gits()
+    assert git.endswith(" lane_token= socket="), git
+    assert run.node_env is not None
+    for name in ("SDS_SECRETS_SOCKET", "BWS_ACCESS_TOKEN"):
+        assert name not in run.node_env, name
+    assert run.node_env["COOLIFY_API_TOKEN"] == "brokered-COOLIFY_WINDOW_TOKEN_UUID"
+    assert run.node_env["ANTHROPIC_API_KEY"] == "brokered-ANTHROPIC_KEY_UUID"
+    assert "brokered-DIGEST_SENDER_UUID" not in run.node_env.values()
+    assert run.send == ['header = "Authorization: Bearer brokered-DIGEST_SENDER_UUID"']
+    assert run.pings == [f"{PING_URL}/start", PING_URL]
+    for value in _BROKERED.values():
+        assert value not in run.stdout + run.stderr, value
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [{"FAKE_CLONE_FAILS": "1"}, {"FAKE_NO_BUNDLE": "1"}, {"NO_NODE": "1"}],
+    ids=["clone-fails", "no-bundle", "no-node"],
+)
+def test_on_the_socket_a_pass_that_cant_run_asks_for_nothing_but_its_ping_url(
+    tmp_path: Path, broker, fault: dict[str, str]
+) -> None:
+    asked: list[str] = []
+    values = {**_BROKERED, PING_URL_UUID: PING_URL}
+    run = _brokered(tmp_path, broker(values, _recording(values, asked)), "--submit", **fault)
+    assert run.returncode in (1, 2)
+    assert asked == [PING_URL_UUID]
+    assert run.nodes() == []
+    assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+@pytest.mark.parametrize("variable", list(DEFAULT_IDS))
+@pytest.mark.parametrize("reason", ["bws_failed", "not_allowed"])
+def test_a_secret_the_socket_refuses_fails_the_pass_before_the_window(
+    tmp_path: Path, broker, variable: str, reason: str
+) -> None:
+    uuid = DEFAULT_IDS[variable]
+    values: dict[str, str | None] = {**_BROKERED, PING_URL_UUID: PING_URL}
+    if reason == "bws_failed":
+        values[uuid] = None
+    else:
+        del values[uuid]
+    run = _brokered(tmp_path, broker(values), "--submit")
+    assert run.returncode == 1
+    assert f"the secrets broker gave no value for {uuid}: {reason}" in run.stderr
+    assert "(the lane's socket or token), or it is empty" in run.stderr
+    assert run.bws == [] and run.nodes() == [] and run.send == []
+    assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+def test_a_dead_socket_fails_the_pass_through_the_outcome_and_never_falls_back_to_bws(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    """A mounted socket nothing listens on: the ping URL and the bearer each fail by name,
+    `sds_outcome_fail` ends the pass non-zero, and `bws` is never asked."""
+    run = _brokered(tmp_path, dead_socket, "--submit")
+    assert run.returncode == 1
+    bearer = DEFAULT_IDS["CHANGE_MANAGER_EXECUTE_UUID"]
+    assert f"the secrets broker gave no value for {bearer}: no_reply" in run.stderr
+    assert "FATAL: could not read the change-manager execute bearer" in run.stderr
+    assert run.bws == [] and run.nodes() == [] and run.pings == []
 
 
 @pytest.mark.parametrize("argv", [["--dry-run"], ["--submit", "--submit"], ["submit"]])
@@ -515,23 +638,15 @@ def test_any_other_argument_is_refused_before_anything_runs(
 
 # ---- the launcher's text ---------------------------------------------------------------------
 
-# The four secret ids that are empty until their secrets exist (handoff "Facts"). A change that
-# writes one also moves it out of this set.
-EMPTY_IDS = {
-    "COOLIFY_WINDOW_TOKEN_UUID",
-    "CHANGE_MANAGER_EXECUTE_UUID",
-    "ANTHROPIC_KEY_UUID",
-    "DIGEST_SENDER_UUID",
-}
 _ID_LINE = re.compile(r'^([A-Z_]+_UUID)="\$\{(CHANGE_WINDOW_[A-Z_]+_UUID):-([^}]*)\}"$', re.M)
 
 
-def test_the_four_secret_ids_are_the_empty_placeholders() -> None:
+def test_the_four_secret_ids_default_to_their_secrets() -> None:
     ids = {name: (seam, default) for name, seam, default in _ID_LINE.findall(LAUNCHER.read_text())}
     assert {name: seam for name, (seam, _) in ids.items()} == {
         variable: seam for seam, (variable, _) in SEAMS.items()
     }
-    assert {name for name, (_, default) in ids.items() if default == ""} == EMPTY_IDS
+    assert {name: default for name, (_, default) in ids.items()} == DEFAULT_IDS
 
 
 def test_the_launcher_reads_no_keychain_and_runs_no_gh_or_npm() -> None:
@@ -547,17 +662,23 @@ def test_the_launcher_reads_no_keychain_and_runs_no_gh_or_npm() -> None:
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "change-window")
-    assert deploy.add_refusals(service, "change-window") == []
+    # A broker lane: it mounts its socket and the allowlist names it, with the launcher's four ids.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "change-window", allowlist)
+    assert deploy.add_refusals(service, "change-window", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "change-window") == []
+    assert allowlist["change-window"] == set(DEFAULT_IDS.values())
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["change-window"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${CHANGE_WINDOW_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             # Empty until the lane's ping-URL secret exists (`test_deploy_lanes.py`'s
             # `placeholders`).
             "SDS_DEADMAN_PING_URL_UUID": "",
         },
+        "volumes": ["/data/sds/broker/change-window:/run/sds-broker:ro"],
         "restart": "unless-stopped",
     }
     assert set(yaml.safe_load(COMPOSE.read_text())) == {"services"}

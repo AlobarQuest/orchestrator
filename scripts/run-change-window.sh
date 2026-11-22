@@ -21,9 +21,8 @@
 #
 # EXIT CODES, the whole interface a scheduled run has:
 #   0  the pass ran: the window ran (or the dry run listed its ids), whatever each item's outcome.
-#   1  the tool itself failed: an argument this launcher doesn't take, no lane token, a secret id
-#      this pass needs that is empty, a secret that couldn't be read or is empty, a failed clone,
-#      or `run-window` failing (change-manager refused or couldn't be reached, a bad flag, an
+#   1  the tool itself failed: an argument this launcher doesn't take, no lane socket or token, a
+#      secret that couldn't be read or is empty, a failed clone, or `run-window` failing (change-manager refused or couldn't be reached, a bad flag, an
 #      unhandled error). Any other code `run-window` exits with is reported as 1.
 #   2  the tool ran but could not use its inputs: the infraops clone has no
 #      `dist/bundle/change-mgr-cli.js`, or there is no `node`.
@@ -39,13 +38,18 @@
 # lane-token matcher", say why a notice and not a held alert).
 # A failed send logs one line and never changes the exit code.
 #
-# CREDENTIALS, each read with the lane's one token, in the environment, never as an argument. None
-# exists yet: each id is empty until the lane's identity and mint gates create its secret, and a
-# pass that needs an empty id fails closed before it clones or reads anything.
+# CREDENTIALS, four secrets in BWS `Rotation / Keepers`, each read through the lane secrets broker
+# (ADR-0055 amendment 30), which serves this lane only the UUIDs its allowlist lists
+# (`lanes/secrets-broker/allowlist.toml`), exactly these four. Each value arrives on the socket,
+# never as a process argument. The lane has no BWS token of its own.
 #
 # THE CONTAINER ONLY. The Mac job stays infraops' `scripts/change-window.sh` until rollback ends, so
-# there is no Keychain branch and no activation: without `BWS_ACCESS_TOKEN` the launcher refuses
-# before it calls anything. It unsets the token before `node` runs, and `git` never sees it.
+# there is no Keychain branch and no activation: `lane-run` names the broker's mounted socket in
+# `SDS_SECRETS_SOCKET` (or passes a lane's own token as `BWS_ACCESS_TOKEN`). Outside the lane's
+# container (`sds_in_lane_container` false) the launcher refuses before it resolves a ping URL or
+# calls anything. `git` runs without either variable, and both are unset before `node` runs, which
+# needs neither. The socket itself stays reachable, as the design accepts: `node` runs as the same
+# user.
 #
 # Usage (in the lane's container, through `lane-run`):
 #   lane-run change-window              # dry run: lists the ids it would claim
@@ -54,17 +58,18 @@ set -uo pipefail
 
 CHECK_NAME="Change Manager OPs Check"
 
-# BWS UUIDs, each empty until its secret exists. A later change writes each default here; the
-# `${...:-}` override is a test seam, and `lane-run` never passes one.
-# The dedicated Coolify window token (D-68 B), sent only over the tailnet.
-COOLIFY_WINDOW_TOKEN_UUID="${CHANGE_WINDOW_COOLIFY_UUID:-}"
+# BWS UUIDs. The `${...:-}` override is a test seam, and `lane-run` never passes one.
+# The dedicated Coolify window token (D-68 B), sent only over the tailnet:
+# `change-window-coolify-token`.
+COOLIFY_WINDOW_TOKEN_UUID="${CHANGE_WINDOW_COOLIFY_UUID:-3d41395a-06c3-47d5-ac85-b50a00dfbc2f}"
 # change-manager's narrow `execute` bearer (#168, `M2M_TOKEN_EXECUTE`): READ plus claim, outcome
 # and the window's own run record, nothing else.
-CHANGE_MANAGER_EXECUTE_UUID="${CHANGE_WINDOW_CHANGE_MANAGER_UUID:-}"
-# The Anthropic API key the change agent plans each item with.
-ANTHROPIC_KEY_UUID="${CHANGE_WINDOW_ANTHROPIC_UUID:-}"
-# The alert-hub sender token the digest is sent with.
-DIGEST_SENDER_UUID="${CHANGE_WINDOW_DIGEST_SENDER_UUID:-}"
+CHANGE_MANAGER_EXECUTE_UUID="${CHANGE_WINDOW_CHANGE_MANAGER_UUID:-aa7c76af-bd52-4796-9d13-b50a00e035de}"
+# The Anthropic API key the change agent plans each item with: `change-window-anthropic-key`.
+ANTHROPIC_KEY_UUID="${CHANGE_WINDOW_ANTHROPIC_UUID:-0e9ebf2d-5b62-4f81-a731-b50a00e0df18}"
+# The alert-hub sender token the digest is sent with:
+# `ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW`.
+DIGEST_SENDER_UUID="${CHANGE_WINDOW_DIGEST_SENDER_UUID:-71616bf5-14ba-4888-b3f8-b50a00e13ed2}"
 
 # Production Coolify over the tailnet (HQ G-73: the lane container reaches it), as estate landing
 # reaches it; change-manager and alert-hub over HTTPS.
@@ -83,24 +88,16 @@ case "$*" in
     exit 1
     ;;
 esac
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the change-window lane runs only in its container, through lane-run" >&2
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the change-window lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" change-window "$SUBMITTING"
-
-# THE IDS THIS PASS NEEDS, checked before it clones or reads anything.
-_needed=(CHANGE_MANAGER_EXECUTE_UUID)
-if [ "$SUBMITTING" -eq 1 ]; then
-  _needed+=(COOLIFY_WINDOW_TOKEN_UUID ANTHROPIC_KEY_UUID DIGEST_SENDER_UUID)
-fi
-for _id in "${_needed[@]}"; do
-  [ -n "${!_id}" ] || sds_outcome_fail \
-    "FATAL: $_id is empty: its secret doesn't exist yet, so this pass can't run"
-done
 
 # THE PASS DIRECTORY holds the clone, the window's report and the digest's request body. It holds
 # no credential and is removed on exit, with the outcome report.
@@ -109,7 +106,8 @@ PASS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/change-window.XXXXXX")" \
 trap 'rm -f "$SDS_OUTCOME_REPORT"; rm -rf -- "$PASS_DIR"' EXIT
 
 # THE INPUT, gathered before any secret is read: infraops-mcp-server, anonymous, shallow, at `main`.
-# `sds_anonymous_clone` runs git with no credential and without the lane's token.
+# `sds_anonymous_clone` runs git with no credential, and without the broker's socket marker or a
+# lane token.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-cred-registries.sh"
 INFRAOPS_CLONE="$PASS_DIR/infraops-mcp-server"
@@ -120,25 +118,25 @@ _clone_error="$(sds_anonymous_clone infraops-mcp-server "$INFRAOPS_CLONE" 2>&1)"
   "FATAL: infraops-mcp-server at main has no dist/bundle/change-mgr-cli.js: the window can't run" 2
 command -v node >/dev/null 2>&1 || sds_outcome_fail "FATAL: no node on PATH: the window can't run" 2
 
-# THE SECRETS this mode needs. An unreadable or empty value fails closed here, before any call.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
+# THE SECRETS this mode needs, each through `sds_bws_value`'s one-argument form: the broker's
+# socket, or the lane's token from the environment. An unreadable or empty value fails closed here,
+# before any call.
 CHANGE_MGR_M2M_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_EXECUTE_UUID")"
 [ -n "$CHANGE_MGR_M2M_TOKEN" ] || sds_outcome_fail \
-  "FATAL: could not read the change-manager execute bearer from BWS (the lane's token), or it is empty"
+  "FATAL: could not read the change-manager execute bearer from BWS (the lane's socket or token), or it is empty"
 CHANGE_MGR_API_BASE="$CHANGE_MANAGER_URL"
 export CHANGE_MGR_API_BASE CHANGE_MGR_M2M_TOKEN
 if [ "$SUBMITTING" -eq 1 ]; then
   COOLIFY_API_TOKEN="$(sds_bws_value "$COOLIFY_WINDOW_TOKEN_UUID")"
   [ -n "$COOLIFY_API_TOKEN" ] || sds_outcome_fail \
-    "FATAL: could not read the Coolify window token from BWS (the lane's token), or it is empty"
+    "FATAL: could not read the Coolify window token from BWS (the lane's socket or token), or it is empty"
   ANTHROPIC_API_KEY="$(sds_bws_value "$ANTHROPIC_KEY_UUID")"
   [ -n "$ANTHROPIC_API_KEY" ] || sds_outcome_fail \
-    "FATAL: could not read the Anthropic API key from BWS (the lane's token), or it is empty"
+    "FATAL: could not read the Anthropic API key from BWS (the lane's socket or token), or it is empty"
   # Never exported: the window's program doesn't need it, and only the digest's curl reads it.
   _DIGEST_TOKEN="$(sds_bws_value "$DIGEST_SENDER_UUID")"
   [ -n "$_DIGEST_TOKEN" ] || sds_outcome_fail \
-    "FATAL: could not read the digest's alert-hub sender token from BWS (the lane's token), or it is empty"
+    "FATAL: could not read the digest's alert-hub sender token from BWS (the lane's socket or token), or it is empty"
   # The token becomes one quoted line of curl's config, so it may hold no quote, backslash or
   # whitespace, as `sds_deadman_resolve_by_uuid` holds the ping URL.
   case "$_DIGEST_TOKEN" in
@@ -151,8 +149,9 @@ fi
 # PROD ONLY (D-67 C). infraops' Coolify client reads `COOLIFY_PROD_*` before `COOLIFY_BASE_URL`
 # and `COOLIFY_API_TOKEN`, and `COOLIFY_DEV_*` for a dev item, so none of the four reaches it.
 unset COOLIFY_DEV_BASE_URL COOLIFY_DEV_API_TOKEN COOLIFY_PROD_BASE_URL COOLIFY_PROD_API_TOKEN
-# Every BWS read is done, and nothing after this needs a BWS identity.
-unset BWS_ACCESS_TOKEN
+# Every secret read is done, and nothing after this needs a BWS identity: neither the socket's
+# marker nor a lane token reaches `node`, and the digest's curl gets only its own token.
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DATE="${NOW%%T*}"

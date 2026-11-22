@@ -1790,3 +1790,56 @@ rotated_by_sds = false
   kind = "bws-secret"
   uuid = "f2a369ae-ffef-4180-96b4-b50300d4f366"
   note = "bws-factory-events-session-token (Rotation / Keepers; sds-operator's temporary direct grant removed 2026-11-15) — BWS keeper copy, from which FE-5 act step 0 wrote the Keychain item (D-54 A, 2026-11-15); no launcher reads it"
+
+# ── The change-window lane's Coolify token ───────────────────────────────────────
+# ADR-0059 increment 8, Amendment 15 (D-68 B, D-70 A). Created by Devon in production Coolify
+# (4.0.0-beta.473) at HQ gate G-88 (2026-11-22), team-wide read, write and deploy, never
+# read:sensitive, and stored in `Rotation / Keepers` with a single-secret read grant for
+# `lane-secrets-broker`. No fingerprint: no session has read the value. No adapter rotates this
+# class, so it is not rotated_by_sds and falls to the manual checklist.
+[[credential]]
+id = "coolify-change-window-token"
+class = "coolify-api-token"
+provider = "coolify"
+provider_identity = "Coolify API token change-window (prod; read, write, deploy)"
+bws_uuid = "3d41395a-06c3-47d5-ac85-b50a00dfbc2f"
+created = "2026-11-22"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "3d41395a-06c3-47d5-ac85-b50a00dfbc2f"
+  note = "change-window-coolify-token (Rotation / Keepers) — keeper; the launcher fetches by UUID"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-change-window.sh"
+  healthchecks_check = "Change Manager OPs Check"
+  note = "reads it on --submit passes only, as COOLIFY_API_TOKEN: in the sds-lane-change-window container through the lane secrets broker; pings Change Manager OPs Check on --submit passes"
+
+# ── The change-window lane's Anthropic API key ───────────────────────────────────
+# ADR-0059 increment 8, Amendment 14. Created by Devon at HQ gate G-88 (2026-11-22) in an Anthropic
+# workspace of its own, `sds-change-window`, and stored in `Rotation / Keepers` with a single-secret
+# read grant for `lane-secrets-broker`. No fingerprint: no session has read the value. No adapter
+# rotates this class, so it is not rotated_by_sds and falls to the manual checklist.
+[[credential]]
+id = "anthropic-change-window-key"
+class = "anthropic-api-key"
+provider = "anthropic"
+provider_identity = "Anthropic API key in workspace sds-change-window"
+bws_uuid = "0e9ebf2d-5b62-4f81-a731-b50a00e0df18"
+created = "2026-11-22"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "0e9ebf2d-5b62-4f81-a731-b50a00e0df18"
+  note = "change-window-anthropic-key (Rotation / Keepers) — keeper; the launcher fetches by UUID"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-change-window.sh"
+  healthchecks_check = "Change Manager OPs Check"
+  note = "reads it on --submit passes only, as ANTHROPIC_API_KEY: in the sds-lane-change-window container through the lane secrets broker; pings Change Manager OPs Check on --submit passes"
