@@ -1884,9 +1884,8 @@ disposition = "reissue"
 # exactly one of. The broker reads the keeper for the lane: the compose names its id (deploy.md,
 # the change-window cut-over's item 5), and the broker's account `lane-secrets-broker` holds a read
 # grant on that secret alone, which Devon gave at G-88 and G-89's `lane-run --read` proved on
-# 2026-11-22 (the cut-over's item 6). Handed
-# to the SDS and due for its first issue by `rotate_requested`. No `created`, for the reason the
-# landing ledger's block gives.
+# 2026-11-22 (the cut-over's item 6). Handed to the SDS and due for its first issue by
+# `rotate_requested`. No `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "change-window-ping-url"
 class = "healthchecks-ping-url"
