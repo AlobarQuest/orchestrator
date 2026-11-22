@@ -1281,10 +1281,11 @@ window's). A `--submit` pass runs `run-window --instance prod --report-dir <pass
 `CHANGE_MGR_M2M_TOKEN`, the names the bundle reads. No `COOLIFY_DEV_*` or `COOLIFY_PROD_*` variable
 reaches it; infraops' Coolify client reads `COOLIFY_PROD_*` before the base pair.
 
-The lane keeps the window's existing check, `Change Manager OPs Check` (slug `operations-check`),
-as an outcome alarm: `/start`, then success on 0 or `/fail` with the report. `LANE_CHECKS` names
-it, and `test_the_check_names_are_the_launchers` reads a quoted check name. Whether the self-hosted
-listing the quiet slot reads holds exactly one check of that name is a cut-over verify item.
+The lane keeps the window's existing check, `Change Manager OPs Check` (its slug in the read-only
+listing is empty, as HQ gate G-88 read it), as an outcome alarm: `/start`, then success on 0 or
+`/fail` with the report. `LANE_CHECKS` names it, and `test_the_check_names_are_the_launchers`
+reads a quoted check name. Whether the self-hosted listing the quiet slot reads holds exactly one
+check of that name is a cut-over verify item.
 
 The digest is an `info` notice, sent at once with the Mac's key (`report:change-window:<date>`)
 and subject, and cut to the hub's notice limits (12,000 characters, a 16,384-byte body). It isn't
@@ -1339,8 +1340,8 @@ its own change or act.
 3. The lane's broker change in this repository: the launcher's four ids, its `sds_in_lane_container`
    check, the compose's broker mount, the allowlist's `[lanes.change-window]`, and the lane's
    `.bws-secrets.toml` rows and `.cred-consumers.toml` rows for the Coolify token and the Anthropic
-   key. The `execute` bearer's registry row is change-manager's. The digest sender token has no
-   registry row yet.
+   key. The `execute` bearer's registry row is change-manager's. The digest sender token's row is
+   `alert-hub-report-change-window-sender`.
 4. The ping URL's row made due and the executor's write, read from `Change Manager OPs Check`
    (ADR-0055 amendment 23). The lane has no token to mint or write.
 5. A served release whose compose names the ping-URL secret's id, with `change-window` removed from

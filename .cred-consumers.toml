@@ -1843,3 +1843,57 @@ disposition = "reissue"
   ref = "scripts/run-change-window.sh"
   healthchecks_check = "Change Manager OPs Check"
   note = "reads it on --submit passes only, as ANTHROPIC_API_KEY: in the sds-lane-change-window container through the lane secrets broker; pings Change Manager OPs Check on --submit passes"
+
+# ── The change-window lane's digest sender token ─────────────────────────────────
+# ADR-0059 increment 8. alert-hub source `report-change-window`, the one the Mac window's digest
+# is sent from; the token was minted at HQ gate G-88 (2026-11-22) and stored in
+# `Rotation / Keepers` as ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW. No fingerprint: no session
+# has read the value. No adapter rotates this class, so it is not rotated_by_sds and falls to the
+# manual checklist.
+[[credential]]
+id = "alert-hub-report-change-window-sender"
+class = "alert-hub-sender-token"
+provider = "alert-hub"
+provider_identity = "alert-hub sender report-change-window (source report-change-window)"
+bws_uuid = "71616bf5-14ba-4888-b3f8-b50a00e13ed2"
+created = "2026-11-22"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "71616bf5-14ba-4888-b3f8-b50a00e13ed2"
+  note = "ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW (Rotation / Keepers) — keeper; the launcher fetches by UUID"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-change-window.sh"
+  healthchecks_check = "Change Manager OPs Check"
+  note = "reads it on --submit passes only, never exported, for the digest's alert-hub request: in the sds-lane-change-window container through the lane secrets broker; pings Change Manager OPs Check on --submit passes"
+
+# ── The change-window lane's ping URL (ADR-0059 increment 8) ─────────────────────
+# ADR-0055 amendment 19, item 8, for a lane on the secrets broker (amendment 30): the change window
+# reads its work secrets through the broker's socket, so it has no lane account, no token of its
+# own and no token row. The keeper was created in Rotation / Keepers on 2026-11-22, in the session
+# handling HQ gate G-88, by the VM root's `create-keeper`. The lane keeps the Mac window's check,
+# `Change Manager OPs Check` (no new check), which G-88's read of the self-hosted listing found
+# exactly one of. The broker reads the keeper for the lane once the compose names its id (deploy.md,
+# the change-window cut-over's item 5), through a read grant on that secret alone for its account
+# `lane-secrets-broker`, which Devon gave at G-88; item 6's `lane-run --read` is its proof. Handed
+# to the SDS and due for its first issue by `rotate_requested`. No `created`, for the reason the
+# landing ledger's block gives.
+[[credential]]
+id = "change-window-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3"
+rotated_by_sds = true
+rotate_requested = "2026-11-22"
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23), by its
+# name, the one the lane's launcher names; its slug in the read-only listing is empty.
+healthchecks_check = "Change Manager OPs Check"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane once the compose names its id"
