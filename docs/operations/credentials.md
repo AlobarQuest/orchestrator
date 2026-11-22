@@ -87,17 +87,17 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   it outside the SDS.
   **The SDS consumer set at the 2026-07-30 migration was five, not the three the plan named:**
   this repo's three launchers (ADR-0040 later deleted the two tracker ones, and amendment 1 the adapter), intent-packages' `credentials.py` (env-driven, no code change),
-  **and `infraops-mcp-server/scripts/drift-audit.sh`** — which runs on a 03:00 LaunchAgent and
-  fetches the SYSTEM bearer for its `mint-follow-ups` step with a *different* BWS identity from
-  every other secret it reads, so it overrides `BWS_ACCESS_TOKEN` for that one call.
+  **and `infraops-mcp-server/scripts/drift-audit.sh`**, which fetched the SYSTEM bearer for its
+  `mint-follow-ups` step with a *different* BWS identity from every other secret it read.
+  infraops-mcp-server #173 (`c7de0b70`) removed that step and its separate BWS identity, so
+  `drift-audit.sh` no longer reads the bearer.
   `factory-validation-kit-restart-recovery/credentials.py` hardcodes the same SYSTEM UUID but is
   operator-invoked, on no schedule. A grep of `src/` in one repo would have found neither: when
   moving a secret, grep the whole portfolio for the UUID, not the repos you expect to own it.
   `scripts/run-follow-up-mint.sh` (ADR-0059 increment 9, Amendment 10) reads the bearer in its
   lane's container through the lane secrets broker, whose allowlist gives the lane nothing else
-  but its own ping-URL secret. The `drift-audit.sh` read leaves when
-  infraops-mcp-server drops its minting step (`docs/operations/deploy.md`, the follow-up-mint
-  lane's cut-over).
+  but its own ping-URL secret. It is the bearer's one scheduled minting reader
+  (`docs/operations/deploy.md`, the follow-up-mint lane).
 
 ### #47
 

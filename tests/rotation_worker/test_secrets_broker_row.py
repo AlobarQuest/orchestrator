@@ -43,6 +43,7 @@ SECRETS = frozenset(
         "750f737f-4cb6-4876-9a98-b48200ea1c0b",  # CODE_BRAIN_CONTRIBUTOR_KEY
         "da8134b0-565f-45c8-8965-b48200ea1c40",  # INFRA_BRAIN_CONTRIBUTOR_KEY
         "2f708d08-ea5d-4d11-bde0-b50200c9a60b",  # factory-events-read-password
+        "46e714ca-32b7-4e89-9817-b509013363a5",  # follow-up-mint-ping-url
     }
 )
 

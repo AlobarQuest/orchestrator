@@ -11,7 +11,8 @@
 # every pass any of them ever made was typed by hand. That is now resolved in both directions --
 # nine lanes have a LaunchAgent, and on 2026-09-05 ADR-0040 deleted two of those three rather than
 # scheduling them. The survivor, run-follow-up-mint.sh, was deleted on 2026-09-28 (Tier 3 item
-# 24b): infraops-mcp-server's drift-audit.sh runs the daily mint pass.
+# 24b). ADR-0059 increment 9 brought it back as the follow-up-mint lane's launcher, which runs the
+# daily mint pass on prod-vps; infraops-mcp-server's drift-audit.sh no longer mints.
 #
 # Verify afterwards with:
 #   launchctl list | grep landing-ledger

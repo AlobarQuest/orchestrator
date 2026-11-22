@@ -219,7 +219,8 @@ def test_the_launcher_population_is_what_was_consolidated() -> None:
     """Found by glob, so a new launcher joins every assertion below without editing this file.
 
     The floor guards against the glob matching nothing; it was 12 until Tier 3 item 24b deleted
-    run-follow-up-mint.sh, whose daily pass now lives in infraops-mcp-server's drift-audit.sh.
+    run-follow-up-mint.sh. ADR-0059 increment 9 brought that launcher back for the follow-up-mint
+    lane.
     """
     assert len(_launchers()) >= 11
 

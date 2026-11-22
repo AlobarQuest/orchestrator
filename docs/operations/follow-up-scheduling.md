@@ -84,20 +84,25 @@ means "due the instant the work settles" — maximally on, not a special case.
 
 ## Running a pass
 
-The daily pass runs from `AlobarQuest/infraops-mcp-server`'s `scripts/drift-audit.sh` (WS-P2.8
-Task 10, landed), which calls `POST /api/v1/follow-ups/mint` with the `orchestrator-system` SYSTEM
-bearer as a best-effort, non-fatal step. The operator launcher this repository used to carry,
-`scripts/run-follow-up-mint.sh`, was deleted by Tier 3 item 24b (2026-09-28): it had no schedule
-and the daily cadence no longer needs it. An operator can still run one pass by hand with
-`orchestrator mint-follow-ups`, with `ORCHESTRATOR_API_URL`, the SYSTEM bearer and its key id in
-the environment.
+The daily pass is the `follow-up-mint` lane (ADR-0059 Amendment 10): its crontab runs
+`lane-run follow-up-mint` at 06:43 New York time on `prod-vps`, and `scripts/run-follow-up-mint.sh`
+reads the `orchestrator-system` SYSTEM bearer through the lane secrets broker and runs
+`orchestrator mint-follow-ups`, which calls `POST /api/v1/follow-ups/mint`. A failed pass pings
+the `sds-follow-up-mint` check's `/fail` (`docs/operations/deploy.md`, the follow-up-mint lane).
+
+The launcher runs only in the lane's container: outside it, it refuses and reads nothing. To run
+one extra pass, run `docker exec <container> lane-run follow-up-mint` on `prod-vps`. The route is
+idempotent per revision, so a second pass the same day mints nothing twice. An operator can also
+run one pass by hand with `orchestrator mint-follow-ups --idempotency-key <key>`, with
+`ORCHESTRATOR_API_URL`, the SYSTEM bearer (`ORCHESTRATOR_API_TOKEN`) and its key id
+(`ORCHESTRATOR_API_CREDENTIAL_KEY_ID`) in the environment.
 
 **The credential must be `orchestrator-system`, never `orchestrator-drift-reporter`.** The
 drift-reporter identity's registry profile is *observe and propose, never mutate*; minting a work
 unit is canonical mutation, and event attribution (`ActorContext.actor_id`) is permanent.
 
-The orchestrator itself has no loop either way; the schedule lives entirely in the other
-repository (ADR-0007's "Scheduled trigger" section).
+The orchestrator itself has no loop either way; the schedule lives entirely in the lane's
+crontab, outside the orchestrator process (ADR-0007's "Scheduled trigger" section).
 
 ## Reading the counted output
 

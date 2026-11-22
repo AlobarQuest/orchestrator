@@ -124,6 +124,13 @@ route that already exists for on-demand use. The ADR-0002/0003 posture — the o
 stays push-only and loop-free — is honoured, not bypassed: the schedule lives entirely outside
 `src/`, in a different repository, on its own merge cycle.
 
+**Amended 2026-11-22 (ADR-0059 Amendment 10, increment 9).** The trigger is the `follow-up-mint`
+lane: `scripts/run-follow-up-mint.sh`, run daily at 06:43 New York time by
+`lane-run follow-up-mint` in its own container on `prod-vps`, reading the `orchestrator-system`
+bearer through the lane secrets broker. `drift-audit.sh` no longer mints: infraops-mcp-server #173
+(`c7de0b70`) removed its minting step. The schedule still lives outside `src/`, in the lane's
+crontab, and the orchestrator process stays push-only and loop-free.
+
 ## Consequences
 
 - **Forward-only. There is no backfill and none is possible.** Revisions intaken before migration
