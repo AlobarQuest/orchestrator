@@ -175,7 +175,7 @@ command's three lane phases change one lane's resource at a time, the way `prepa
 every infraops call. The command never calls Coolify, holds no Coolify credential, sends no alert,
 reads no alert-hub token, and creates or deletes no resource.
 
-**A moved lane has no rollback to the Mac.** ADR-0059 increment 6 (orchestrator #PRNUM) ended it:
+**A moved lane has no rollback to the Mac.** ADR-0059 increment 6 (orchestrator #788) ended it:
 the fifteen lanes increments 2 to 5 moved have no plist, installer or Mac path, and each
 `scripts/run-<lane>.sh` refuses to run outside its container. So "Rollback for one lane" doesn't
 apply to them; a failed lane goes forward, through a retry `--token`, a `--tag` at a released
