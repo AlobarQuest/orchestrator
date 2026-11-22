@@ -300,7 +300,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   exported and it works, so the failure appears only in the shell an operator debugs the job from —
   and it names BWS rather than the cause. Read each Keychain item **directly**
   (`BWS_ACCESS_TOKEN_VPS_BACKUP` broad, `BWS_ACCESS_TOKEN_SDS` narrow) and give each override a
-  distinct variable name, as `run-estate-landing.sh` does with `BWS_ACCESS_TOKEN_BROAD`. Found by
+  distinct variable name, as `scripts/sds-deadman.sh`'s name lookup does with
+  `BWS_ACCESS_TOKEN_BROAD`. Found by
   two reviewers independently; proven with a pre-fix control that fails in both directions.
   Related and pre-existing across these launchers: the exit-code fold `for rc in 1 3 2` lets any
   code outside `{0,1,2,3}` — `127` for a missing binary — fall through to `exit 0`.
@@ -322,7 +323,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   the mechanism either. The call sequence is `api.get_intake` → `client.conformance_claim` →
   `enrichment_for_profile(..., client=brain_client)` → (only with `--submit`)
   `api.propose_decomposition`, so a DRY run that fails has failed in the enrichment step.
-  **The fix is the shape `scripts/run-estate-landing.sh` already uses**: read each Keychain item
+  **The fix is the shape `scripts/sds-deadman.sh`'s name lookup uses**: read each Keychain item
   directly and give each override a distinct variable name, never one ambient `BWS_ACCESS_TOKEN`
   serving both. This file already carried the two-identity rule for launchers; it applies to
   interactive `factory decompose` too, and reading it in one context did not prevent violating it in
@@ -400,42 +401,37 @@ The holders in this repository:
 
 | Holder | Secret | Account and Keychain item | When it fetches |
 | --- | --- | --- | --- |
-| `scripts/run-bump-proposer.sh` | `factory-events-append-password` (`2ce0dbc7-…`) | `bump-proposer`. On the Mac, `Claude` / `BWS_ACCESS_TOKEN_BUMP_PROPOSER`, until ADR-0059 step 3f-4's cut-over retires the Mac job. After it, the same `bump-proposer` lane account alone, with the lane's own token in its container (no Keychain item). | A `--submit` run: on the Mac with the switch present; in the container with the chain settings from the lane's compose and no switch file. A dry run fetches nothing. The password reaches `bump-proposer` alone. |
-| `scripts/run-work-carrier.sh` | `factory-events-read-password` (`2f708d08-…`) | On the Mac, `sds-operator`, `Claude` / `BWS_ACCESS_TOKEN_SDS`, until ADR-0059 step 3f-2's cut-over retires the Mac job. After it, the `work-carrier` lane account alone, with the lane's own token in its container (no Keychain item). | On the Mac, every pass with the switch present and an `sds-operator` identity. In the container, every pass, with the chain settings from the lane's compose and no switch file. The password reaches `work-carrier` and the container's chain verify only, never `work-watcher`. |
+| `scripts/run-bump-proposer.sh` | `factory-events-append-password` (`2ce0dbc7-…`) | The `bump-proposer` lane account, with the lane's own token in its container (no Keychain item). | A `--submit` run, with the chain settings from the lane's compose. A dry run fetches nothing. The password reaches `bump-proposer` alone. |
+| `scripts/run-work-carrier.sh` | `factory-events-read-password` (`2f708d08-…`) | The `work-carrier` lane account, with the lane's own token in its container (no Keychain item). | Every pass, with the chain settings from the lane's compose. The password reaches `work-carrier` and the container's chain verify only, never `work-watcher`. |
 | `scripts/factory-events-session.sh` (FE-5 P-OR-2) | `factory-events-append-password` | `factory-events-session`, `Claude` / `BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION` | Each run, for an interactive session's `approve` or the one history import. |
 
-`scripts/run-rotation-proposer.sh` holds no chain password, on the Mac or, after ADR-0059 step
-3f-5's cut-over, in the `rotation-proposer` lane account's container (D-43 B; ADR-0055 amendment 24
-item 5). Its container clears every chain variable before the pass runs.
+`scripts/run-rotation-proposer.sh` holds no chain password in the `rotation-proposer` lane
+account's container (D-43 B; ADR-0055 amendment 24 item 5). Its container clears every chain
+variable before the pass runs.
 
-`scripts/run-inert-landing.sh` holds no chain password either. On the Mac it reads the orchestrator
-SYSTEM bearer and the `sds-bridge` alert sender as `sds-operator`, the change-manager READ bearer
-(`314f276d-…`) as the broad account, and takes its GitHub token from `gh auth token`. After ADR-0059
-step 3g-1's cut-over, the lane reads those three and the read-only App's key (`314a966c-…`)
+`scripts/run-inert-landing.sh` holds no chain password either. The lane reads the orchestrator
+SYSTEM bearer, the `sds-bridge` alert sender, the change-manager READ bearer (`314f276d-…`) and the
+read-only App's key (`314a966c-…`) through the lane secrets broker's socket in its container
+(ADR-0055 amendment 30; no token of its own, no Keychain item), and mints its GitHub token from that
+App each pass.
+
+`scripts/run-estate-landing.sh` holds no chain password either. The lane reads the orchestrator
+SYSTEM bearer, the `sds-bridge` alert sender, its Coolify token (`f9f59233-…`), the change-manager
+READ bearer (`314f276d-…`) and the read-only App's key (`314a966c-…`) through the lane secrets
+broker's socket in its container (ADR-0055 amendment 30; no token of its own, no Keychain item), and
+mints its GitHub token from that App each pass.
+
+`scripts/run-bump-driver.sh` reads the orchestrator SYSTEM bearer, the `sds-bridge` alert sender,
+the change-manager READ bearer (`314f276d-…`), the Code Brain and Infra Brain contributor keys
+(`750f737f-…`, `da8134b0-…`, `Brains - Contributor`) and the read-only App's key (`314a966c-…`)
 through the lane secrets broker's socket in its container (ADR-0055 amendment 30; no token of its
-own, no Keychain item), and mints its GitHub token from that App each pass.
-
-`scripts/run-estate-landing.sh` holds no chain password either. On the Mac it reads the orchestrator
-SYSTEM bearer, the `sds-bridge` alert sender and its Coolify token (`f9f59233-…`) as `sds-operator`,
-the change-manager READ bearer (`314f276d-…`) as the broad account, and takes its GitHub token from
-`gh auth token`. After ADR-0059 step 3g-2's cut-over, the lane reads those four and the read-only
-App's key (`314a966c-…`) through the lane secrets broker's socket in its container (ADR-0055
-amendment 30; no token of its own, no Keychain item), and mints its GitHub token from that App each
-pass.
-
-`scripts/run-bump-driver.sh` holds no chain password on the Mac. There it reads the orchestrator
-SYSTEM bearer and the `sds-bridge` alert sender as `sds-operator`, the change-manager READ bearer
-(`314f276d-…`) and the Code Brain and Infra Brain contributor keys (`750f737f-…`, `da8134b0-…`,
-`Brains - Contributor`) as the broad account, and takes its GitHub token from `gh auth token`.
-After ADR-0059 step 3g-3's cut-over, the lane reads those five and the read-only App's key
-(`314a966c-…`) through the lane secrets broker's socket in its container (ADR-0055 amendment 30; no
-token of its own, no Keychain item), and mints its GitHub token from that App each pass. The
-container also reads the chain's read password (`factory-events-read-password`, `2f708d08-…`)
-through the broker every pass and passes it to the `orchestrator.factory_chain_read` walk alone
-(ADR-0059 Amendment 13 decision item 7). ADR-0059 Amendment 17 names the broker's account,
-`lane-secrets-broker`, as the holder of the read grant on it and on the two contributor keys, one
-single-secret grant each. Devon gave the three, and the grant on the lane's ping-URL secret, at HQ
-gate G-84 (2026-11-21); the lane's `lane-run --read` proved every read at G-86.
+own, no Keychain item), and mints its GitHub token from that App each pass. The container also reads
+the chain's read password (`factory-events-read-password`, `2f708d08-…`) through the broker every
+pass and passes it to the `orchestrator.factory_chain_read` walk alone (ADR-0059 Amendment 13
+decision item 7). ADR-0059 Amendment 17 names the broker's account, `lane-secrets-broker`, as the
+holder of the read grant on it and on the two contributor keys, one single-secret grant each. Devon
+gave the three, and the grant on the lane's ping-URL secret, at HQ gate G-84 (2026-11-21); the
+lane's `lane-run --read` proved every read at G-86.
 
 `scripts/run-change-window.sh` holds no chain password either, and it has no Mac branch: the Mac's
 window stays infraops-mcp-server's `scripts/change-window.sh` until the lane's rollback ends. After

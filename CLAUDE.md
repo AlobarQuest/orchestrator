@@ -290,8 +290,9 @@ Subsystem rules continue in nested files that load only when a session reads fil
 - A producer that publishes with `git push origin main` must refuse unless on `main`, hold the
   command as one string (the merge guard scans text), derive the branch from it, and re-refuse
   unpublished commits each pass. History: `docs/history/claude-md-invariants-archive.md` #257.
-- The scheduled lanes run the main tree's working copy and `.venv` by absolute path: never check out
-  a branch, edit, or run uv there while a pass may fire; edit in a worktree. Detail:
+- The activation sweep, the one lane left on the Mac, runs the main tree's working copy and `.venv`
+  by absolute path: never check out a branch, edit, or run uv there while a pass may fire; edit in a
+  worktree. Detail:
   `docs/operations/local-development.md`.
 - The dispatch App's installation reach is deliberately wider than its work, so every call site
   that mints or resolves its token is bounded by a grant or allowlist check before any read. The

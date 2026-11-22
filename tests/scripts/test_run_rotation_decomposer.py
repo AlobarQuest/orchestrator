@@ -1,10 +1,9 @@
-"""`scripts/run-rotation-decomposer.sh` on both hosts, and the lane's tracked files.
+"""`scripts/run-rotation-decomposer.sh` in the lane's container, and the lane's tracked files.
 
-The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it in the
-container (the lane's token as `BWS_ACCESS_TOKEN`, a ping-URL secret id, PATH and HOME), or with the
-two identity overrides on the Mac. `bws`, `gh` and `curl` are stubs on PATH and the venv's
-`rotation-decomposer` is a stub that logs what reached it: nothing reads BWS, the Keychain,
-change-manager, the orchestrator, alert-hub or Healthchecks.
+The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it (the
+lane's token as `BWS_ACCESS_TOKEN`, a ping-URL secret id, PATH and HOME). `bws`, `gh` and `curl`
+are stubs on PATH and the venv's `rotation-decomposer` is a stub that logs what reached it: nothing
+reads BWS, the Keychain, change-manager, the orchestrator, alert-hub or Healthchecks.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ LAUNCHER = Path("scripts/run-rotation-decomposer.sh")
 HELPERS = ("sds-deadman.sh", "sds-bws.sh")
 COMPOSE = Path("lanes/rotation-decomposer/compose.yaml")
 CRONTAB = Path("lanes/rotation-decomposer/crontab")
-PLIST = Path("scripts/com.devon.rotation-decomposer.plist")
 
 SYSTEM_UUID = "221a48d5-3f29-4898-b300-b4820140c880"
 READ_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
@@ -164,22 +162,13 @@ def test_a_dry_run_reads_no_sender_token_and_pings_nothing(tmp_path: Path) -> No
     assert logs["ping"] == []
 
 
-def test_the_container_uses_no_mac_identity_and_skips_activation(tmp_path: Path) -> None:
-    """Set Mac identity overrides change nothing: every read is the lane's token."""
+def test_every_read_is_the_lanes_token_whatever_identities_the_environment_holds(
+    tmp_path: Path,
+) -> None:
     result, logs = _run(tmp_path, BWS_ACCESS_TOKEN_SDS="narrow", BWS_ACCESS_TOKEN_BROAD="broad")
     assert result.returncode == 0, result.stderr
     assert all(line.endswith(f"token={LANE_TOKEN}") for line in logs["bws"]), logs["bws"]
     assert "[activation]" not in result.stdout + result.stderr
-
-
-def test_the_keychain_is_read_only_on_the_macs_branch() -> None:
-    lines = LAUNCHER.read_text().splitlines()
-    branch = lines.index('if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then')
-    otherwise = lines.index("else", branch)
-    end = lines.index("fi", otherwise)
-    keychain = [i for i, line in enumerate(lines) if "/usr/bin/security" in line]
-    assert len(keychain) == 2
-    assert all(otherwise < i < end for i in keychain)
 
 
 @pytest.mark.parametrize("refused", [READ_UUID, SYSTEM_UUID, ALERT_UUID])
@@ -219,49 +208,20 @@ def test_the_programs_code_is_the_passs_code(tmp_path: Path, code: int, expected
     assert _pings(logs["ping"])[-1] == (PING_URL if code == 0 else f"{PING_URL}/fail")
 
 
-# ---- the Mac, unchanged until increment 6 ----------------------------------------------------
+# ---- outside the container -------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("args", [(), ("--dry-run",)], ids=["acting", "dry-run"])
-def test_on_the_mac_each_secret_is_read_with_its_own_identity(
-    tmp_path: Path, args: tuple[str, ...]
-) -> None:
-    result, logs = _run(
-        tmp_path,
-        *args,
-        BWS_ACCESS_TOKEN="",
-        BWS_ACCESS_TOKEN_BROAD="broad",
-        BWS_ACCESS_TOKEN_SDS="narrow",
-        SDS_DEADMAN_PING_URL_UUID="",
-    )
-    assert result.returncode == 0, result.stderr
-    reads = [
-        line for line in logs["bws"] if line.split()[0] in (READ_UUID, SYSTEM_UUID, ALERT_UUID)
-    ]
-    expected = [f"{READ_UUID} token=broad", f"{SYSTEM_UUID} token=narrow"]
-    if not args:
-        expected.append(f"{ALERT_UUID} token=narrow")
-    assert reads == expected
-    assert logs["gh"] == []
-    assert "[activation]" in result.stdout
-    alert = "unset" if args else ALERT
-    assert _passes(logs["lane"]) == [
-        f"pass args={' '.join(args)} system={SYSTEM} key=orchestrator-system cm={READ}"
-        f" alert={alert} lane_token= state=/var/lib/sds/rotation-decomposer"
-    ]
-
-
-def test_on_the_mac_an_unreadable_secret_keeps_its_message(tmp_path: Path) -> None:
-    result, _ = _run(
-        tmp_path,
-        BWS_ACCESS_TOKEN="",
-        BWS_ACCESS_TOKEN_BROAD="broad",
-        BWS_ACCESS_TOKEN_SDS="narrow",
-        SDS_DEADMAN_PING_URL_UUID="",
-        BWS_REFUSES=SYSTEM_UUID,
-    )
+def test_outside_the_container_it_refuses_and_reads_no_secret(tmp_path: Path) -> None:
+    """No lane token: it refuses before the alarm is begun, so no secret is read, not even the
+    ping-URL secret, no ping is sent and no program runs."""
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
     assert result.returncode == 1
-    assert "FATAL: could not read the orchestrator system credential from BWS\n" in result.stderr
+    assert (
+        "FATAL: no BWS_ACCESS_TOKEN: the rotation-decomposer lane runs only in its container,"
+        " through lane-run" in result.stdout + result.stderr
+    )
+    assert _passes(logs["lane"]) == []
+    assert logs["bws"] == [] and logs["ping"] == [] and logs["gh"] == []
 
 
 # ---- the lane's state and mirrors ------------------------------------------------------------
@@ -322,17 +282,13 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     assert deploy.LANE_CHECKS["rotation-decomposer"] == "sds-rotation-decomposer"
 
 
-def test_the_crontab_runs_an_acting_pass_hourly_as_the_mac_job_does() -> None:
+def test_the_crontab_runs_an_acting_pass_hourly() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["50 * * * * lane-run rotation-decomposer"]
-    plist = PLIST.read_text()
-    assert "<key>StartInterval</key>\n    <integer>3600</integer>" in plist
-    launcher = "<string>__REPO_ROOT__/scripts/run-rotation-decomposer.sh</string>"
-    assert f"{launcher}\n    </array>" in plist
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:

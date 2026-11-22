@@ -97,9 +97,8 @@ checks these, in order:
   see it. `draft` units are reported in the output and do not block, because a draft is inert
   across a restart. A run dispatched and never claimed keeps its unit refusing until it is claimed
   or retired. The run's `factory-runner-pilot.yml` lives in the target repository, so a
-  `gh run list` against `AlobarQuest/factory-runner` does not see it. The `bump-driver` lane starts
-  runs hourly at :50 (the Mac job), so deploy away from :50. After the lane's cut-over its
-  container starts them at :51 instead.
+  `gh run list` against `AlobarQuest/factory-runner` does not see it. The `bump-driver` lane's container
+  starts runs hourly at :51, so deploy away from :51.
 - **The pre-swap revision.** It reads `/health/live` once and records the result as
   `previous_commit`. It refuses if the outgoing image states no revision, and stops (exit 2) if
   production already serves the commit. It refuses a `previous_commit` the checkout does not hold
@@ -107,8 +106,8 @@ checks these, in order:
   this procedure.
 - **Every lane is current.** It refuses while any lane-phase run is unfinished, and while a
   registered lane's last finished run shows a tag other than the served one. The refusal names the
-  lane and its two exits: re-run that lane's phases with `--tag` at the served tag, or roll that
-  lane back (ADR-0059, "Rollback for one lane"). A registered lane with no passed `--add` is
+  lane and its two exits: re-run that lane's phases with `--tag` at the served tag, or, for the
+  change window only, roll that lane back (ADR-0059, "Rollback for one lane"). A registered lane with no passed `--add` is
   skipped. The check runs before the state file is saved, so a refusal dispatches nothing. "The
   lane phases", following, defines a registered lane.
 - **The database is at the outgoing head.** It requires the old image's `/health/ready` to
@@ -176,12 +175,21 @@ command's three lane phases change one lane's resource at a time, the way `prepa
 every infraops call. The command never calls Coolify, holds no Coolify credential, sends no alert,
 reads no alert-hub token, and creates or deletes no resource.
 
+**A moved lane has no rollback to the Mac.** ADR-0059 increment 6 (orchestrator #PRNUM) ended it:
+the fifteen lanes increments 2 to 5 moved have no plist, installer or Mac path, and each
+`scripts/run-<lane>.sh` refuses to run outside its container. So "Rollback for one lane" doesn't
+apply to them; a failed lane goes forward, through a retry `--token`, a `--tag` at a released
+commit, or a fix. The change window's Mac rollback is increment 8's, and the follow-up mint never
+had a Mac job. Where this page or a refusal the command prints offers a rollback to the Mac, only
+the change window can take it.
+
 Each phase takes `--lane <lane>` and exactly one change:
 
 - `--tag sha-<40 hex>`: move the lane to a release's sha tag. It must be the served orchestrator
   tag (in production; development mode takes any released commit, "Development mode"), and its
-  commit must descend from the commit of the lane's first passed `--add`; an older
-  target goes back to the Mac first ("Rollback for one lane").
+  commit must descend from the commit of the lane's first passed `--add`. An older target has no
+  launcher for the lane, and only the change window can go back to the Mac first ("Rollback for
+  one lane").
 - `--schedule <true|false>`: change the lane's `LANE_SCHEDULE_ENABLED`. It keeps the running tag
   and writes the tracked compose at that tag.
 - `--add --tag sha-<40 hex>`: the lane's first start, on the resource HQ created. The tag must be
@@ -313,7 +321,7 @@ run of its lane is `unfinished`.
      run `closed_failed` with the recorded mismatches as its reason, prints them on stderr, and
      answers `"result": "closed_failed"`, never a success. It refuses a run with no failed
      `lanes-finish` recorded. Report the failure: the reissue's revoke stays unresolved. The lane
-     can then take a retry `--token`, a `--tag`, or a rollback to the Mac.
+     can then take a retry `--token` or a `--tag` (and the change window a rollback to the Mac).
 
 `lanes-finish` checks the digest, the schedule, and the volume (and, for an `--add` or a
 `--token`, that a token is present), never which secrets the lane's launcher reads. So a change
@@ -372,8 +380,7 @@ register it either. It keeps no state, so its compose mounts no volume. Its cron
 `lane-run deploy-watcher` hourly at minute 20, as the Mac job's `StartInterval` of 3600 does; the
 watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer,
 change-manager's `M2M_TOKEN_OBSERVE`, the read-only App's key and its ping-URL secret, all read with
-the lane's one token; on the Mac the broad and narrow Keychain identities still read the two
-bearers. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+the lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
 `deploy-watcher-ping-url`, which the container's dead-man helper reads the URL from with the lane's
 own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one
 lane") still needs the following, in this order, each in its own change or act:
@@ -405,7 +412,7 @@ volume `sds-lanes-revision-watcher-state` at `REVISION_WATCHER_STATE_DIR`
 start, and the watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer
 bearer, the hosting platform's API token, App Brain's read key, the `sds-bridge` alert sender
 (acting passes only), the read-only App's key and its ping-URL secret, all read with the lane's one
-token; on the Mac the narrow and broad Keychain identities still read the first four. Its compose
+token. Its compose
 names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `revision-watcher-ping-url`, which the
 container's dead-man helper reads the URL from with the lane's own token (`scripts/sds-deadman.sh`).
 Its cut-over (ADR-0059, "Cut-over for one
@@ -437,8 +444,8 @@ runs `lane-run pin-watcher` daily at 07:25 New York time. The Mac job runs at 07
 is the deploy watcher's hourly start, and 25 keeps it clear of every other lane's start; the
 watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer, the
 `sds-bridge` alert sender (acting passes only), the read-only App's key and its ping-URL secret,
-all read with the lane's one token; on the Mac the narrow Keychain identity still reads the first
-two. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `pin-watcher-ping-url`,
+all read with the lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret
+id of `pin-watcher-ping-url`,
 which the container's dead-man helper reads the URL from with the lane's own token
 (`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch`
 reader for `scripts/run-pin-watcher.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over
@@ -471,8 +478,7 @@ register it either. It keeps no state, so its compose mounts no volume. Its cron
 is one of execution-watch's quarter-hours, and 47 keeps it clear of every other lane's start; the
 check has no flags. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager READ
 bearer, the read-only App's key and its ping-URL secret, all read with the lane's one token, never
-the Healthchecks API key; on the Mac the narrow and broad Keychain identities still read the first
-two. Each container pass also makes an anonymous shallow clone of intent-packages into the pass's
+the Healthchecks API key. Each container pass also makes an anonymous shallow clone of intent-packages into the pass's
 `HOME` and points `BUMP_PROPOSER_PACKAGES_CHECKOUT` at it (ADR-0059 amendment 5); the report's first
 line names the clone's commit, or git's exit code and error, and a failed clone is the program's
 "packages checkout couldn't be read" gap (exit 3, or 2 beside a disagreement), never the launcher's
@@ -512,8 +518,7 @@ crontab runs `lane-run change-proposer --submit` hourly at minute 35, as the Mac
 `StartInterval` of 3600 runs it with `--submit` in its plist; 35 is a minute no other lane starts
 on. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager propose bearer, the
 read-only App's key and its ping-URL secret, all read with the lane's one token; the propose bearer
-is read only on a `--submit` pass, as on the Mac, where the narrow and broad Keychain identities
-still read the first two. The bare run is the lane's dry run: it reads the observer bearer and mints
+is read only on a `--submit` pass. The bare run is the lane's dry run: it reads the observer bearer and mints
 its read token, writes nothing, and pings nothing. The check is an outcome alarm that pings only on
 `--submit` passes: its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
 `change-proposer-ping-url`, which the container's dead-man helper reads the URL from with the lane's
@@ -548,9 +553,7 @@ repositories anonymously with the image's `git`. Its crontab runs `lane-run rota
 hourly at minute 50, as the Mac job's `StartInterval` of 3600 runs it with no arguments; 50 is a
 minute no other lane starts on. Its `.bws-secrets.toml` secrets are the orchestrator SYSTEM bearer,
 the change-manager READ bearer, the `sds-bridge` alert sender and its ping-URL secret, all read with
-the lane's one token; the sender is read only on an acting pass (no `--dry-run`), as on the Mac,
-where the narrow Keychain identity still reads the SYSTEM bearer and the sender and the broad one
-the READ bearer. It needs no GitHub token: it calls no GitHub API. `--dry-run` is the lane's
+the lane's one token; the sender is read only on an acting pass (no `--dry-run`). It needs no GitHub token: it calls no GitHub API. `--dry-run` is the lane's
 reporting mode: it reads the two bearers, proposes nothing, sends nothing and pings nothing. The
 check is an outcome alarm that pings only on acting passes: its compose names
 `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `rotation-decomposer-ping-url`, which the
@@ -587,8 +590,7 @@ runs `lane-run unit-verifier` every ten minutes at minutes 2, 12, 22, 32, 42 and
 (`2-52/10`), as the Mac job's `StartInterval` of 600 does; those minutes keep it clear of every
 other lane's start, and the verifier has no scheduled-pass flag. Its `.bws-secrets.toml` secrets
 are the VERIFIER bearer, the `sds-bridge` alert sender (every pass), the read-only App's key and
-its ping-URL secret, all read with the lane's one token; on the Mac the narrow Keychain identity
-still reads the first two through `sds-token.sh`. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the
+its ping-URL secret, all read with the lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the
 BWS secret id of `unit-verifier-ping-url`, which the container's dead-man helper reads the URL from
 with the lane's own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one
 lane") still needs the following, in this order, each in its own change or act:
@@ -946,8 +948,7 @@ Each pass mints `INERT_LANDING_GITHUB_TOKEN` from the read-only App (`metadata` 
 `pull_requests`, read) for the repositories `inert-landing repositories` prints: the landing
 policy's inert population, the only repositories a pass lists pull requests in. The read-only App
 must be installed on each of them, and they must share one owner, or the mint refuses and the pass
-fails (exit 1). On the Mac, a repository `gh` can't list is one `unreadable` line (exit 3) beside
-the others. A policy the list can't be read from fails the pass with exit 2 before anything is
+fails (exit 1). A policy the list can't be read from fails the pass with exit 2 before anything is
 minted, as the pass itself would.
 
 Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
@@ -1097,7 +1098,7 @@ never on `--dry-run` (`scripts/sds-deadman.sh`).
 - The Code Brain and Infra Brain contributor keys, handed to `factory` alone.
 - The read-only App's key.
 - The factory-events read password (`2f708d08-…`, `Factory Events`), for the chain walk alone,
-  never exported (Amendment 13 decision item 7). The Mac's bump driver doesn't read it.
+  never exported (Amendment 13 decision item 7).
 
 Each pass mints `BUMP_DRIVER_GITHUB_TOKEN` from the read-only App for the repositories
 `bump-driver repositories` prints: code-standards, intent-packages, project-standards and

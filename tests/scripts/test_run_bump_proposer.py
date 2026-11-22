@@ -1,13 +1,11 @@
-"""`scripts/run-bump-proposer.sh` in the lane's container and on the Mac, and the lane's files.
+"""`scripts/run-bump-proposer.sh` in the lane's container, and the lane's files.
 
 The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it in the
 container: the lane's token as `BWS_ACCESS_TOKEN`, the state directory, the chain's three settings,
 `PATH` and `HOME`. `bws`, `git`, `gh`, `uv` and `curl` are stubs on PATH. In the venv,
 `bump-proposer` and `sds-github-mint` are stubs that log what reached them, and `python` is the real
 interpreter (`sds-bws.sh` parses BWS's JSON with it). Nothing reads BWS, the Keychain, GitHub,
-change-manager, the orchestrator, the chain database or Healthchecks. The Mac's own behaviour is
-held by `test_bridge_launchers.py` and `test_bridge_chain_switch.py`, which this change leaves as
-they were.
+change-manager, the orchestrator, the chain database or Healthchecks.
 """
 
 from __future__ import annotations
@@ -28,7 +26,6 @@ LAUNCHER = Path("scripts/run-bump-proposer.sh")
 HELPERS = ("sds-deadman.sh", "sds-bws.sh", "sds-git.sh")
 COMPOSE = Path("lanes/bump-proposer/compose.yaml")
 CRONTAB = Path("lanes/bump-proposer/crontab")
-PLIST = Path("scripts/com.devon.bump-proposer.plist")
 
 READ_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
@@ -45,7 +42,6 @@ LANE_TOKEN = "a-lane-token"
 READ_TOKEN = "ghs-minted-read-token"
 PUSH_TOKEN = "ghs-minted-push-token"
 BROAD_STANDIN = "broad-stand-in"
-NARROW_STANDIN = "narrow-stand-in"
 
 
 def value(uuid: str) -> str:
@@ -62,14 +58,32 @@ CHAIN = {
     "FACTORY_EVENTS_DB_NAME": "postgres",
 }
 
-# The `bws` stub logs the UUID and the token it was given; a UUID in `$BWS_REFUSES` fails.
-_BWS = """#!/bin/sh
-echo "$3 token=${BWS_ACCESS_TOKEN:-}" >> "$BWS_LOG"
-case " ${BWS_REFUSES:-} " in *" $3 "*) exit 1 ;; esac
-printf '{"value": "value-of-%s"}' "$3"
+PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
+PING_URL = "https://hc.example/ping/bump-proposer"
+# The `bws` stub logs the UUID and the token it was given; a UUID in `$BWS_REFUSES` fails; the
+# ping-URL secret holds `PING_URL`.
+_BWS = f"""#!/bin/sh
+echo "$3 token=${{BWS_ACCESS_TOKEN:-}}" >> "$BWS_LOG"
+case " ${{BWS_REFUSES:-}} " in *" $3 "*) exit 1 ;; esac
+[ "$3" = "{PING_URL_UUID}" ] && {{ echo '{{"value": "{PING_URL}"}}'; exit 0; }}
+printf '{{"value": "value-of-%s"}}' "$3"
 """
 _GH = '#!/bin/sh\necho "gh $*" >> "$GH_LOG"\necho gh-token\n'
-_CURL = '#!/bin/sh\necho curl >> "$PING_LOG"\nexit 1\n'
+# A ping's URL arrives on stdin as curl's config, and its body is the file `--data-binary` names;
+# anything else fails.
+_CURL = """#!/bin/sh
+config=0
+for argument in "$@"; do [ "$argument" = "-" ] && config=1; done
+[ "$config" -eq 1 ] || exit 1
+url="$(sed -n 's/^url = "\\(.*\\)"$/\\1/p')"
+body=""
+previous=""
+for argument in "$@"; do
+  [ "$previous" = "--data-binary" ] && body="$(cat "${argument#@}")"
+  previous="$argument"
+done
+printf '%s\\t%s\\n' "$url" "$(printf '%s' "$body" | tr '\\n' '|')" >> "$PING_LOG"
+"""
 _UV = '#!/bin/sh\necho "uv $*" >> "$UV_LOG"\n'
 # git: logs its argv and the credential environment, then makes the clone a checkout.
 _GIT = """#!/bin/bash
@@ -102,6 +116,7 @@ fi
   echo "proposer clone=$([ -d "${BUMP_PROPOSER_PACKAGES_CHECKOUT:-/none}/src" ] && echo present)"
   env | sort | sed 's/^/proposer-env /'
 } >> "$LANE_LOG"
+echo "bump-proposer found: a subject"
 exit "${FAKE_PROPOSER_RC:-0}"
 """
 _MINT = """#!/bin/bash
@@ -318,6 +333,28 @@ def test_a_dry_run_hands_the_program_no_chain_variable(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
+def test_an_ambient_chain_variable_never_reaches_the_program(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    ambient = {
+        "CHAIN_DB_HOST": "ambient-host",
+        "CHAIN_DB_PORT": "6543",
+        "CHAIN_DB_NAME": "ambient-db",
+        "CHAIN_PASSWORD": "ambient-password",
+        "FACTORY_EVENTS_READ_PASSWORD": "ambient-read-password",
+    }
+    run = _run(tmp_path, *args, **ambient)
+    assert run.code == 0, run.output
+    env = run.env()
+    assert not any(name.startswith("CHAIN_") for name in env)
+    assert "FACTORY_EVENTS_READ_PASSWORD" not in env
+    assert not any(value.startswith("ambient-") for value in env.values())
+    if args:
+        assert env["FACTORY_EVENTS_APPEND_PASSWORD"] == value(APPEND_UUID)
+        assert env["FACTORY_EVENTS_DB_HOST"] == CHAIN["FACTORY_EVENTS_DB_HOST"]
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
 @pytest.mark.parametrize("setting", sorted(CHAIN))
 def test_a_missing_chain_setting_fails_the_pass_before_any_read(
     tmp_path: Path, setting: str, args: tuple[str, ...]
@@ -482,59 +519,89 @@ def test_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> None:
     assert _run(tmp_path, FAKE_PROPOSER_RC=str(rc)).code == rc
 
 
-# ---- the container and the Mac ---------------------------------------------------------------
+# ---- the container ---------------------------------------------------------------
 
 
-def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path) -> None:
-    run = _run(tmp_path, "--submit", BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN)
+def test_the_container_prints_no_activation_and_asks_gh_nothing(tmp_path: Path) -> None:
+    run = _run(tmp_path, "--submit")
     assert run.code == 0, run.output
     assert "[activation]" not in run.output
-    assert not any(line.endswith(f"token={NARROW_STANDIN}") for line in run.logs["bws"])
-
-
-def test_the_keychain_and_gh_are_read_only_on_the_macs_branch() -> None:
-    lines = LAUNCHER.read_text().splitlines()
-    branch = lines.index('if [ "$IN_CONTAINER" -eq 1 ]; then')
-    otherwise = lines.index("else", branch)
-    end = lines.index("fi", otherwise)
-    mac_only = [
-        i
-        for i, line in enumerate(lines)
-        if not line.lstrip().startswith("#")
-        and ("/usr/bin/security" in line or "gh auth token" in line)
-    ]
-    # The three Keychain items and the `gh` login.
-    assert len(mac_only) == 4
-    assert all(otherwise < i < end for i in mac_only)
+    assert run.logs["gh"] == []
 
 
 @pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
-def test_on_the_mac_nothing_is_minted_or_cloned_and_the_checkout_is_its_own(
+def test_outside_the_container_it_refuses_and_reads_and_runs_nothing(
     tmp_path: Path, args: tuple[str, ...]
 ) -> None:
+    run = _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, BUMP_PROPOSER_STATE_DIR=None)
+    assert run.code == 1, run.output
+    assert (
+        "FATAL: no BWS_ACCESS_TOKEN: the bump-proposer lane runs only in its container, "
+        "through lane-run"
+    ) in run.output
+    assert run.lines("proposer-env") == [] and run.lines("derive") == [] and run.mints() == []
+    assert run.logs["gh"] == [] and run.logs["git"] == [] and run.logs["uv"] == []
+    assert run.logs["bws"] == [] and run.logs["ping"] == []
+
+
+# ---- the outcome alarm (ADR-0021 amendment 2) ----------------------------------------------
+
+
+def _pings(run: Run) -> list[tuple[str, ...]]:
+    return [tuple(line.split("\t")) for line in run.logs["ping"]]
+
+
+def test_an_acting_clean_pass_pings_start_then_success(tmp_path: Path) -> None:
+    run = _run(tmp_path, "--submit", SDS_DEADMAN_PING_URL_UUID=PING_URL_UUID)
+    assert run.code == 0, run.output
+    assert _pings(run) == [(f"{PING_URL}/start", ""), (PING_URL, "")]
+
+
+@pytest.mark.parametrize("rc", [3, 2, 1, 127])
+def test_every_other_exit_pings_fail_with_the_report_as_its_body(tmp_path: Path, rc: int) -> None:
+    """3 (a finding) above all: this check pages on it, it is no dead-man success."""
+    run = _run(
+        tmp_path, "--submit", FAKE_PROPOSER_RC=str(rc), SDS_DEADMAN_PING_URL_UUID=PING_URL_UUID
+    )
+    assert run.code == rc, run.output
+    pings = _pings(run)
+    assert pings[0] == (f"{PING_URL}/start", "")
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "bump-proposer found: a subject" in pings[1][1]
+    assert len(pings) == 2
+
+
+def test_a_dry_run_pings_nothing_whatever_the_code(tmp_path: Path) -> None:
+    run = _run(tmp_path, FAKE_PROPOSER_RC="3", SDS_DEADMAN_PING_URL_UUID=PING_URL_UUID)
+    assert run.code == 3, run.output
+    assert run.logs["ping"] == []
+    assert "reporting a failure" not in run.output
+
+
+def test_a_failing_acting_pass_prints_the_failure_line(tmp_path: Path) -> None:
+    run = _run(tmp_path, "--submit", FAKE_PROPOSER_RC="3", SDS_DEADMAN_PING_URL_UUID=PING_URL_UUID)
+    assert "exit 3 \u2014 reporting a failure" in run.output
+
+
+def test_a_missing_credential_pings_fail_with_its_reason(tmp_path: Path) -> None:
     run = _run(
         tmp_path,
-        *args,
-        BWS_ACCESS_TOKEN=None,
-        BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN,
-        BUMP_PROPOSER_STATE_DIR=None,
-        **dict.fromkeys(CHAIN),
+        "--submit",
+        BWS_REFUSES=PROPOSE_UUID,
+        SDS_DEADMAN_PING_URL_UUID=PING_URL_UUID,
     )
-    assert run.code == 0, run.output
-    assert run.mints() == [] and run.lines("derive") == []
-    assert run.logs["git"] == [] and run.logs["uv"] == []
-    assert run.logs["gh"] == ["gh auth token"]
-    assert "[activation]" in run.output
-    env = run.env()
-    assert env["BUMP_PROPOSER_GITHUB_TOKEN"] == "gh-token"
-    assert env["BUMP_PROPOSER_PACKAGES_CHECKOUT"] == f"{tmp_path}/home/Projects/intent-packages"
-    for name in ("BUMP_PROPOSER_PACKAGES_PYTHON", "PYTHONPATH", "SECURITY_STANDARDS_DIR"):
-        assert name not in env
-    assert not any(name.startswith("GIT_CONFIG") for name in env)
-    reads = {line.split()[0]: line.split("=", 1)[1] for line in run.logs["bws"]}
-    assert reads[READ_UUID] == BROAD_STANDIN
-    assert reads[OBSERVER_UUID] == NARROW_STANDIN
-    assert READ_APP_KEY_UUID not in reads and PUSH_APP_KEY_UUID not in reads
+    assert run.code == 1, run.output
+    pings = _pings(run)
+    assert pings[0] == (f"{PING_URL}/start", "")
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "FATAL: could not read the propose-scoped change-manager credential" in pings[1][1]
+    assert len(pings) == 2 and run.lines("proposer-env") == []
+
+
+def test_the_launcher_does_not_arm_the_dead_man_switch() -> None:
+    """Arming it maps the finding code to a success ping, the inversion this check removes; and
+    `test_sds_deadman.py` selects launchers by that function's name in their text."""
+    assert "sds_deadman" + "_arm" not in LAUNCHER.read_text()
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -575,23 +642,19 @@ def test_every_compose_variable_lane_run_must_pass_is_in_its_list() -> None:
     assert "BUMP_PROPOSER_CLONE_ROOT" not in (*lane_run.COPIED, *lane_run.STATE_VARIABLES)
 
 
-def test_the_crontab_runs_a_submitting_pass_daily_at_06_55_beside_the_mac_jobs_06_50() -> None:
+def test_the_crontab_runs_a_submitting_pass_daily_at_06_55() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["55 6 * * * lane-run bump-proposer --submit"]
-    plist = PLIST.read_text()
-    assert "<key>Hour</key><integer>6</integer><key>Minute</key><integer>50</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-bump-proposer.sh</string>\n" in plist
-    assert "<string>--submit</string>" in plist
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
     minutes = lane_start_minutes()
     assert minutes["bump-proposer"] == {55}
-    # 50, the Mac job's minute, is the rotation decomposer's.
+    # 50 is the rotation decomposer's.
     assert 50 in minutes["rotation-decomposer"]
     for lane, taken in minutes.items():
         if lane != "bump-proposer":

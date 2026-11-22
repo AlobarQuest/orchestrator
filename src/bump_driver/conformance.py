@@ -24,7 +24,7 @@ report was unreadable, an instance isn't ok, or the report's `generated_at` is o
 `MAX_REPORT_AGE_HOURS`. It is also held when it declares a wiring entry the event doesn't list,
 which the container would otherwise read as not wired.
 
-On the Mac the launcher passes no file, so this module reads, holds and writes nothing there.
+Without the file (a pass run outside the launcher) this module reads, holds and writes nothing.
 """
 
 from __future__ import annotations

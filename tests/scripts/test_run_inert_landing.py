@@ -1,13 +1,12 @@
-"""`scripts/run-inert-landing.sh` in the lane's container and on the Mac, and the lane's files.
+"""`scripts/run-inert-landing.sh` in the lane's container, and the lane's files.
 
 The real launcher runs under `env -i` from a throwaway tree, with what `lane-run` passes it in the
 container: the lane's token as `BWS_ACCESS_TOKEN` (or, on the secrets broker, `SDS_SECRETS_SOCKET`
 naming a stand-in broker's socket, `conftest.py`'s), the state directory, `PATH` and `HOME`. `bws`,
 `gh` and `curl` are stubs on PATH. In the venv, `inert-landing` and `sds-github-mint` are stubs that
 log what reached them, and `python` is the real interpreter (`sds-bws.sh` parses BWS's JSON with
-it). On the Mac, `scripts/sds-token.sh` is a stub that exports a stand-in, and the broad identity
-is a stand-in too, so no test reads the Keychain. Nothing reads BWS, GitHub, change-manager, the
-orchestrator, alert-hub or Healthchecks.
+it). The broad identity is a stand-in, so no test reads the Keychain. Nothing reads BWS, GitHub,
+change-manager, the orchestrator, alert-hub or Healthchecks.
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ LAUNCHER = Path("scripts/run-inert-landing.sh")
 HELPERS = ("sds-deadman.sh", "sds-bws.sh")
 COMPOSE = Path("lanes/inert-landing/compose.yaml")
 CRONTAB = Path("lanes/inert-landing/crontab")
-PLIST = Path("scripts/com.devon.inert-landing.plist")
 
 READ_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 SYSTEM_UUID = "221a48d5-3f29-4898-b300-b4820140c880"
@@ -43,7 +41,6 @@ LANE_SECRETS = (*EVERY_PASS, ALERT_UUID)
 LANE_TOKEN = "a-lane-token"
 READ_TOKEN = "ghs-minted-read-token"
 BROAD_STANDIN = "broad-stand-in"
-NARROW_STANDIN = "narrow-stand-in"
 REPOSITORIES = ("alobarquest/agent-sites", "alobarquest/crm")
 
 
@@ -88,10 +85,6 @@ socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
 echo "%s"
 """
-# The Mac's narrow identity, as `sds-token.sh` exports it, without the Keychain.
-_SDS_TOKEN = (
-    f'if [ -z "${{BWS_ACCESS_TOKEN:-}}" ]; then export BWS_ACCESS_TOKEN={NARROW_STANDIN}; fi\n'
-)
 
 
 def _executable(path: Path, text: str) -> None:
@@ -141,7 +134,6 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
     shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
     for helper in HELPERS:
         shutil.copy(Path("scripts") / helper, root / "scripts" / helper)
-    (root / "scripts" / "sds-token.sh").write_text(_SDS_TOKEN)
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
     (venv / "python").symlink_to((Path.cwd() / ".venv" / "bin" / "python").resolve())
@@ -186,10 +178,6 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
         check=False,
     )
     return Run(result, {name: log.read_text().splitlines() for name, log in logs.items()})
-
-
-def _mac(tmp_path: Path, *args: str, **fake: str | None) -> Run:
-    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, LANDER_STATE_DIR=None, **fake)
 
 
 # ---- the secrets, read with the lane's one token ---------------------------------------------
@@ -368,15 +356,26 @@ def test_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> None:
     assert _run(tmp_path, FAKE_LANDER_RC=str(rc)).code == rc
 
 
-# ---- the container and the Mac ---------------------------------------------------------------
+# ---- the container only ---------------------------------------------------------------------
 
 
-def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path) -> None:
-    run = _run(tmp_path, "--submit", BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN)
+def test_the_container_runs_no_activation_and_no_gh(tmp_path: Path) -> None:
+    run = _run(tmp_path, "--submit")
     assert run.code == 0, run.output
     assert "[activation]" not in run.output
-    assert NARROW_STANDIN not in [token for _, token in run.reads()]
     assert run.logs["gh"] == []
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["bare", "submit"])
+def test_outside_the_container_it_refuses_and_reads_nothing(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    run = _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, LANDER_STATE_DIR=None)
+    assert run.code == 1, run.output
+    assert "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN" in run.output
+    assert "runs only in its container, through lane-run" in run.output
+    assert run.logs["bws"] == [] and run.logs["ping"] == [] and run.logs["gh"] == []
+    assert run.lines("derive") == [] and run.lines("mint") == [] and run.passes() == []
 
 
 # ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
@@ -386,7 +385,7 @@ PING_URL_SECRET = "35557473-f80c-44e3-892a-b507013158b1"
 
 def _brokered(tmp_path: Path, socket_path: Path, *args: str, **fake: str | None) -> Run:
     """The container as `lane-run` starts it on the broker: no token, the socket's marker, and the
-    compose's ping-URL id. The broad stand-in is gone, so nothing can fall back to the Mac."""
+    compose's ping-URL id. The broad stand-in is gone, so nothing can fall back to the Keychain."""
     return _run(
         tmp_path,
         *args,
@@ -407,7 +406,7 @@ def test_container_branch_runs_on_the_socket_without_a_token(
     )
     run = _brokered(tmp_path, socket_path, *args)
     assert run.code == 0, run.output
-    # Every secret came through the socket: `bws` never ran, and the Mac's steps never did.
+    # Every secret came through the socket: `bws` never ran, and no activation or `gh` ran.
     assert run.logs["bws"] == []
     assert "[activation]" not in run.output
     assert run.logs["gh"] == []
@@ -428,7 +427,7 @@ def test_container_branch_runs_on_the_socket_without_a_token(
     assert run.passes() == [f"lander args={' '.join(args)}"]
 
 
-def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
+def test_a_dead_socket_fails_the_pass_and_reaches_nothing_else(
     tmp_path: Path, dead_socket: Path
 ) -> None:
     run = _brokered(tmp_path, dead_socket, "--submit")
@@ -437,78 +436,6 @@ def test_a_dead_socket_fails_the_pass_and_never_reaches_the_mac(
     assert run.logs["bws"] == [] and run.logs["gh"] == []
     assert "[activation]" not in run.output
     assert run.passes() == []
-
-
-def test_the_keychain_and_gh_are_reached_only_after_the_container_block() -> None:
-    """The container block exits, so every Keychain read and `gh` call after its closing `fi` is
-    the Mac's. The dead-man helper's own Keychain read is reached only without a broad identity
-    and a ping-URL id, which the container's compose names."""
-    lines = LAUNCHER.read_text().splitlines()
-    block = lines.index("if sds_in_lane_container; then")
-    end = lines.index("fi", block)
-    assert lines[end - 1].strip() == 'exit "$rc"'
-    code = [(i, line) for i, line in enumerate(lines) if not line.lstrip().startswith("#")]
-    keychain = [i for i, line in code if "/usr/bin/security" in line or "sds-token.sh" in line]
-    gh = [i for i, line in code if "gh auth token" in line]
-    assert len(keychain) == 2 and len(gh) == 1
-    assert all(end < i for i in (*keychain, *gh))
-
-
-@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["bare", "submit"])
-def test_on_the_mac_the_identities_and_gh_are_as_before_and_nothing_is_minted(
-    tmp_path: Path, args: tuple[str, ...]
-) -> None:
-    run = _mac(tmp_path, *args)
-    assert run.code == 0, run.output
-    assert "[activation] helper missing" in run.output
-    assert run.lines("mint") == [] and run.lines("derive") == []
-    assert run.logs["gh"] == ["gh auth token"]
-    expected = [
-        (HEALTHCHECKS_KEY_UUID, BROAD_STANDIN),
-        (READ_UUID, BROAD_STANDIN),
-        (SYSTEM_UUID, NARROW_STANDIN),
-    ]
-    if args:
-        expected.append((ALERT_UUID, NARROW_STANDIN))
-    assert run.reads() == expected
-    env = run.env()
-    assert env["INERT_LANDING_CHANGE_MANAGER_TOKEN"] == value(READ_UUID)
-    assert env["INERT_LANDING_ORCHESTRATOR_TOKEN"] == value(SYSTEM_UUID)
-    assert env["INERT_LANDING_GITHUB_TOKEN"] == "gh-token"
-    # As before, the Mac's narrow identity stays exported to the lander.
-    assert env["BWS_ACCESS_TOKEN"] == NARROW_STANDIN
-    assert "LANDER_STATE_DIR" not in env
-    assert run.passes() == [f"lander args={' '.join(args)}"]
-
-
-def test_on_the_mac_preset_credentials_are_used_as_before(tmp_path: Path) -> None:
-    """The Mac's overrides stay: a preset credential is used and not read."""
-    run = _mac(
-        tmp_path,
-        "--submit",
-        INERT_LANDING_CHANGE_MANAGER_TOKEN="cm",
-        INERT_LANDING_ORCHESTRATOR_TOKEN="orch",
-        INERT_LANDING_GITHUB_TOKEN="gh",
-        SDS_BRIDGE_ALERT_TOKEN="alert",
-    )
-    assert run.code == 0, run.output
-    assert run.reads() == [(HEALTHCHECKS_KEY_UUID, BROAD_STANDIN)]
-    assert run.logs["gh"] == []
-    env = run.env()
-    assert [
-        env[name]
-        for name in (
-            "INERT_LANDING_CHANGE_MANAGER_TOKEN",
-            "INERT_LANDING_ORCHESTRATOR_TOKEN",
-            "INERT_LANDING_GITHUB_TOKEN",
-            "SDS_BRIDGE_ALERT_TOKEN",
-        )
-    ] == ["cm", "orch", "gh", "alert"]
-
-
-@pytest.mark.parametrize("rc", [0, 3])
-def test_on_the_mac_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> None:
-    assert _mac(tmp_path, "--submit", FAKE_LANDER_RC=str(rc)).code == rc
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -551,24 +478,18 @@ def test_every_compose_variable_lane_run_must_pass_is_in_its_list() -> None:
     assert set(environment) - passed == {"LANE_SCHEDULE_ENABLED"}
 
 
-def test_the_crontab_runs_a_submitting_pass_hourly_at_37_beside_the_mac_jobs_35() -> None:
+def test_the_crontab_runs_a_submitting_pass_hourly_at_37() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["37 * * * * lane-run inert-landing --submit"]
-    plist = PLIST.read_text()
-    assert "<dict><key>Minute</key><integer>35</integer></dict>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-inert-landing.sh</string>" in plist
-    assert "<string>--submit</string>" in plist
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
     minutes = lane_start_minutes()
     assert minutes["inert-landing"] == {37}
-    # 35, the Mac job's minute, is the change proposer's.
-    assert 35 in minutes["change-proposer"]
     for lane, taken in minutes.items():
         if lane != "inert-landing":
             assert 37 not in taken, lane

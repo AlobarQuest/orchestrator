@@ -26,7 +26,6 @@ from orchestrator.services.verifier.github_checks import GitHubActionsCheckObser
 from tests.architecture.edge_table import (
     ALERT_HUB_PERMITS,
     DEADMAN,
-    GH_AUTH_TOKEN,
     SDS_BRIDGE_ALERT_BEARER,
     Edge,
     Permits,
@@ -216,7 +215,7 @@ LANE = Edge(
     ),
     github=frozenset({("GET", REQUIRED)}),
     alert_hub=frozenset({("POST", "/v1/alerts")}),
-    bearers=DEADMAN | {VERIFIER_BEARER, GH_AUTH_TOKEN, SDS_BRIDGE_ALERT_BEARER, READ_APP_KEY},
+    bearers=DEADMAN | {VERIFIER_BEARER, SDS_BRIDGE_ALERT_BEARER, READ_APP_KEY},
 )
 LAUNCHERS = ("scripts/run-unit-verifier.sh",)
 LANE_PROBES = frozenset(

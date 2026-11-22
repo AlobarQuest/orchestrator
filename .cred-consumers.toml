@@ -253,7 +253,7 @@ disposition = "reissue"
   repo = "orchestrator"
   ref = "scripts/run-unit-verifier.sh"
   healthchecks_check = "sds-unit-verifier"
-  note = "launchd com.devon.unit-verifier every 10 minutes; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-unit-verifier"
+  note = "the sds-lane-unit-verifier container, every 10 minutes (2-52/10), with the lane's own token (no Keychain item); Healthchecks check sds-unit-verifier"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -295,7 +295,7 @@ disposition = "reissue"
   repo = "orchestrator"
   ref = "scripts/run-work-carrier.sh"
   healthchecks_check = "sds-work-carrier"
-  note = "launchd com.devon.work-carrier 07:05 (--register only); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-work-carrier"
+  note = "the sds-lane-work-carrier container, 07:05 New York time (--register only), with the lane's own token (no Keychain item); Healthchecks check sds-work-carrier"
 
 [[credential]]
 id = "orchestrator-operator-bearer"
@@ -377,28 +377,28 @@ rotated_by_sds = true
   repo = "orchestrator"
   ref = "scripts/run-bump-proposer.sh"
   healthchecks_check = "sds-bump-proposer"
-  note = "launchd com.devon.bump-proposer 06:50 (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-bump-proposer"
+  note = "the sds-lane-bump-proposer container, 06:55 New York time (--submit), with the lane's own token (no Keychain item); Healthchecks check sds-bump-proposer"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-change-proposer.sh"
   healthchecks_check = "sds-change-proposer"
-  note = "launchd com.devon.change-proposer hourly (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-change-proposer (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
+  note = "the sds-lane-change-proposer container, hourly at minute 35 (--submit), with the lane's own token (no Keychain item); Healthchecks check sds-change-proposer (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-deploy-watcher.sh"
   healthchecks_check = "sds-deploy-watcher"
-  note = "launchd com.devon.deploy-watcher hourly; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-deploy-watcher"
+  note = "the sds-lane-deploy-watcher container, hourly at minute 20, with the lane's own token (no Keychain item); Healthchecks check sds-deploy-watcher"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-execution-watch.sh"
   healthchecks_check = "sds-execution-watch"
-  note = "launchd com.devon.execution-watch every 15 minutes (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-execution-watch"
+  note = "the sds-lane-execution-watch container, every 15 minutes (--submit), with the lane's own token (no Keychain item); Healthchecks check sds-execution-watch"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -412,35 +412,35 @@ rotated_by_sds = true
   repo = "orchestrator"
   ref = "scripts/run-membership-check.sh"
   healthchecks_check = "sds-membership-check"
-  note = "launchd com.devon.sds-membership-check 07:45; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-membership-check (an outcome alarm: any disagreement or unreadable source keeps it down, which delays retiring an old observer value until the pass exits 0)"
+  note = "the sds-lane-membership-check container, 07:47 New York time, with the lane's own token (no Keychain item); Healthchecks check sds-membership-check (an outcome alarm: any disagreement or unreadable source keeps it down, which delays retiring an old observer value until the pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-landing-ledger.sh"
   healthchecks_check = "sds-landing-ledger"
-  note = "launchd com.devon.landing-ledger 07:30; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-landing-ledger"
+  note = "the sds-lane-landing-ledger container, 07:30 New York time, with the lane's own token (no Keychain item); Healthchecks check sds-landing-ledger"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-pin-watcher.sh"
   healthchecks_check = "sds-pin-watcher"
-  note = "launchd com.devon.pin-watcher 07:20; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-pin-watcher"
+  note = "the sds-lane-pin-watcher container, 07:25 New York time, with the lane's own token (no Keychain item); Healthchecks check sds-pin-watcher"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-revision-watcher.sh"
   healthchecks_check = "sds-revision-watcher"
-  note = "launchd com.devon.revision-watcher hourly; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-revision-watcher"
+  note = "the sds-lane-revision-watcher container, hourly at minute 40, with the lane's own token (no Keychain item); Healthchecks check sds-revision-watcher"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-rotation-proposer.sh"
   healthchecks_check = "sds-rotation-proposer"
-  note = "launchd com.devon.rotation-proposer 06:30 (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-rotation-proposer"
+  note = "the sds-lane-rotation-proposer container, 06:31 New York time (--submit), with the lane's own token (no Keychain item); Healthchecks check sds-rotation-proposer"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -454,7 +454,7 @@ rotated_by_sds = true
   repo = "orchestrator"
   ref = "scripts/run-work-carrier.sh"
   healthchecks_check = "sds-work-carrier"
-  note = "launchd com.devon.work-carrier 07:05 (--register); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-work-carrier (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
+  note = "the sds-lane-work-carrier container, 07:05 New York time (--register), with the lane's own token (no Keychain item); Healthchecks check sds-work-carrier (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -1697,7 +1697,7 @@ rotated_by_sds = false
   repo = "orchestrator"
   ref = "scripts/run-bump-proposer.sh"
   healthchecks_check = "sds-bump-proposer"
-  note = "launchd com.devon.bump-proposer 06:50, --submit passes only, with the switch file present; Keychain Claude/BWS_ACCESS_TOKEN_BUMP_PROPOSER (bump-proposer); and in the sds-lane-bump-proposer container with the lane's own token, --submit passes only (the same bump-proposer account, HQ gate G-75); passed to approve --by-policy"
+  note = "the sds-lane-bump-proposer container with the lane's own token (the bump-proposer account, HQ gate G-75), --submit passes only, 06:55 New York time; passed to approve --by-policy"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -1767,7 +1767,7 @@ rotated_by_sds = false
   kind = "keychain"
   service = "Claude"
   account = "BWS_ACCESS_TOKEN_BUMP_PROPOSER"
-  note = "the keeper; scripts/run-bump-proposer.sh reads it fresh on each --submit pass with the switch file present (healthchecks sds-bump-proposer)"
+  note = "the keeper; no reader in this repository (the bump proposer's Mac path, its last reader, was removed by ADR-0059 increment 6). Retiring the item is Devon's act"
 
   [[credential.consumer]]
   kind = "bws-secret"

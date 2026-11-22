@@ -1,12 +1,12 @@
-"""`scripts/run-rotation-proposer.sh` in the lane's container and on the Mac, and the lane's files.
+"""`scripts/run-rotation-proposer.sh` in the lane's container, and the lane's files.
 
 The real launcher runs under `env -i` from a throwaway tree with no `.git` (`/app` has none), with
 what `lane-run` passes it in the container: the lane's token as `BWS_ACCESS_TOKEN`, the state
 directory, infraops' two directory settings, `PATH` and `HOME`. `bws`, `git` and `curl` are stubs on
 PATH. In the venv, `rotation-proposer` and `sds-github-mint` are stubs that log what reached them,
 and `python` is the real interpreter (`sds-bws.sh` parses BWS's JSON with it). Nothing reads BWS,
-GitHub, change-manager, the orchestrator, alert-hub or Healthchecks. The worktree refusal is held by
-`test_run_rotation_proposer.py`.
+GitHub, change-manager, the orchestrator, alert-hub or Healthchecks. Outside the container it
+refuses.
 """
 
 from __future__ import annotations
@@ -24,10 +24,9 @@ from scripts import lane_run
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-rotation-proposer.sh")
-HELPERS = ("sds-install.sh", "sds-deadman.sh", "sds-bws.sh", "sds-git.sh", "sds-cred-registries.sh")
+HELPERS = ("sds-deadman.sh", "sds-bws.sh", "sds-git.sh", "sds-cred-registries.sh")
 COMPOSE = Path("lanes/rotation-proposer/compose.yaml")
 CRONTAB = Path("lanes/rotation-proposer/crontab")
-PLIST = Path("scripts/com.devon.rotation-proposer.plist")
 
 PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
@@ -41,7 +40,7 @@ PUSH_TOKEN = "ghs-minted-push-token"
 BROAD_STANDIN = "broad-stand-in"
 NARROW_STANDIN = "narrow-stand-in"
 FENCE = ("INFRADRIFT_CONFIG_DIR", "SECURITY_DRIFT_STATE_DIR")
-# The four credential registries, in the list's order (the Mac's four, ADR-0059 decision 5).
+# The four credential registries, in the list's order (ADR-0059 decision 5).
 REGISTRIES = ("infraops-mcp-server", "change-manager", "factory-runner", "orchestrator")
 CLONED = ("intent-packages", *REGISTRIES)
 
@@ -226,7 +225,7 @@ def test_a_submitting_pass_reads_its_four_secrets_with_the_lanes_one_token(
 
 
 def test_a_container_pass_asks_git_for_no_worktree(tmp_path: Path) -> None:
-    """`/app` is no checkout, so the Mac's worktree refusal is skipped, not run to fail twice."""
+    """`/app` is no checkout, so no `git rev-parse` of the tree runs and fails."""
     run = _run(tmp_path)
     assert run.code == 0, run.output
     assert "not a git repository" not in run.result.stderr
@@ -560,122 +559,30 @@ def test_the_programs_code_is_the_passs(tmp_path: Path, rc: int) -> None:
     assert _run(tmp_path, FAKE_PROPOSER_RC=str(rc)).code == rc
 
 
-# ---- the container and the Mac ---------------------------------------------------------------
+# ---- the container only ----------------------------------------------------------------------
 
 
-def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path) -> None:
+def test_the_container_reads_every_secret_with_the_lanes_token_and_logs_no_activation(
+    tmp_path: Path,
+) -> None:
     run = _run(tmp_path, "--submit", BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN)
     assert run.code == 0, run.output
     assert "[activation]" not in run.output
     assert not any(f"token={NARROW_STANDIN} " in line for line in run.logs["bws"])
 
 
-def test_the_keychain_is_read_only_after_the_container_block() -> None:
-    """The container block exits, so every Keychain read after its closing `fi` is the Mac's."""
-    lines = LAUNCHER.read_text().splitlines()
-    block = lines.index('if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then')
-    end = lines.index("fi", block)
-    assert lines[end - 1].strip() == 'exit "$rc"'
-    keychain = [
-        i
-        for i, line in enumerate(lines)
-        if not line.lstrip().startswith("#") and "/usr/bin/security" in line
-    ]
-    assert len(keychain) == 2
-    assert all(end < i for i in keychain)
-
-
 @pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
-def test_on_the_mac_nothing_is_minted_or_cloned_and_the_checkouts_are_its_own(
+def test_outside_the_container_it_refuses_and_reads_and_runs_nothing(
     tmp_path: Path, args: tuple[str, ...]
 ) -> None:
-    run = _run(
-        tmp_path,
-        *args,
-        BWS_ACCESS_TOKEN=None,
-        BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN,
-        ROTATION_PROPOSER_STATE_DIR=None,
-        **dict.fromkeys(FENCE),
+    run = _run(tmp_path, *args, BWS_ACCESS_TOKEN=None)
+    assert run.code == 1, run.output
+    assert (
+        "FATAL: no BWS_ACCESS_TOKEN: the rotation-proposer lane runs only in its container,"
+        " through lane-run" in run.result.stderr
     )
-    assert run.code == 0, run.output
-    assert run.lines("mint") == [] and run.clone_lines() == []
-    assert "[activation]" in run.output
-    env = run.env()
-    assert env["BUMP_PROPOSER_PACKAGES_CHECKOUT"] == f"{tmp_path}/home/Projects/intent-packages"
-    assert env["ROTATION_PROPOSER_INFRAOPS_CHECKOUT"] == (
-        f"{tmp_path}/home/Projects/infraops-mcp-server"
-    )
-    for name in (
-        "BUMP_PROPOSER_PACKAGES_PYTHON",
-        "PYTHONPATH",
-        "SECURITY_STANDARDS_DIR",
-        "XDG_CACHE_HOME",
-        *FENCE,
-    ):
-        assert name not in env
-    assert not any(name.startswith("GIT_CONFIG") for name in env)
-    reads = {line.split()[0]: line.split("token=", 1)[1].split()[0] for line in run.logs["bws"]}
-    assert PUSH_APP_KEY_UUID not in reads
-    if args:
-        assert reads[PROPOSE_UUID] == BROAD_STANDIN
-        assert reads[OBSERVER_UUID] == NARROW_STANDIN
-        assert reads[ALERT_UUID] == NARROW_STANDIN
-    else:
-        assert set(reads) == {HEALTHCHECKS_KEY_UUID}
-
-
-# Every variable the Mac's branch hands `rotation-proposer`, from what launchd passes plus what the
-# test harness adds; none of infraops' two settings, so `cred-findings` reads
-# `~/.config/infra-drift` (infraops `paths.ts`).
-MAC_PROGRAM_ENV = {
-    "PATH",
-    "HOME",
-    "PWD",
-    "SHLVL",
-    "_",
-    "BWS_ACCESS_TOKEN_BROAD",
-    "BWS_ACCESS_TOKEN_SDS",
-    "SDS_DEADMAN_PING_URL_UUID",
-    "ROTATION_PROPOSER_CLONE_ROOT",
-    "LANE_LOG",
-    "BWS_LOG",
-    "PING_LOG",
-    "GIT_LOG",
-    "BUMP_PROPOSER_PACKAGES_CHECKOUT",
-    "ROTATION_PROPOSER_INFRAOPS_CHECKOUT",
-}
-MAC_SUBMIT_ENV = {
-    "ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN",
-    "ORCHESTRATOR_API_URL",
-    "ORCHESTRATOR_API_CREDENTIAL_KEY_ID",
-    "ORCHESTRATOR_API_TOKEN",
-    "SDS_BRIDGE_ALERT_TOKEN",
-}
-
-
-@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
-def test_the_mac_branchs_environment_and_arguments_are_unchanged(
-    tmp_path: Path, args: tuple[str, ...]
-) -> None:
-    """The Mac's 06:30 pass runs this launcher from the main tree: it hands the program exactly the
-    variables it handed before the container's list existed, no infraops setting among them, the
-    launcher's own arguments, and clones and writes nothing."""
-    run = _run(
-        tmp_path,
-        *args,
-        BWS_ACCESS_TOKEN=None,
-        BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN,
-        ROTATION_PROPOSER_STATE_DIR=None,
-        **dict.fromkeys(FENCE),
-    )
-    assert run.code == 0, run.output
-    assert set(run.env()) == MAC_PROGRAM_ENV | (MAC_SUBMIT_ENV if args else set())
-    assert [line for line in run.logs["lane"] if line.startswith("proposer args=")] == [
-        f"proposer args={' '.join(args)}"
-    ]
-    assert run.lines("proposer-list") == [] and run.clone_lines() == []
-    assert not (tmp_path / "infra-drift-config").exists()
-    assert not run.clones.exists()
+    assert run.logs["bws"] == [] and run.logs["ping"] == [] and run.logs["git"] == []
+    assert run.lines("proposer") == [] and run.lines("mint") == []
 
 
 SWITCH = "ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER"
@@ -690,25 +597,6 @@ def test_the_container_always_turns_on_the_findings_for_credentials_not_handed_o
     run = _run(tmp_path, *args, **{SWITCH: inherited})
     assert run.code == 0, run.output
     assert run.env()[SWITCH] == "1"
-
-
-@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
-@pytest.mark.parametrize("inherited", [None, "1"], ids=["unset", "on"])
-def test_on_the_mac_the_findings_switch_never_reaches_the_program(
-    tmp_path: Path, args: tuple[str, ...], inherited: str | None
-) -> None:
-    """The Mac's 03:00 infra-drift scan still files these as change-manager items."""
-    run = _run(
-        tmp_path,
-        *args,
-        BWS_ACCESS_TOKEN=None,
-        BWS_ACCESS_TOKEN_SDS=NARROW_STANDIN,
-        ROTATION_PROPOSER_STATE_DIR=None,
-        **dict.fromkeys(FENCE),
-        **{SWITCH: inherited},
-    )
-    assert run.code == 0, run.output
-    assert SWITCH not in run.env()
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -750,24 +638,18 @@ def test_every_compose_variable_lane_run_must_pass_is_in_its_list() -> None:
     assert "ROTATION_PROPOSER_CLONE_ROOT" not in listed
 
 
-def test_the_crontab_runs_a_submitting_pass_daily_at_06_31_beside_the_mac_jobs_06_30() -> None:
+def test_the_crontab_runs_a_submitting_pass_daily_at_06_31() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["31 6 * * * lane-run rotation-proposer --submit"]
-    plist = PLIST.read_text()
-    assert "<key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-rotation-proposer.sh</string>\n" in plist
-    assert "<string>--submit</string>" in plist
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
     minutes = lane_start_minutes()
     assert minutes["rotation-proposer"] == {31}
-    # 30, the Mac job's minute, is execution-watch's.
-    assert 30 in minutes["execution-watch"]
     for lane, taken in minutes.items():
         if lane != "rotation-proposer":
             assert 31 not in taken, lane

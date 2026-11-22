@@ -1,122 +1,42 @@
-"""`scripts/run-rotation-proposer.sh` refuses a linked worktree before it reads anything.
-
-A pass commits to and publishes from the packages checkout every lane shares, so one started from a
-build worktree would run unmerged code against it. Like the installer tests, nothing here runs the
-real launcher in a real tree: it is copied, with its helpers, into a throwaway repository and its
-linked worktree, with HOME pointed at a temporary directory.
-"""
+"""`scripts/run-rotation-proposer.sh` runs only in the lane's container and refuses elsewhere."""
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
 LAUNCHER = Path("scripts/run-rotation-proposer.sh")
-HELPERS = ("sds-install.sh", "sds-deadman.sh", "sds-bws.sh")
 
 
-def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", *args],
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-    )
-
-
-@pytest.fixture
-def trees(tmp_path: Path) -> tuple[Path, Path]:
-    """A throwaway main tree and a linked worktree of it."""
-    main = tmp_path / "main"
-    main.mkdir()
-    _git(main, "init", "-q", "-b", "main")
-    (main / "README").write_text("x\n")
-    _git(main, "add", "README")
-    _git(main, "commit", "-q", "-m", "init")
-    linked = tmp_path / "linked"
-    _git(main, "worktree", "add", "-q", str(linked), "-b", "side")
-    return main, linked
-
-
-def _run(root: Path, tmp_path: Path, **extra: str) -> subprocess.CompletedProcess[str]:
-    (root / "scripts").mkdir(exist_ok=True)
-    shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
-    for helper in HELPERS:
-        shutil.copy(Path("scripts") / helper, root / "scripts" / helper)
-    home = tmp_path / "home"
-    home.mkdir(exist_ok=True)
-    # `--dry-run` keeps the dead-man switch from arming, so no case here reaches the Keychain.
-    return subprocess.run(
-        ["/bin/bash", str(root / "scripts" / LAUNCHER.name), "--dry-run"],
-        env={"PATH": "/usr/bin:/bin", "HOME": str(home), **extra},
+def test_outside_the_container_it_refuses_and_reads_nothing(tmp_path: Path) -> None:
+    """No `BWS_ACCESS_TOKEN` and no program on PATH: it exits 1 with the FATAL line, so no secret
+    was read and no program ran (a missing program would have said so instead)."""
+    result = subprocess.run(
+        ["/bin/bash", str(LAUNCHER.resolve()), "--submit"],
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
         capture_output=True,
         text=True,
         check=False,
     )
-
-
-def test_the_refusal_comes_before_any_credential_or_switch() -> None:
-    lines = LAUNCHER.read_text().splitlines()
-    call = lines.index('  sds_refuse_linked_worktree "$REPO_ROOT"')
-    assert lines.index('source "$REPO_ROOT/scripts/sds-install.sh"') < call
-    # The check runs on the Mac alone: a set `BWS_ACCESS_TOKEN` is the lane's container.
-    assert lines[call - 1] == 'if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then'
-    assert lines[call + 1] == "fi"
-    for later in ("sds_deadman_arm ", "sds_bws_value ", "find-generic-password", ".venv/bin/"):
-        first = next(i for i, line in enumerate(lines) if later in line and "#" not in line[:2])
-        assert call < first, later
-
-
-def test_run_from_a_linked_worktree_it_refuses(trees, tmp_path) -> None:
-    _main, linked = trees
-    result = _run(linked, tmp_path)
     assert result.returncode == 1
-    assert "is a linked worktree" in result.stderr
-
-
-def test_control_from_a_main_tree_it_gets_past_the_refusal(trees, tmp_path) -> None:
-    """Without this, a launcher that refused EVERY tree would pass the case above."""
-    main, _linked = trees
-    result = _run(main, tmp_path)
-    assert "linked worktree" not in result.stderr
-    assert result.returncode == 1
-    assert "no rotation-proposer" in result.stderr
-
-
-def test_in_the_lanes_container_it_skips_the_refusal(trees, tmp_path) -> None:
-    """A set `BWS_ACCESS_TOKEN` is the container, whose `/app` is no checkout: the pass goes on to
-    the container block, whose fence stops it (exit 2) for want of infraops' directories. Run from
-    a linked worktree so that a check that still ran would refuse, and be seen."""
-    _main, linked = trees
-    result = _run(linked, tmp_path, BWS_ACCESS_TOKEN="placeholder-lane-token")
-    assert "linked worktree" not in result.stderr
-    assert result.returncode == 2
-    assert "INFRADRIFT_CONFIG_DIR is not set" in result.stderr
+    assert (
+        "the rotation-proposer lane runs only in its container, through lane-run" in result.stderr
+    )
+    assert "no rotation-proposer" not in result.stderr
 
 
 def test_the_launcher_reads_the_bridge_token_only_on_submit() -> None:
-    """Twice: the Mac's fetch under its narrow identity, and the container's with the lane's token
-    (`test_run_rotation_proposer_lane.py` runs that one). Each sits inside a `--submit` gate."""
+    """The container's fetch, with the lane's token (`test_run_rotation_proposer_lane.py` runs it),
+    sits inside the `--submit` gate."""
     lines = LAUNCHER.read_text().splitlines()
     gate = 'if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then'
     fetch = [i for i, line in enumerate(lines) if 'sds_bws_value "$SDS_BRIDGE_ALERT_UUID"' in line]
-    assert len(fetch) == 2
-    for at in fetch:
-        block = max(i for i, line in enumerate(lines[:at]) if line.strip() == gate)
-        indent = lines[block][: len(lines[block]) - len(lines[block].lstrip())]
-        assert lines.index(f"{indent}fi", block) > at
-    container, mac = fetch
-    assert lines[container].strip() == (
-        'SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"'
-    )
-    block = max(i for i, line in enumerate(lines[:mac]) if line == gate)
-    end = lines.index("fi", block)
-    assert 'sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY"' in lines[mac]
-    assert "export SDS_BRIDGE_ALERT_TOKEN" in lines[mac + 1]
-    assert "unset BROAD_IDENTITY SDS_IDENTITY" in lines[end - 1]
+    assert len(fetch) == 1
+    at = fetch[0]
+    block = max(i for i, line in enumerate(lines[:at]) if line.strip() == gate)
+    indent = lines[block][: len(lines[block]) - len(lines[block].lstrip())]
+    assert lines.index(f"{indent}fi", block) > at
+    assert lines[at].strip() == 'SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"'
 
 
 def test_the_launcher_keeps_the_finding_exit_code_and_the_manifest_uuid() -> None:

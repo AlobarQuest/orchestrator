@@ -219,15 +219,12 @@ expiry, stage by hand.
 
 After Devon approves a rotation's change record and the work carrier registers its intake, the
 `rotation-decomposer` lane proposes its decomposition (`src/rotation_decomposer/`, ADR-0055
-amendment 15, increment 5). The orchestrator approves it by policy as it is proposed when every
-unit is a rotation unit the rotation pattern recognises (amendment 16), so the package revision is
-a rotation's one click; a proposal it doesn't approve waits for a person on `/review`. The lane runs hourly (`com.devon.rotation-decomposer`, installed by
-`scripts/install-rotation-decomposer-launchd.sh` from the main tree) and logs to
-`~/Library/Logs/rotation-decomposer.log`. Its Healthchecks check, `sds-rotation-decomposer`, is an
-outcome alarm: every non-zero exit pings `/fail` with the report. Its container lane
-(`lanes/rotation-decomposer/`, ADR-0059 increment 4) runs the same launcher with the lane's own BWS
-token; until its cut-over the Mac job is the lane (`docs/operations/deploy.md`, "Registered
-lanes").
+amendment 15, increment 5). The orchestrator approves it by policy as it is proposed when every unit
+is a rotation unit the rotation pattern recognises (amendment 16), so the package revision is a
+rotation's one click; a proposal it doesn't approve waits for a person on `/review`. The lane runs
+hourly in its container (`lanes/rotation-decomposer/`, ADR-0059 increment 4), with the lane's own
+BWS token. Its Healthchecks check, `sds-rotation-decomposer`, is an outcome alarm: every non-zero
+exit pings `/fail` with the report.
 
 Each pass reads change-manager's `work` records with the READ bearer. For each approved record
 naming a standing rotation package, it asks the orchestrator what work the record caused
@@ -248,7 +245,7 @@ alone:
 | `unread` | A record, the orchestrator, the registry or the member record (or one with no rows) couldn't be read | 3 |
 
 To see what a pass would do without proposing anything, run
-`/bin/bash scripts/run-rotation-decomposer.sh --dry-run`.
+`lane-run rotation-decomposer --dry-run` in the lane's container.
 
 ## Decompose a rotation
 

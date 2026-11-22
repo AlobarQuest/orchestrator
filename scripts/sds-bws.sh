@@ -2,8 +2,7 @@
 # Read one secret's value out of Bitwarden Secrets Manager: the ONE copy every script here uses.
 # It also holds the one reader of the factory-events chain switch (the last section).
 # Every launcher that fetches a secret sources it, and so do `sds-deadman.sh` (the Healthchecks key
-# read, which reaches every `scripts/run-*.sh`), `sds-install.sh` and the installers that read a
-# secret.
+# read, which reaches every `scripts/run-*.sh`) and `sds-install.sh`.
 #
 # Source this (don't execute it):
 #     source "$REPO_ROOT/scripts/sds-bws.sh"
@@ -25,11 +24,12 @@
 #
 # THE TWO-ARGUMENT FORM IS KEYED ON THE ARGUMENT COUNT, NOT ON WHETHER THE SECOND IS EMPTY.
 # `BWS_ACCESS_TOKEN=""` for one fetch is a different request from inheriting the ambient token, and
-# the launchers that read both identities (`grep -l BWS_ACCESS_TOKEN_VPS_BACKUP scripts/run-*.sh`)
-# pass the second argument precisely so that one ambient value can never serve both
-# (docs/operations/credentials.md #175, "sds-token.sh RESPECTS an already-set BWS_ACCESS_TOKEN").
-# So this helper is identity-agnostic on purpose, and it does NOT source `sds-token.sh`: that helper
-# reads the Keychain and exports as a side effect, which those launchers deliberately avoid.
+# a Mac script that reads a second identity (`sds-deadman.sh`'s name lookup and `sds-install.sh`,
+# each with the broad one) passes it as the second argument precisely so that one ambient value can
+# never serve both (docs/operations/credentials.md #175, "sds-token.sh RESPECTS an already-set
+# BWS_ACCESS_TOKEN"). So this helper is identity-agnostic on purpose, and it does NOT source
+# `sds-token.sh`: that helper reads the Keychain and exports as a side effect, which those scripts
+# deliberately avoid.
 #
 # THE COLOUR GUARD. FORCE_COLOR / CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI
 # escapes even when stdout is a pipe. Both are unset for the call AND `--color no` is passed, so

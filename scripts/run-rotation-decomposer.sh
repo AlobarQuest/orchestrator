@@ -27,23 +27,16 @@
 #     report and never changes the exit code;
 #   - the change-manager READ bearer (BWS `314f276d-…`), on every pass.
 #
-# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 4). A set `BWS_ACCESS_TOKEN` means the lane's
-# container: `lane-run` passes the lane's own token as its one secret, and all three secrets are
-# read with it, in the environment, never as a process argument, and no Keychain item is read.
-# Without it this is the Mac's launchd job, unchanged until increment 6: the SYSTEM bearer and the
-# sender token through the narrow `sds-operator` identity and the READ bearer through the broad one,
-# each identity read straight from its own Keychain item into its own variable, never an ambient
-# `BWS_ACCESS_TOKEN` (the two-identity rule, docs/operations/credentials.md). Either way the BWS
-# token is unset before the program runs, which needs none. No GitHub credential on either host:
-# the program calls no GitHub API, and its registry mirrors fetch the four public registry
-# repositories anonymously (`rotation_worker/git_mirror.py`, ADR-0059 decision 1). In the container
-# they sit under `lane-run`'s new `HOME`, so each pass refetches them. The container runs the
-# image's own code, so activation is the Mac's alone.
+# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4). `lane-run` passes the lane's own token as its
+# one secret as `BWS_ACCESS_TOKEN`, and all three secrets are read with it, in the environment,
+# never as a process argument. The BWS token is unset before the program runs, which needs none.
+# Outside the container the launcher refuses. No GitHub credential: the program calls no GitHub
+# API, and its registry mirrors fetch the four public registry repositories anonymously
+# (`rotation_worker/git_mirror.py`, ADR-0059 decision 1). They sit under `lane-run`'s new `HOME`,
+# so each pass refetches them.
 #
 # Usage:
 #   scripts/run-rotation-decomposer.sh [--dry-run]
-# Install as a scheduled job with:
-#   scripts/install-rotation-decomposer-launchd.sh
 set -uo pipefail
 
 CHECK_NAME="sds-rotation-decomposer"
@@ -52,21 +45,12 @@ CHANGE_MANAGER_READ_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"   # change-manag
 SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"       # sds-bridge alert-hub sender token
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# ACTIVATION: these launchers run the working copy, so a merged change is live here only once it
-# is pulled. Best-effort: the helper prints one `[activation]` line and returns 0 whatever it finds.
-# Skipped in the container, which has no `activate-checkout.sh`, rather than logged as missing.
+
+# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
+# armed here, the switch would ping the production check.
 if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-    _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-    if [ -r "$_SDS_ACTIVATE" ]; then
-        # shellcheck source=/dev/null
-        . "$_SDS_ACTIVATE"
-    else
-        activate_checkout() {
-            echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-                 "this run is not activated"
-        }
-    fi
-    activate_checkout "$REPO_ROOT" "$0" "$@"
+  echo "FATAL: no BWS_ACCESS_TOKEN: the rotation-decomposer lane runs only in its container, through lane-run" >&2
+  exit 1
 fi
 
 _acting=1
@@ -79,25 +63,11 @@ sds_outcome_begin "$CHECK_NAME" rotation-decomposer "$_acting"
 
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-  # THE CONTAINER. Each read takes the lane's one token from the environment (`sds_bws_value` with
-  # one argument), so it never appears in a process argument.
-  _narrow_secret() { sds_bws_value "$1"; }
-  _broad_secret() { sds_bws_value "$1"; }
-  FROM=" (the lane's token)"
-else
-  NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  [ -n "$NARROW_IDENTITY" ] || sds_outcome_fail \
-      "FATAL: no BWS identity for the orchestrator credential (Keychain Claude/BWS_ACCESS_TOKEN_SDS)"
-  BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-  [ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
-      "FATAL: no BWS identity for the change-manager credential (Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP)"
-  _narrow_secret() { sds_bws_value "$1" "$NARROW_IDENTITY"; }
-  _broad_secret() { sds_bws_value "$1" "$BROAD_IDENTITY"; }
-  FROM=""
-fi
+# Each read takes the lane's one token from the environment (`sds_bws_value` with one argument), so
+# it never appears in a process argument.
+_narrow_secret() { sds_bws_value "$1"; }
+_broad_secret() { sds_bws_value "$1"; }
+FROM=" (the lane's token)"
 CHANGE_MANAGER_TOKEN="$(_broad_secret "$CHANGE_MANAGER_READ_UUID")"
 [ -n "$CHANGE_MANAGER_TOKEN" ] || sds_outcome_fail \
     "FATAL: could not read the change-manager READ credential from BWS$FROM"
@@ -110,7 +80,6 @@ if [ "$_acting" -eq 1 ]; then
       "FATAL: could not read the sds-bridge alert sender token from BWS$FROM"
   export SDS_BRIDGE_ALERT_TOKEN
 fi
-unset NARROW_IDENTITY BROAD_IDENTITY
 # The program needs no BWS identity, so the lane's token never reaches it.
 unset BWS_ACCESS_TOKEN
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"

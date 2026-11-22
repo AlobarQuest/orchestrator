@@ -708,10 +708,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### The bump driver (Landing Part 4)
 
-`bump-driver` (`src/bump_driver/`, `scripts/run-bump-driver.sh`, hourly at :50, log
-`~/Library/Logs/bump-driver.log`, Healthchecks check `sds-bump-driver`, an outcome alarm) moves
-standing dependency-update work as SYSTEM with no person acting. Verification stays with the
-`unit-verifier` lane, as VERIFIER. Check it with `/bin/bash scripts/run-bump-driver.sh --dry-run`.
+`bump-driver` (`src/bump_driver/`, `scripts/run-bump-driver.sh`, hourly at :51 in its container,
+`lanes/bump-driver/`, Healthchecks check `sds-bump-driver`, an outcome alarm) moves standing
+dependency-update work as SYSTEM with no person acting. Verification stays with the
+`unit-verifier` lane, as VERIFIER. Check it with `lane-run bump-driver --dry-run` in the lane's
+container.
 
 - **What it reads.** `work` records whose `change_class` is `dependency-update`, in a repository the
   member record grants `dependency_updates`, whose revision is a standing package's. It reads
@@ -796,19 +797,15 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   `--no-execute` the intent-packages checkout doesn't know is a refusal like any other, so that
   checkout must be current.
 - **Deploying the orchestrator.** `deploy_orchestrator.py` refuses while a unit is live or a dispatch
-  is unclaimed, and this lane can start one at :50, so deploy away from :50.
+  is unclaimed, and this lane can start one at :51, so deploy away from :51.
 
 #### Stop it
 
-One move stops decompose, dispatch and merge together, with no restart:
-
-```
-launchctl bootout "gui/$(id -u)/com.devon.bump-driver"
-rm ~/Library/LaunchAgents/com.devon.bump-driver.plist
-```
-
-Remove the plist too: `bootout` alone comes back at the next login or reboot. Runs already in flight
-finish and park at `completed`, and nothing lands them while the lane is gone.
+One move stops decompose, dispatch and merge together, with no restart: turn the lane's schedule
+off with the deploy command's lane phase, `lanes-prepare --lane bump-driver --schedule false`
+(`docs/operations/deploy.md`, "The lane phases"). The Mac job's `launchctl bootout` and the removal
+of its plist were done at the lane's cut-over (ADR-0059 increment 5). Runs already in flight finish
+and park at `completed`, and nothing lands them while the lane is stopped.
 
 The environment switches (`ORCHESTRATOR_BUMP_MERGE_ENABLED=false`,
 `ORCHESTRATOR_DISPATCH_ENABLED=false`) hold across restarts, but they need a restart to apply, and

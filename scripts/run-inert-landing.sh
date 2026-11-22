@@ -30,9 +30,9 @@
 #
 # TWO BWS IDENTITIES, and neither can do the other's half. The orchestrator bearer lives in a
 # project only the narrow `sds-operator` account can read, and the change-manager bearer in one
-# only the broad machine account can. A launcher bootstrapping with either alone dies on the
-# other's fetch. The GitHub token is neither: it comes from `gh auth token`, exactly as the two
-# proposers' and the ledger's do, and has no BWS record.
+# only the broad machine account can. The lane's container reads each through the secrets broker's
+# socket. The GitHub token is neither: it is minted from the read-only App (below) and has no BWS
+# record.
 #
 # UNTIL THE ORCHESTRATOR SERVES THIS LANE'S ROUTES, EVERY PASS REPORTS `unreadable` AND EXITS 3.
 # They are merged and undeployed, and a route the deployed image does not serve answers 404 --
@@ -58,33 +58,29 @@
 # NOTHING HERE DECIDES ANYTHING. Every term is evaluated by the orchestrator, inside the
 # transaction that records the act. This script asks it two questions and relays the answers.
 #
-# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 5, step 3g-1). `sds_in_lane_container` means the
-# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
-# (ADR-0055 amendment 30), or passes a lane's own token as its one secret, and the Mac's launchd
-# job sets neither. There the launcher skips activation (the container runs the image's own code),
-# reads no Keychain item and calls no `gh`, and reads every secret through the socket, or with that
-# one token in the environment, never as a process argument. The broker serves this lane only the
-# UUIDs its allowlist lists (`lanes/secrets-broker/allowlist.toml`), exactly these:
+# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 5, step 3g-1). `sds_in_lane_container` means the lane's container: `lane-run` names the secrets
+# broker's mounted socket in `SDS_SECRETS_SOCKET` (ADR-0055 amendment 30), or passes a lane's own
+# token as its one secret. The container runs the image's own code, and the launcher reads every
+# secret through the socket, or with that one token in the environment, never as a process
+# argument. The broker serves this lane only the UUIDs its allowlist lists
+# (`lanes/secrets-broker/allowlist.toml`), exactly these:
 #   - every pass: the change-manager READ bearer (`314f276d-…`), the orchestrator SYSTEM bearer
 #     (`221a48d5-…`) and the read-only App's key (`314a966c-…`, piped straight into the mint);
-#   - `--submit` only: the `sds-bridge` alert sender (`b415d03b-…`), as on the Mac.
-# It mints `INERT_LANDING_GITHUB_TOKEN` from the read-only App, in place of `gh auth token`, for
+#   - `--submit` only: the `sds-bridge` alert sender (`b415d03b-…`).
+# It mints `INERT_LANDING_GITHUB_TOKEN` from the read-only App, for
 # exactly the repositories `inert-landing repositories` prints: the landing policy's inert
 # population, the only repositories a pass lists pull requests in. The token carries `metadata` and
 # `pull_requests`, read, and nothing else; this lane lands through the orchestrator's dispatch App,
 # never with it. It unsets `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` before the lander runs. The
 # socket itself stays reachable, as the design accepts: the lander already runs as the same user.
-# The ping-URL secret the dead-man helper reads is the compose's. The bare run, the exit codes
-# and the dead-man switch are the Mac's. The container block runs the whole pass and exits, so
-# everything after it is the Mac's launchd job, unchanged until increment 6.
-# Exit 1 there also covers a failed mint; exit 2 also covers a landing policy the repository list
+# The ping-URL secret the dead-man helper reads is the compose's. Outside the container the
+# launcher refuses with exit 1.
+# Exit 1 also covers a failed mint; exit 2 also covers a landing policy the repository list
 # couldn't be read from.
 #
 # Usage:
 #   scripts/run-inert-landing.sh              # reports; asks for nothing
 #   scripts/run-inert-landing.sh --submit     # asks for the landings that are admissible
-# Install as a scheduled job with:
-#   scripts/install-inert-landing-launchd.sh
 set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo).
@@ -108,44 +104,28 @@ READ_APP_ID="5684758"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
-# which breaks the parse below. Sourced before activation, whose host test is its
-# `sds_in_lane_container`.
+# which breaks the parse below.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
-# ACTIVATION — a merged change is not live on this machine until the code is pulled, and this
-# program runs from a working copy here rather than from a deployed image (orchestrator ADR-0031).
-# Best-effort by construction: the helper prints one `[activation]` line and returns 0 whatever it
-# finds, so this job is never gated on being able to update itself. It re-execs this script when
-# HEAD moves, because bash reads a script incrementally by byte offset and the file it just
-# rewrote is this one.
-# Skipped in the container, which runs the image's own code and has no `activate-checkout.sh`.
+
+# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
+# armed here, the switch would ping the production check.
 if ! sds_in_lane_container; then
-  _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-  if [ -r "$_SDS_ACTIVATE" ]; then
-      # shellcheck source=/dev/null
-      . "$_SDS_ACTIVATE"
-  else
-      activate_checkout() {
-          echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-               "this run is not activated"
-      }
-  fi
-  activate_checkout "$REPO_ROOT" "$0" "$@"
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the inert-landing lane runs only in its container, through lane-run" >&2
+  exit 1
 fi
 
-# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
-# reach nobody: a pass that stops running, or that fails every hour, is silent. Armed AFTER
-# activation, because `activate_checkout` may `exec` and an `exec` does not fire an EXIT handler.
-# It reports and never gates — every failure inside it logs a line and returns 0. The check
-# `sds-inert-landing` must exist in Healthchecks; until it does, arming logs one line naming that
-# and this lane runs unalerted.
+# THE DEAD-MAN SWITCH. The codes documented above reach nobody on a scheduled run: a pass that
+# stops running, or that fails every hour, is silent. It reports and never gates — every failure
+# inside it logs a line and returns 0. The check `sds-inert-landing` must exist in Healthchecks;
+# until it does, arming logs one line naming that and this lane runs unalerted.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-inert-landing --finding 3 "$@"
 
 
 # ---- THE LANE'S CONTAINER (ADR-0059 increment 5, step 3g-1) -----------------------------------
-# See "TWO HOSTS, ONE LAUNCHER" in the header. Every read is `sds_bws_value` with one argument:
+# See "THE LANE RUNS ONLY IN ITS CONTAINER" in the header. Every read is `sds_bws_value` with one argument:
 # through the broker's socket, or with the lane's one token from the environment, so no token
 # appears in a process argument, and each secret is always read, never taken from the environment.
 # Every failure names itself and exits with the code the header gives it; the dead-man switch,
@@ -215,7 +195,7 @@ if sds_in_lane_container; then
   fi
   export INERT_LANDING_ORCHESTRATOR_TOKEN
 
-  # THE ALERT TOKEN IS READ ONLY FOR A SUBMITTING RUN, the only one that sends, as on the Mac.
+  # THE ALERT TOKEN IS READ ONLY FOR A SUBMITTING RUN, the only one that sends.
   case " $* " in
     *" --submit "*)
       SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
@@ -233,79 +213,3 @@ if sds_in_lane_container; then
   rc=$?
   exit "$rc"
 fi
-
-# THE MAC FROM HERE ON: the container block above exits. These two checks test the token itself,
-# not `sds_in_lane_container`, because the token IS the Mac's narrow identity: a socket's marker
-# must never pass for it and hand an empty identity to the two-argument reads below.
-# SOURCED, not executed. `sds-token.sh` EXPORTS the value and prints nothing — its own header says
-# so — so command-substituting it yields the empty string and every fetch below fails with a
-# message about a missing environment variable rather than about a missing token.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  # shellcheck disable=SC1091
-  source "$REPO_ROOT/scripts/sds-token.sh"
-fi
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: BWS_ACCESS_TOKEN not available for the orchestrator credential" >&2
-  exit 1
-fi
-SDS_IDENTITY="$BWS_ACCESS_TOKEN"
-
-# The broad machine account, for the change-manager project alone. Read into a DISTINCT variable
-# rather than exported: `sds-token.sh` above respects an already-set `BWS_ACCESS_TOKEN`, so one
-# ambient value would silently become both identities and no value of it works — the narrow one
-# is denied the change-manager project and the broad one the orchestrator's.
-BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-  -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-if [ -z "$BROAD_IDENTITY" ]; then
-  echo "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)" >&2
-  exit 1
-fi
-
-if [ -z "${INERT_LANDING_CHANGE_MANAGER_TOKEN:-}" ]; then
-  INERT_LANDING_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
-  export INERT_LANDING_CHANGE_MANAGER_TOKEN
-fi
-if [ -z "${INERT_LANDING_ORCHESTRATOR_TOKEN:-}" ]; then
-  INERT_LANDING_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
-  export INERT_LANDING_ORCHESTRATOR_TOKEN
-fi
-
-# THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the two proposers' and the ledger's do not.
-# It is the operator's own `gh` login, which is a real dependency worth naming: it breaks the
-# moment the login is re-issued, and nothing would say so but this script's exit 1.
-if [ -z "${INERT_LANDING_GITHUB_TOKEN:-}" ]; then
-  INERT_LANDING_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
-  export INERT_LANDING_GITHUB_TOKEN
-fi
-
-# `set -e` is deliberately not used, so a failed fetch would otherwise leave these EMPTY and fall
-# through — into an exit 2 that reports "unusable input" for what is actually a credential
-# failure. Name each here, so the exit code means what this header says it means.
-if [ -z "${INERT_LANDING_CHANGE_MANAGER_TOKEN:-}" ]; then
-  echo "FATAL: could not read the change-manager credential from BWS" >&2
-  exit 1
-fi
-if [ -z "${INERT_LANDING_ORCHESTRATOR_TOKEN:-}" ]; then
-  echo "FATAL: could not read the orchestrator system credential from BWS" >&2
-  exit 1
-fi
-if [ -z "${INERT_LANDING_GITHUB_TOKEN:-}" ]; then
-  echo "FATAL: no GitHub token (set INERT_LANDING_GITHUB_TOKEN or run gh auth login)" >&2
-  exit 1
-fi
-
-# THE ALERT TOKEN IS FETCHED ONLY FOR A SUBMITTING RUN, the only one that sends.
-case " $* " in
-  *" --submit "*)
-    if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
-      SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
-    fi
-    if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
-      echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)" >&2
-      exit 1
-    fi
-    export SDS_BRIDGE_ALERT_TOKEN
-    ;;
-esac
-
-"$REPO_ROOT/.venv/bin/inert-landing" "$@"

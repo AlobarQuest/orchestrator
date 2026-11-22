@@ -912,25 +912,5 @@ def test_an_unset_observer_token_stops_the_pass_and_registers_nothing(
 def test_the_launcher_supplies_the_watchers_github_credential() -> None:
     """A variable the watcher reads and the launcher never exports is a silent `cannot assess`."""
     launcher = Path("scripts/run-work-carrier.sh").read_text(encoding="utf-8")
-    assert "WORK_CARRIER_GITHUB_TOKEN" in launcher
-    assert "gh auth token" in launcher
-
-
-def test_the_launcher_still_runs_without_a_github_credential() -> None:
-    """The read-only invocation is advertised to work anywhere; it must not gain a hard exit.
-
-    Proven by running the launcher's own credential block under an environment with no
-    `gh` on PATH, which is what a machine that never authenticated looks like.
-    """
-    script = Path("scripts/run-work-carrier.sh").read_text(encoding="utf-8")
-    # The Mac branch's block, indented inside it; the container mints its token instead.
-    start = script.index('if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]')
-    block = script[start : script.index("\n  fi\n", start) + len("\n  fi")]
-    result = subprocess.run(
-        ["bash", "-c", f"set -uo pipefail\n{block}\necho rc=$?"],
-        capture_output=True,
-        text=True,
-        env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"},
-    )
-    assert result.returncode == 0
-    assert "rc=0" in result.stdout
+    assert "export WORK_CARRIER_GITHUB_TOKEN" in launcher
+    assert "gh auth token" not in launcher

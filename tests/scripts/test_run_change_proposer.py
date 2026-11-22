@@ -1,9 +1,7 @@
-"""`scripts/run-change-proposer.sh` hands the broad BWS identity to one call and exports nothing.
+"""`scripts/run-change-proposer.sh` in the lane's container, and the lane's files.
 
-The propose keeper is readable only by the broad machine account, and the launcher used to export
-that account's token as `BWS_ACCESS_TOKEN`, so every process it started ran as the broad account.
-Here the real launcher runs from a throwaway tree under only PATH and HOME (launchd's environment),
-with `bws`, `gh`, `curl` and the tool stubbed: no credential is read and nothing leaves the machine.
+The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it, with
+`bws`, `gh`, `curl` and the tools stubbed: no credential is read and nothing leaves the machine.
 """
 
 from __future__ import annotations
@@ -22,76 +20,10 @@ LAUNCHER = Path("scripts/run-change-proposer.sh")
 HELPERS = ("sds-deadman.sh", "sds-bws.sh")
 PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 
-_BWS = """#!/bin/sh
-echo "token=${BWS_ACCESS_TOKEN-<unset>} args=$*" >> "$STUB_LOG"
-printf '%s\\n' '{"id": "x", "key": "k", "value": "stub-secret-value"}'
-"""
-_GH = "#!/bin/sh\necho gh-stub-token\n"
-_CURL = "#!/bin/sh\nexit 0\n"
-_TOOL = """#!/bin/sh
-cm="${CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN-<unset>}"
-echo "bws=${BWS_ACCESS_TOKEN-<unset>} cm=$cm" > "$CHILD_LOG"
-"""
-
 
 def _executable(path: Path, text: str) -> None:
     path.write_text(text)
     path.chmod(0o755)
-
-
-def _run(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], list[str], str]:
-    root = tmp_path / "tree"
-    (root / "scripts").mkdir(parents=True)
-    shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
-    for helper in HELPERS:
-        shutil.copy(Path("scripts") / helper, root / "scripts" / helper)
-    venv = root / ".venv" / "bin"
-    venv.mkdir(parents=True)
-    (venv / "python").symlink_to((Path.cwd() / ".venv" / "bin" / "python").resolve())
-    _executable(venv / "change-proposer", _TOOL)
-    stubs = tmp_path / "stubs"
-    stubs.mkdir()
-    _executable(stubs / "bws", _BWS)
-    _executable(stubs / "gh", _GH)
-    _executable(stubs / "curl", _CURL)
-    home = tmp_path / "home"
-    home.mkdir()
-    env = {
-        "PATH": f"{stubs}:/usr/bin:/bin",
-        "HOME": str(home),
-        "BWS_ACCESS_TOKEN_BROAD": "broad-stub",
-        "BWS_ACCESS_TOKEN_SDS": "narrow-stub",
-        "STUB_LOG": str(tmp_path / "bws.log"),
-        "CHILD_LOG": str(tmp_path / "child.log"),
-    }
-    result = subprocess.run(
-        ["/bin/bash", str(root / "scripts" / LAUNCHER.name), *args],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    bws_log = tmp_path / "bws.log"
-    calls = bws_log.read_text().splitlines() if bws_log.exists() else []
-    child = (tmp_path / "child.log").read_text().strip()
-    return result, calls, child
-
-
-def test_a_submitting_run_reads_the_keeper_as_the_broad_account_and_exports_no_identity(
-    tmp_path: Path,
-) -> None:
-    result, calls, child = _run(tmp_path, "--submit")
-    assert result.returncode == 0, result.stderr
-    fetch = [call for call in calls if PROPOSE_UUID in call]
-    assert len(fetch) == 1 and fetch[0].startswith("token=broad-stub ")
-    assert child == "bws=<unset> cm=stub-secret-value"
-
-
-def test_a_dry_run_fetches_no_credential(tmp_path: Path) -> None:
-    result, calls, child = _run(tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert not [call for call in calls if PROPOSE_UUID in call]
-    assert child == "bws=<unset> cm=<unset>"
 
 
 # ---- the lane's container (ADR-0059 increment 4) ---------------------------------------------
@@ -110,11 +42,10 @@ MINTED = "minted-installation-token"
 DERIVED = "alobarquest/brain\nalobarquest/change-manager"
 OBSERVER = f"value-of-{OBSERVER_UUID}"
 PROPOSE = f"value-of-{PROPOSE_UUID}"
+SECRET_UUIDS = (PROPOSE_UUID, OBSERVER_UUID, READ_APP_KEY_UUID)
 SECRETS = (LANE_TOKEN, MINTED, OBSERVER, PROPOSE, f"value-of-{READ_APP_KEY_UUID}")
 COMPOSE = Path("lanes/change-proposer/compose.yaml")
 CRONTAB = Path("lanes/change-proposer/crontab")
-PLIST = Path("scripts/com.devon.change-proposer.plist")
-
 # The `bws` stub logs the UUID and the token it was given. A UUID in `$BWS_REFUSES` fails; the
 # ping-URL secret holds `PING_URL`; every other secret `value-of-<uuid>`.
 _LANE_BWS = f"""#!/bin/sh
@@ -369,31 +300,21 @@ def test_the_programs_code_is_the_passs_code(tmp_path: Path, code: int) -> None:
     assert _pings(logs["ping"])[-1] == (PING_URL if code == 0 else f"{PING_URL}/fail")
 
 
-# ---- the Mac, unchanged until increment 6 ----------------------------------------------------
-
-
-def test_on_the_mac_the_reads_are_unchanged_and_nothing_is_derived_or_minted(
-    tmp_path: Path,
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
+def test_outside_the_container_it_refuses_and_reads_and_runs_nothing(
+    tmp_path: Path, args: tuple[str, ...]
 ) -> None:
-    """No lane token: the broad identity reads the propose bearer, the narrow one the observer
-    bearer, and the GitHub token is the operator's `gh` login."""
     result, logs = _lane(
         tmp_path,
-        "--submit",
+        *args,
         BWS_ACCESS_TOKEN="",
-        BWS_ACCESS_TOKEN_BROAD="broad",
-        BWS_ACCESS_TOKEN_SDS="narrow",
-        SDS_DEADMAN_PING_URL_UUID="",
     )
-    assert result.returncode == 0, result.stderr
-    reads = [line for line in logs["bws"] if PROPOSE_UUID in line or OBSERVER_UUID in line]
-    assert reads == [f"{PROPOSE_UUID} token=broad", f"{OBSERVER_UUID} token=narrow"]
-    assert READ_APP_KEY_UUID not in "\n".join(logs["bws"])
-    assert logs["gh"] == ["gh auth token"]
-    assert not any(line.startswith(("derive", "mint", "stdin=")) for line in logs["lane"])
-    assert _passes(logs["lane"]) == [
-        f"pass args=--submit github=gh-token observer={OBSERVER} cm={PROPOSE} lane_token="
-    ]
+    assert result.returncode == 1, result.stderr
+    assert (
+        "FATAL: no BWS_ACCESS_TOKEN: the change-proposer lane runs only in its container, "
+        "through lane-run"
+    ) in result.stdout + result.stderr
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": []}
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -414,21 +335,18 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
         "restart": "unless-stopped",
     }
     assert set(yaml.safe_load(COMPOSE.read_text())) == {"services"}
-    # Stateless (ADR-0059 decision 1): no volume; the outcome alarm's check is the Mac's.
+    # Stateless (ADR-0059 decision 1): no volume.
     assert "change-proposer" not in deploy.STATEFUL_LANES
     assert deploy.LANE_CHECKS["change-proposer"] == "sds-change-proposer"
 
 
-def test_the_crontab_runs_a_submitting_pass_hourly_as_the_mac_job_does() -> None:
+def test_the_crontab_runs_a_submitting_pass_hourly() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["35 * * * * lane-run change-proposer --submit"]
-    plist = PLIST.read_text()
-    assert "<key>StartInterval</key>\n    <integer>3600</integer>" in plist
-    assert "<string>--submit</string>" in plist
 
 
 def test_lane_run_passes_the_submit_flag_through_to_the_launcher(

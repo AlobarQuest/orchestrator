@@ -1,11 +1,10 @@
-"""`scripts/run-unit-verifier.sh` on both hosts (ADR-0059 increment 3): in the lane's container,
-which secrets it reads with the lane's token, the repositories it derives, the GitHub mint's exact
-arguments, that `gh` is never asked, and that a token it can't derive or mint never stops the pass
-but makes it report 3; on the Mac, `sds-token.sh`'s identity and the `gh` login, unchanged. The
-lane's compose and crontab are checked here too.
+"""`scripts/run-unit-verifier.sh` in the lane's container (ADR-0059): which secrets it reads with
+the lane's token, the repositories it derives, the GitHub mint's exact arguments, that `gh` is
+never asked, that a token it can't derive or mint never stops the pass but makes it report 3, and
+that it refuses outside the container. The lane's compose and crontab are checked here too.
 
 The launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's
-token as `BWS_ACCESS_TOKEN` (the container), or nothing and a stand-in `sds-token.sh` (the Mac).
+token as `BWS_ACCESS_TOKEN`.
 `bws`, `gh` and `curl` are stubs on PATH; the venv's `sds-github-mint` and `unit-verifier` are stubs
 that log. Nothing reads the real Keychain, BWS, GitHub, the member record or Healthchecks.
 """
@@ -25,16 +24,12 @@ from scripts import deploy_orchestrator as deploy
 LAUNCHER = Path("scripts/run-unit-verifier.sh")
 COMPOSE = Path("lanes/unit-verifier/compose.yaml")
 CRONTAB = Path("lanes/unit-verifier/crontab")
-PLIST = Path("scripts/com.devon.unit-verifier.plist")
 VERIFIER_UUID = "660d5846-abcb-4751-be86-b483012899eb"
 ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
-# The Healthchecks key the Mac's dead-man lookup by check name reads with the broad identity.
-HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/unit-verifier"
 LANE_TOKEN = "a-lane-token"
-MAC_IDENTITY = "a-mac-identity"
 MINTED = "minted-installation-token"
 REPOSITORIES = "Owner/one\nOwner/two"
 
@@ -55,8 +50,6 @@ exit 1
 """
 # `python -c` is `sds-bws.sh`'s parse and runs for real.
 _PYTHON = '#!/bin/bash\nexec "$REAL_PYTHON" "$@"\n'
-# The Mac's `sds-token.sh`, in place of its Keychain read.
-_SDS_TOKEN = f"BWS_ACCESS_TOKEN={MAC_IDENTITY}\nexport BWS_ACCESS_TOKEN\n"
 # The mint logs its arguments, what reached its stdin, and whether the lane token was in its
 # environment. It prints its token before a refusal, so a launcher that kept a failed mint's output
 # would run the pass on it.
@@ -80,10 +73,6 @@ echo "verifier args=$* github=${ROTATION_VERIFIER_GITHUB_TOKEN:-} bearer=$ORCHES
 alert=${SDS_BRIDGE_ALERT_TOKEN:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
 exit "${FAKE_VERIFIER_RC:-0}"
 """
-# The Mac path: no lane token, so `sds-token.sh` supplies the identity; a stand-in broad identity
-# keeps `/usr/bin/security` from being asked by the dead-man lookup.
-MAC = {"BWS_ACCESS_TOKEN": "", "BWS_ACCESS_TOKEN_BROAD": "broad", "SDS_DEADMAN_PING_URL_UUID": ""}
-
 BEARER = f"value-of-{VERIFIER_UUID}"
 ALERT = f"value-of-{ALERT_UUID}"
 
@@ -94,13 +83,12 @@ def _executable(path: Path, text: str) -> None:
 
 
 def _run(
-    tmp_path: Path, *args: str, gh: str = _GH, **fake: str
+    tmp_path: Path, *args: str, **fake: str
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, list[str]]]:
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
     for name in (LAUNCHER.name, "sds-deadman.sh", "sds-bws.sh"):
         shutil.copy(Path("scripts") / name, root / "scripts" / name)
-    (root / "scripts" / "sds-token.sh").write_text(_SDS_TOKEN)
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
     _executable(venv / "python", _PYTHON)
@@ -108,7 +96,7 @@ def _run(
     _executable(venv / "unit-verifier", _VERIFIER)
     stubs = tmp_path / "stubs"
     stubs.mkdir()
-    for name, body in (("bws", _BWS), ("gh", gh), ("curl", _CURL)):
+    for name, body in (("bws", _BWS), ("gh", _GH), ("curl", _CURL)):
         _executable(stubs / name, body)
     home = tmp_path / "home"
     home.mkdir()
@@ -210,9 +198,11 @@ def test_every_read_uses_the_lanes_one_token_and_gh_is_never_asked(tmp_path: Pat
         assert secret not in result.stdout + result.stderr
 
 
-def test_the_container_skips_activation_rather_than_logging_it_missing(tmp_path: Path) -> None:
-    result, _ = _run(tmp_path)
-    assert "[activation]" not in result.stdout + result.stderr
+def test_outside_the_container_it_refuses_and_runs_and_reads_nothing(tmp_path: Path) -> None:
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
+    assert result.returncode == 1
+    assert "the unit-verifier lane runs only in its container, through lane-run" in result.stderr
+    assert logs["lane"] == logs["bws"] == logs["gh"] == logs["ping"] == []
 
 
 def test_a_preset_github_token_is_replaced_by_the_mint(tmp_path: Path) -> None:
@@ -314,54 +304,11 @@ def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
     assert len(_passes(logs["lane"])) == 1
 
 
-# ---- both hosts ------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("host", ["container", "mac"])
 @pytest.mark.parametrize(("program_exit", "expected"), [(0, 0), (2, 2), (3, 3), (1, 1), (127, 1)])
-def test_exit_codes_fold_as_before(
-    tmp_path: Path, host: str, program_exit: int, expected: int
-) -> None:
-    environment = MAC if host == "mac" else {}
-    result, logs = _run(tmp_path, **environment, FAKE_VERIFIER_RC=str(program_exit))
+def test_exit_codes_fold_as_before(tmp_path: Path, program_exit: int, expected: int) -> None:
+    result, logs = _run(tmp_path, FAKE_VERIFIER_RC=str(program_exit))
     assert result.returncode == expected
     assert len(_passes(logs["lane"])) == 1
-
-
-# ---- the Mac ---------------------------------------------------------------------------------
-
-
-def test_on_the_mac_sds_tokens_identity_and_the_gh_login_and_nothing_is_minted(
-    tmp_path: Path,
-) -> None:
-    """The Mac path, unchanged until increment 6: `sds-token.sh`'s identity reads the bearer and the
-    alert token, and the GitHub token is the operator's `gh` login."""
-    result, logs = _run(tmp_path, **MAC)
-    assert result.returncode == 0, result.stderr
-    assert logs["bws"] == [
-        f"{HEALTHCHECKS_KEY_UUID} token=broad",
-        f"{VERIFIER_UUID} token={MAC_IDENTITY}",
-        f"{ALERT_UUID} token={MAC_IDENTITY}",
-    ]
-    assert logs["gh"] == ["gh auth token"]
-    assert not _minted(logs["lane"])
-    assert _passes(logs["lane"]) == [
-        f"verifier args= github=gh-token bearer={BEARER} alert={ALERT} lane_token=set"
-    ]
-
-
-def test_on_the_mac_a_preset_github_token_is_kept(tmp_path: Path) -> None:
-    result, logs = _run(tmp_path, **MAC, ROTATION_VERIFIER_GITHUB_TOKEN="gh-preset")
-    assert result.returncode == 0, result.stderr
-    assert logs["gh"] == []
-    assert "github=gh-preset" in _passes(logs["lane"])[0]
-
-
-def test_on_the_mac_a_missing_gh_login_still_runs_the_pass(tmp_path: Path) -> None:
-    # A `gh` that prints nothing stands for a missing login: the pass runs, as it always has.
-    result, logs = _run(tmp_path, **MAC, gh='#!/bin/sh\necho "gh $*" >> "$GH_LOG"\n')
-    assert result.returncode == 0
-    assert _passes(logs["lane"])[0].startswith("verifier args= github= ")
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -397,16 +344,13 @@ def test_the_state_variable_reaches_the_launcher_and_names_the_verifiers_directo
     assert alerts.STATE_DIR_ENV in lane_run.STATE_VARIABLES
 
 
-def test_the_crontab_runs_the_pass_every_ten_minutes_as_the_mac_job_does() -> None:
+def test_the_crontab_runs_the_pass_every_ten_minutes() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["2-52/10 * * * * lane-run unit-verifier"]
-    plist = PLIST.read_text()
-    assert "<key>StartInterval</key>\n    <integer>600</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-unit-verifier.sh</string>\n    </array>" in plist
 
 
 def test_no_other_lane_starts_a_pass_in_the_verifiers_minutes() -> None:

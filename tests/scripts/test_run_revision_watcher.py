@@ -1,11 +1,10 @@
-"""`scripts/run-revision-watcher.sh` on both hosts (ADR-0059 increment 3): in the lane's container,
-which secrets it reads with the lane's token, the repositories it derives, the GitHub mint's exact
-arguments, and that `gh` is never asked; on the Mac, the two Keychain identities and the `gh`
-login, unchanged. On both, the alert token is fetched on the acting pass only and the exit codes
-fold as before.
+"""`scripts/run-revision-watcher.sh` (ADR-0059 increment 3): which secrets it reads with the lane's
+token, the repositories it derives, the GitHub mint's exact arguments, and that `gh` is never
+asked; the alert token is fetched on the acting pass only; the exit codes fold; outside the
+container it refuses.
 
 The launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's
-token as `BWS_ACCESS_TOKEN` (the container), or the stand-in Keychain identities (the Mac). `bws`,
+token as `BWS_ACCESS_TOKEN`. `bws`,
 `gh` and `curl` are stubs on PATH; the venv's `python -m scripts.sds_scope`, `sds-github-mint` and
 `revision-watcher` are stubs that log. Nothing reads the real Keychain, BWS, GitHub, the member
 record or Healthchecks.
@@ -27,14 +26,11 @@ from tests.scripts.test_run_unit_verifier import lane_start_minutes
 LAUNCHER = Path("scripts/run-revision-watcher.sh")
 COMPOSE = Path("lanes/revision-watcher/compose.yaml")
 CRONTAB = Path("lanes/revision-watcher/crontab")
-PLIST = Path("scripts/com.devon.revision-watcher.plist")
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 PLATFORM_UUID = "0bf066e9-28c1-4aa7-8c3d-b50300d492a6"  # prod-coolify-read-token
 ESTATE_UUID = "726a18ba-7a38-4ecc-aa03-b49a015fd302"
 ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
-# The Healthchecks key the Mac's dead-man lookup by check name reads with the broad identity.
-HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/revision-watcher"
 LANE_TOKEN = "a-lane-token"
@@ -80,14 +76,6 @@ platform=$REVISION_WATCHER_PLATFORM_TOKEN estate=$REVISION_WATCHER_ESTATE_KEY \\
 alert=${SDS_BRIDGE_ALERT_TOKEN:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
 exit "${FAKE_WATCHER_RC:-0}"
 """
-# The Mac path: no lane token, stand-in Keychain identities so `/usr/bin/security` is never asked.
-MAC = {
-    "BWS_ACCESS_TOKEN": "",
-    "BWS_ACCESS_TOKEN_SDS": "narrow",
-    "BWS_ACCESS_TOKEN_BROAD": "broad",
-    "SDS_DEADMAN_PING_URL_UUID": "",
-}
-
 OBSERVER = f"value-of-{OBSERVER_UUID}"
 PLATFORM = f"value-of-{PLATFORM_UUID}"
 ESTATE = f"value-of-{ESTATE_UUID}"
@@ -162,9 +150,6 @@ def _reached_derivation_or_later(lines: list[str]) -> bool:
     return any(line.startswith(("scope", "mint", "stdin=", "watcher")) for line in lines)
 
 
-# ---- the container ---------------------------------------------------------------------------
-
-
 def test_the_pass_mints_its_github_token_with_exactly_these_arguments(tmp_path: Path) -> None:
     result, logs = _run(tmp_path)
     assert result.returncode == 0, result.stderr
@@ -197,11 +182,6 @@ def test_every_read_uses_the_lanes_one_token_and_gh_is_never_asked(tmp_path: Pat
     assert _pings(logs["ping"]) == [f"{PING_URL}/start", PING_URL]
     for secret in (LANE_TOKEN, MINTED, OBSERVER, PLATFORM, ESTATE, ALERT):
         assert secret not in result.stdout + result.stderr
-
-
-def test_the_container_skips_activation_rather_than_logging_it_missing(tmp_path: Path) -> None:
-    result, _ = _run(tmp_path)
-    assert "[activation]" not in result.stdout + result.stderr
 
 
 def test_a_preset_github_token_is_replaced_by_the_mint(tmp_path: Path) -> None:
@@ -302,75 +282,27 @@ def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
     assert len(_watcher_runs(logs["lane"])) == 1
 
 
-# ---- both hosts ------------------------------------------------------------------------------
+# ---- exit codes ------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("host", ["container", "mac"])
 @pytest.mark.parametrize(("program_exit", "expected"), [(0, 0), (2, 2), (3, 3), (1, 1), (127, 1)])
-def test_exit_codes_fold_as_before(
-    tmp_path: Path, host: str, program_exit: int, expected: int
-) -> None:
-    environment = MAC if host == "mac" else {}
-    result, logs = _run(tmp_path, **environment, FAKE_WATCHER_RC=str(program_exit))
+def test_exit_codes_fold_as_before(tmp_path: Path, program_exit: int, expected: int) -> None:
+    result, logs = _run(tmp_path, FAKE_WATCHER_RC=str(program_exit))
     assert result.returncode == expected
     assert len(_watcher_runs(logs["lane"])) == 1
 
 
-# ---- the Mac ---------------------------------------------------------------------------------
+# ---- outside the container -------------------------------------------------------------------
 
 
-def test_on_the_mac_two_identities_and_the_gh_login_and_nothing_is_minted(tmp_path: Path) -> None:
-    """The Mac path, unchanged until increment 6: the narrow identity reads the observer bearer and
-    the alert token, the broad one the platform token and App Brain's key, and the GitHub token is
-    the operator's `gh` login."""
-    result, logs = _run(tmp_path, **MAC)
-    assert result.returncode == 0, result.stderr
-    assert logs["bws"] == [
-        f"{HEALTHCHECKS_KEY_UUID} token=broad",
-        f"{OBSERVER_UUID} token=narrow",
-        f"{PLATFORM_UUID} token=broad",
-        f"{ESTATE_UUID} token=broad",
-        f"{ALERT_UUID} token=narrow",
-    ]
-    assert logs["gh"] == ["gh auth token"]
-    assert not any(line.startswith(("scope", "mint", "stdin=")) for line in logs["lane"])
-    assert _watcher_runs(logs["lane"]) == [
-        f"watcher args= github=gh-token observer={OBSERVER} platform={PLATFORM} estate={ESTATE}"
-        f" alert={ALERT} lane_token="
-    ]
-
-
-def test_on_the_mac_a_dry_run_fetches_no_alert_token(tmp_path: Path) -> None:
-    result, logs = _run(tmp_path, "--dry-run", **MAC)
-    assert result.returncode == 0, result.stderr
-    assert ALERT_UUID not in "\n".join(logs["bws"])
-    assert _watcher_runs(logs["lane"])[0].startswith("watcher args=--dry-run github=gh-token")
-
-
-def test_on_the_mac_a_preset_github_token_is_kept(tmp_path: Path) -> None:
-    result, logs = _run(tmp_path, **MAC, REVISION_WATCHER_GITHUB_TOKEN="gh-preset")
-    assert result.returncode == 0, result.stderr
-    assert logs["gh"] == []
-    assert "github=gh-preset" in _watcher_runs(logs["lane"])[0]
-
-
-def test_on_the_mac_an_acting_pass_that_cannot_read_the_alert_token_exits_1(
-    tmp_path: Path,
-) -> None:
-    result, logs = _run(tmp_path, **MAC, BWS_REFUSES=ALERT_UUID)
+def test_outside_the_container_it_refuses_and_runs_nothing(tmp_path: Path) -> None:
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
     assert result.returncode == 1
-    assert "alert sender token" in result.stderr
-    assert "narrow identity" in result.stderr
-    assert _watcher_runs(logs["lane"]) == []
-
-
-def test_on_the_mac_a_missing_gh_login_exits_1(tmp_path: Path) -> None:
-    # A `gh` that prints nothing stands for a missing login.
-    result, logs = _run(tmp_path, **MAC, gh='#!/bin/sh\necho "gh $*" >> "$GH_LOG"\n')
-    assert result.returncode == 1
-    assert "no GitHub credential" in result.stderr
-    assert logs["gh"] == ["gh auth token"]
-    assert _watcher_runs(logs["lane"]) == []
+    assert (
+        "FATAL: no BWS_ACCESS_TOKEN: the revision-watcher lane runs only in its container,"
+        " through lane-run" in result.stderr
+    )
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": []}
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -406,16 +338,13 @@ def test_the_state_variable_reaches_the_launcher_and_names_the_watchers_director
     assert alerts.STATE_DIR_ENV in lane_run.STATE_VARIABLES
 
 
-def test_the_crontab_runs_the_pass_hourly_as_the_mac_job_does() -> None:
+def test_the_crontab_runs_the_pass_hourly() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["40 * * * * lane-run revision-watcher"]
-    plist = PLIST.read_text()
-    assert "<key>StartInterval</key>\n    <integer>3600</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-revision-watcher.sh</string>\n    </array>" in plist
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:

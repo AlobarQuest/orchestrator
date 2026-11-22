@@ -4,7 +4,8 @@ An installer writes its own REPO_ROOT into the plist verbatim, so installing fro
 pins the LaunchAgent to a path that is deleted at teardown, after which the job fails on every run
 with nothing reporting it. Until 2026-09-27 six installers carried the refusal inline and five did
 not -- two of those five with a header comment claiming it. The refusal now lives once, in
-`scripts/sds-install.sh`, and this module holds every installer to calling it in time.
+`scripts/sds-install.sh`, and this module holds every installer to calling it in time. It also
+holds the installer population to the two jobs that stay on the Mac.
 
 The behavioural cases never run a real installer from a real tree: each copies one installer and
 the shared helper into a throwaway repository, puts a `launchctl` stub on PATH that only records
@@ -38,8 +39,29 @@ def installers() -> list[Path]:
     return sorted(SCRIPTS.glob("install-*-launchd.sh"))
 
 
-def test_the_installer_population_is_what_was_counted() -> None:
-    assert len(installers()) >= 11
+# The two jobs that stay on the Mac (ADR-0059 decision 4, Amendment 16 decision 4). Every lane
+# under `lanes/` runs in its container, so increment 6 removed its plist and installer.
+STAYING = {"activation-sweep", "rotation-worker"}
+
+
+def test_only_the_staying_jobs_have_a_plist_and_an_installer() -> None:
+    plists = {
+        path.name.removeprefix("com.devon.").removesuffix(".plist")
+        for path in SCRIPTS.glob("com.devon.*.plist")
+    }
+    assert plists == STAYING
+    assert {
+        path.name.removeprefix("install-").removesuffix("-launchd.sh") for path in installers()
+    } == STAYING
+
+
+def test_no_container_lane_has_a_plist_or_an_installer() -> None:
+    lanes = {path.name for path in Path("lanes").iterdir() if (path / "compose.yaml").is_file()}
+    assert "bump-driver" in lanes
+    for lane in lanes:
+        for label in (lane, f"sds-{lane}"):
+            assert not (SCRIPTS / f"com.devon.{label}.plist").exists(), label
+        assert not (SCRIPTS / f"install-{lane}-launchd.sh").exists(), lane
 
 
 @pytest.mark.parametrize("installer", installers(), ids=lambda p: p.name)

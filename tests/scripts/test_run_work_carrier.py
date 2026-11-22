@@ -1,11 +1,11 @@
-"""`scripts/run-work-carrier.sh` in the lane's container and on the Mac, and the lane's files.
+"""`scripts/run-work-carrier.sh` in the lane's container, and the lane's files.
 
 The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it in the
 container: the lane's token as `BWS_ACCESS_TOKEN`, the state directory, the chain's three settings,
 `PATH` and `HOME`. `bws`, `git`, `gh` and `curl` are stubs on PATH. In the venv, `work-watcher`,
 `work-carrier` and `sds-github-mint` are stubs that log what reached them, and `python` runs the
-real interpreter except for the chain verify, which it answers itself. Nothing reads BWS, the
-Keychain, GitHub, change-manager, the orchestrator, the chain database or Healthchecks.
+real interpreter except for the chain verify, which it answers itself. Nothing reads BWS,
+GitHub, change-manager, the orchestrator, the chain database or Healthchecks.
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ LAUNCHER = Path("scripts/run-work-carrier.sh")
 HELPERS = ("sds-deadman.sh", "sds-bws.sh", "sds-git.sh")
 COMPOSE = Path("lanes/work-carrier/compose.yaml")
 CRONTAB = Path("lanes/work-carrier/crontab")
-PLIST = Path("scripts/com.devon.work-carrier.plist")
 
 READ_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 SYSTEM_UUID = "221a48d5-3f29-4898-b300-b4820140c880"
@@ -348,6 +347,26 @@ def test_the_read_password_and_settings_reach_the_verify_and_the_carry_and_never
         assert run.field("watcher", name) == "", name
 
 
+def test_an_ambient_chain_variable_never_reaches_a_program(tmp_path: Path) -> None:
+    ambient = {
+        "CHAIN_DB_HOST": "ambient-host",
+        "CHAIN_DB_PORT": "6543",
+        "CHAIN_DB_NAME": "ambient-db",
+        "CHAIN_PASSWORD": "ambient-password",
+        "FACTORY_EVENTS_APPEND_PASSWORD": "ambient-append-password",
+        "FACTORY_EVENTS_READ_PASSWORD": "ambient-read-password",
+    }
+    run = _run(tmp_path, "--register", **ambient)
+    assert run.code == 0, run.output
+    for prefix in ("verify", "carrier"):
+        assert run.field(prefix, "password") == value(CHAIN_UUID), prefix
+        assert run.field(prefix, "host") == CHAIN["FACTORY_EVENTS_DB_HOST"], prefix
+        assert run.field(prefix, "port") == CHAIN["FACTORY_EVENTS_DB_PORT"], prefix
+        assert run.field(prefix, "name") == CHAIN["FACTORY_EVENTS_DB_NAME"], prefix
+    for name in ("password", "host", "port", "name"):
+        assert run.field("watcher", name) == "", name
+
+
 @pytest.mark.parametrize("missing", sorted(CHAIN))
 def test_a_missing_chain_setting_fails_the_pass_before_any_read(
     tmp_path: Path, missing: str
@@ -546,64 +565,65 @@ def test_a_failed_clone_fails_the_pass_and_names_gits_message(tmp_path: Path) ->
     assert run.lines("carrier") == []
 
 
-# ---- the outcome, as on the Mac --------------------------------------------------------------
+# ---- the outcome -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("watcher", "carrier", "expected"),
-    [("0", "0", 0), ("3", "0", 3), ("0", "2", 2), ("3", "1", 1), ("2", "1", 2), ("0", "127", 127)],
+    [
+        ("0", "0", 0),
+        ("3", "0", 3),
+        ("0", "2", 2),
+        ("3", "1", 1),
+        ("2", "1", 2),
+        ("1", "2", 2),
+        # An unrecognised code (127 is a missing binary) is preserved and dominates, in either
+        # position: the `for rc in 1 3 2` fold would let it fall through to success.
+        ("0", "127", 127),
+        ("127", "3", 127),
+        ("3", "127", 127),
+    ],
 )
 def test_the_worst_outcome_of_the_two_phases_wins(
     tmp_path: Path, watcher: str, carrier: str, expected: int
 ) -> None:
-    run = _run(tmp_path, FAKE_WATCHER_RC=watcher, FAKE_CARRIER_RC=carrier)
+    run = _run(tmp_path, "--register", FAKE_WATCHER_RC=watcher, FAKE_CARRIER_RC=carrier)
     assert run.code == expected
 
 
-def test_the_container_skips_activation_and_reads_no_mac_identity(tmp_path: Path) -> None:
-    run = _run(tmp_path, BWS_ACCESS_TOKEN_SDS="narrow")
-    assert run.code == 0, run.output
-    assert "[activation]" not in run.output
-    assert not any(line.endswith("token=narrow") for line in run.logs["bws"])
+def test_the_retirement_runs_before_the_carry(tmp_path: Path) -> None:
+    """Reversed, the carry would re-register a finished record's revision before the watcher
+    retires it; only the launcher decides the order."""
+    run = _run(tmp_path, "--register")
+    order = [
+        line.split()[0] for line in run.logs["lane"] if line.split()[0] in ("watcher", "carrier")
+    ]
+    assert order == ["watcher", "carrier"]
 
 
-def test_the_keychain_is_read_only_on_the_macs_branch() -> None:
-    lines = LAUNCHER.read_text().splitlines()
-    branch = lines.index('if [ "$IN_CONTAINER" -eq 1 ]; then')
-    otherwise = lines.index("else", branch)
-    end = lines.index("fi", otherwise)
-    keychain = [i for i, line in enumerate(lines) if "/usr/bin/security" in line]
-    assert len(keychain) == 3
-    assert all(otherwise < i < end for i in keychain)
-
-
-# ---- the Mac, unchanged until increment 6 ----------------------------------------------------
-
-
-@pytest.mark.parametrize("args", [(), ("--register",)], ids=["bare", "register"])
-def test_on_the_mac_nothing_is_minted_cloned_or_verified(
-    tmp_path: Path, args: tuple[str, ...]
+def test_an_acting_pass_asks_the_watcher_to_retire_and_the_carry_to_register(
+    tmp_path: Path,
 ) -> None:
-    run = _run(
-        tmp_path,
-        *args,
-        BWS_ACCESS_TOKEN=None,
-        BWS_ACCESS_TOKEN_SDS="narrow",
-        **dict.fromkeys(CHAIN),
-    )
-    assert run.code == 0, run.output
-    assert run.lines("mint") == [] and run.lines("verify") == [] and run.lines("derive") == []
-    assert run.logs["git"] == []
-    assert run.logs["gh"] == ["gh auth token"]
-    assert "[activation]" in run.output
-    assert run.field("carrier", "github") == "gh-token"
-    assert run.field("carrier", "sec") == ""
-    # The Mac's carry reads `portfolio.json`: it is handed no scan feed.
-    assert "--portfolio-scan" not in run.lines("carrier")[0] and run.lines("feed") == []
-    reads = {line.split()[0]: line.split("=", 1)[1] for line in run.logs["bws"]}
-    assert reads[READ_UUID] == BROAD_STANDIN
-    assert reads[SYSTEM_UUID] == "narrow"
-    assert APP_KEY_UUID not in reads and CHAIN_UUID not in reads
+    """The flags are translated, not forwarded: `--register` is the carry's word for acting,
+    `--retire` the watcher's."""
+    run = _run(tmp_path, "--register")
+    assert run.field("watcher", "args") == "--retire"
+    assert run.field("carrier", "args") == "--register"
+
+
+def test_a_bare_pass_asks_neither_to_act_and_still_runs_both(tmp_path: Path) -> None:
+    run = _run(tmp_path)
+    assert run.lines("watcher") and run.lines("carrier")
+    assert run.field("watcher", "args") == ""
+    assert "--register" not in run.lines("carrier")[0]
+
+
+def test_outside_the_container_it_refuses_and_runs_and_reads_nothing(tmp_path: Path) -> None:
+    run = _run(tmp_path, "--register", BWS_ACCESS_TOKEN=None)
+    assert run.code == 1
+    assert "the work-carrier lane runs only in its container, through lane-run" in run.output
+    assert run.logs["lane"] == run.logs["bws"] == run.logs["gh"] == run.logs["git"] == []
+    assert run.logs["ping"] == []
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -643,17 +663,13 @@ def test_every_compose_variable_lane_run_must_pass_is_in_its_list() -> None:
     assert set(environment) - passed == {"LANE_SCHEDULE_ENABLED"}
 
 
-def test_the_crontab_runs_a_registering_pass_daily_at_07_05_as_the_mac_job_does() -> None:
+def test_the_crontab_runs_a_registering_pass_daily_at_07_05() -> None:
     lines = [
         line
         for line in CRONTAB.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     ]
     assert lines == ["5 7 * * * lane-run work-carrier --register"]
-    plist = PLIST.read_text()
-    assert "<key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer>" in plist
-    assert "<string>__REPO_ROOT__/scripts/run-work-carrier.sh</string>\n" in plist
-    assert "<string>--register</string>" in plist
 
 
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
