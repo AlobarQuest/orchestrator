@@ -18,8 +18,10 @@ Handoff: sds-hq `state/handoffs/change-window-infraops-pin.md`. PR #795. Branch
    in the final stage, root-owned in a root-owned `0755` directory.
 3. **`scripts/run-change-window.sh`:** runs `$REPO_ROOT/infraops/change-mgr-cli.js` (that's
    `/app/infraops/...` in the image). The clone, the `sds-cred-registries.sh` source and the
-   clone-failure exit are gone. A missing bundle is still exit 2 with a `FATAL:` line, checked
-   before any secret read. The header comment is updated. The path comes from the launcher's own
+   clone-failure exit are gone. A missing bundle is still exit 2, checked before any secret
+   read. Its `FATAL:` line is reworded to name the baked file: `FATAL: the lane image has no
+   infraops/change-mgr-cli.js (lanes/Dockerfile's pinned bundle): the window can't run`. Every
+   other exit code and `FATAL:` line is unchanged. The header comment is updated. The path comes from the launcher's own
    location, not from an environment variable, so there's no seam that could choose the code run
    with production secrets.
 4. **Tests:**
@@ -32,8 +34,8 @@ Handoff: sds-hq `state/handoffs/change-window-infraops-pin.md`. PR #795. Branch
 5. **Docs:**
    - `docs/operations/deploy.md`: the change-window paragraph describes the baked bundle, and a
      new subsection, "Bump change-window's infraops pin", gives the five-step bump and the rollback.
-   - `lanes/change-window/compose.yaml`: comment only. Its header said "each pass clones
-     infraops-mcp-server", which this change makes false. The service definition is unchanged.
+   - `lanes/change-window/compose.yaml` is unchanged, because it's on the do-not-touch list. Its
+     header comment is now stale (follow-up 5).
 
 ## What the pin attests
 
@@ -75,14 +77,17 @@ is in `deploy.md`, "Bump change-window's infraops pin".
 `infraops-pin-behind:change-window`. It fires when the sha256 of the bundle at infraops `main`
 differs from the pinned digest, judged on the digest, not on the commit. The pin watcher is the
 candidate owner. The amendment says HQ records the step that builds it in `state/goal.md` with the
-merge, and the security phase doesn't start while it's open. **HQ: name that step at merge.**
+merge, and the security phase doesn't start while it's open. The amendment names the step
+`cw-infraops-pin-staleness`. That name is my proposal, not an existing HQ step: **HQ, record it in
+`state/goal.md` at merge, or rename it in the amendment.**
 
 ## Tests and checks
 
 - **Touched suites:** `tests/scripts/test_run_change_window.py` and
   `tests/architecture/test_lane_image.py`, 69 passed.
 - **Mutations:** each mutation ran against both suites, with `__pycache__` cleared and the files
-  restored from backup copies. The control is 69 passed, and all six mutations are killed:
+  restored from backup copies. The test databases (`orchestrator_test_hq_w_278` and its xdist
+  copies) are dropped. The control is 69 passed, and all six mutations are killed:
 
   | Mutation | Result |
   |---|---|
@@ -121,7 +126,6 @@ merge, and the security phase doesn't start while it's open. **HQ: name that ste
 - `tests/scripts/test_run_change_window.py`
 - `tests/architecture/test_lane_image.py`
 - `docs/operations/deploy.md`
-- `lanes/change-window/compose.yaml` (comment only)
 - This report
 
 ## Self-review
@@ -133,6 +137,11 @@ merge, and the security phase doesn't start while it's open. **HQ: name that ste
 - **Network paths:** no new one at run time. The lane loses its github.com clone path, and the
   fetch is the Actions runner's at build time. No new credential, BuildKit secret, image or source
   build.
+- **Amendment review fixes:** after the first draft, I removed three overclaims from the
+  amendment: "reviewed" bytes, "staleness costs fixes, not safety", and "every `FATAL:` line
+  unchanged". I also added the missed passage, Amendment 14 decision item 7's anonymous-clone
+  sentence (lines 4327-4328), to its table. A grep of Amendments 14 and 15 for `clone`, `main` and
+  `unpinned` finds no other passage left out.
 - **Stop point:** none was hit. The amendment found no false statement about current code, only
   line-number drift in Amendment 14's launcher cites (its "lines 111-121", "line 93" and "lines
   151-153" are 109-119, 101 and 152 at `d96a6e44`). It records that drift without rewriting the
@@ -148,6 +157,17 @@ merge, and the security phase doesn't start while it's open. **HQ: name that ste
    and Amendment 14's residual.
 4. **Pin age:** `INFRAOPS_COMMIT` is `8dc4d43e`, infraops' `main` on 2026-11-23. If infraops
    changes the bundle before the release, bump the pin first.
+5. **Stale compose comment:** `lanes/change-window/compose.yaml` lines 8-9 still say "each pass
+   clones infraops-mcp-server into a directory it removes". I left the file alone, as the handoff
+   requires. A follow-up can make it read "runs the infraops bundle the image bakes at a pinned
+   commit (ADR-0059 Amendment 18)"; no test reads that comment.
+6. **A concern the Standards section doesn't cover:** pin bumps are a dependency update of a kind
+   the handoff's standards don't govern (Code Brain's `dependency-updates` road has no rules). The
+   amendment's bump procedure is the only rule for them.
+7. **What the amendment still leaves:** the bundle is trusted as infraops' `main` held it at the
+   pinned commit. Nothing reviews its source, because infraops requires no review and the bump
+   checks the commit, the `Build` run and the digest. A later amendment can add a step that reads
+   the source diff between pins. This amendment doesn't claim one.
 
 ## Standards followed
 
