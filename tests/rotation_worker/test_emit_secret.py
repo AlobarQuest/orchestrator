@@ -12,7 +12,7 @@ import pytest
 from rotation_worker import cli
 from rotation_worker.config import Config, ConfigError
 from rotation_worker.secret_store import StoreError
-from rotation_worker.values import Value
+from rotation_worker.values import Value, scrub
 from tests.rotation_worker.stores import MemoryStore
 
 PLACEHOLDER = "placeholder-value-1"
@@ -184,4 +184,5 @@ def test_a_config_error_names_its_reason(
     monkeypatch.setattr(cli, "open_store", unreadable)
     secret_id = "88888888-8888-4888-8888-888888888888"
     assert cli.emit_secret(_config(tmp_path), secret_id, Pipe()) == cli.EXIT_UNREADABLE
-    assert capsys.readouterr().err == "emit-secret: the root token file is empty\n"
+    # Scrubbed: an earlier test in the same process may have wrapped a value this text holds.
+    assert capsys.readouterr().err == f"emit-secret: {scrub('the root token file is empty')}\n"
