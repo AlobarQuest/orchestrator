@@ -62,8 +62,8 @@ else
   if IFS= read -r -n 1 extra || [[ -n "$extra" ]]; then
     refuse "stdin holds more than one line"
   fi
-  [[ "$token" != *[[:space:]]* ]] || refuse "the value has whitespace inside"
   [[ ${#token} -le $max_length ]] || refuse "the value is longer than $max_length characters"
+  [[ "$token" != *[[:space:]]* ]] || refuse "the value has whitespace inside"
 fi
 
 umask 077

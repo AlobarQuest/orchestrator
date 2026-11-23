@@ -159,6 +159,7 @@ def test_one_line_is_stored_with_one_newline_readable_only_by_the_owner(
         ("placeholder\tvalue-1\n", "whitespace inside"),
         (" placeholder-value-1\n", "whitespace inside"),
         ("x" * 4097 + "\n", "longer than 4096"),
+        ("x " * 2049 + "\n", "longer than 4096"),
     ],
 )
 def test_a_bad_input_is_refused_and_the_file_is_unchanged(
