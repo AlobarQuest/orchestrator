@@ -172,7 +172,7 @@ the alert enforces that.
 
 - `make check` with my own database `orchestrator_test_hq_w_282` and the worktree's own venv:
   **rc 0, 14768 passed, 1 skipped** (5 min 57 s). Lint, format, type check and the whole-repo
-  scans passed. That run was at `386142fa`; FINAL_CHECK
+  scans passed. A rerun at `fbf9bd4a`, after the ADR and wording edits, also gave rc 0, 14768 passed, 1 skipped (6 min 20 s).
 - `uv run pytest tests/rotation_worker/test_emit_secret.py`: 16 passed before the mutants.
 - The four mutants in the preceding "Item 6" table.
 - `code-standards risk --repo .`: **high-risk**, rule `secrets`, matching
