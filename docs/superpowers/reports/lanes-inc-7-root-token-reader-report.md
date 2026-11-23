@@ -105,8 +105,8 @@ terminal. The runbook forbids running that half alone, and the follow-ups name t
   3. Dropping `_discard(out)` fails `test_a_real_closed_pipe_exits_2_with_one_message`
      (`assert 120 == 2`).
 - **`make check`** on database `orchestrator_test_hq_w_281`: lint and type-check are green, with
-  14,760 passed and 1 skipped, at `b82ff17b`. The only later commit is the doc-only `c59ae9cd`.
-  Pytest then ran in full again on `c59ae9cd`; its result is in the PR description.
+  14,760 passed and 1 skipped, exit 0, at `4c446ad7`, the final code and docs. An earlier run at
+  `b82ff17b` gave the same count.
 - **Risk verdict**
   (`uv run --project ~/Developer/code-standards code-standards risk --repo .`): `high-risk`, rule
   `secrets`, matched on `tests/rotation_worker/test_emit_secret.py`.
