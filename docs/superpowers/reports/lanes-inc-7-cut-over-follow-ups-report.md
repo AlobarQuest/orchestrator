@@ -3,7 +3,7 @@ Outcome: done
 # Increment 7 cut-over follow-ups: build report
 
 Worker W-282, branch `hq/lanes-inc-7-cut-over-follow-ups`, base `origin/main` `51a8bbe7`. Pull
-request: PR_PLACEHOLDER.
+request: #798.
 
 **Read first (item 7):** the Mac's Keychain instance runs `06cfea7c` and raises
 `rotation-instance-behind:keychain` on its first pass after **2026-11-24T04:32:51Z**, not about 7
