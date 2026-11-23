@@ -527,8 +527,10 @@ and no BWS identity, project, grant or scope is added or widened.
 
 1. Devon mints the second access token on the `rotation-executor` machine account, in the BWS
    console. He names it so the two tokens are told apart at the revoke, for example
-   `rotation-executor-vps-host`, and stores its value as a BWS secret in `Rotation / Admin`. Only
-   the root identity reads that project, so no grant changes. He gives the session the secret's
+   `rotation-executor-vps-host`, and stores its value as a BWS secret in `Rotation / Admin`, with
+   no trailing newline and no leading or trailing spaces: `emit-secret` refuses an empty value or
+   one with surrounding whitespace as `unreadable: ValueError`, and writes nothing to the pipe.
+   Only the root identity reads that project, so no grant changes. He gives the session the secret's
    id, which isn't a value. That is Devon's whole part: he runs no terminal step.
 2. The VM must run a commit that has `rotation-worker emit-secret`. Update it with "Install or
    update it" step 1 at this change's merge commit, or a later one, before the cut-over. That's a
@@ -543,20 +545,24 @@ and no BWS identity, project, grant or scope is added or widened.
      HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker emit-secret \
      <the host token's secret id> --config /etc/rotation-worker/config.toml \
      | ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-       -i ~/.ssh/hetzner_infraops root@40.160.102.182 /opt/rotation-worker/bin/set-root-token --stdin
+       -i ~/.ssh/hetzner_infraops root@<prod-vps address> /opt/rotation-worker/bin/set-root-token --stdin
    ```
 
-   `40.160.102.182` is `prod-vps`. The VM needs no SSH key to the host: ssh runs on the Mac.
-   `emit-secret` runs as `rotation` because the VM's root token file must belong to the reader.
-   It refuses a terminal on stdout and writes nothing but the value and one newline. Every
+   `<prod-vps address>` is the `prod-vps` environment role's public address: read it with Infra
+   Brain's `get_environment("prod-vps")` at the run, so a host move needs no change here. The VM
+   needs no SSH key to the host: ssh runs on the Mac. `emit-secret` runs as `rotation` because the
+   VM's root token file must belong to the reader. It refuses a stdout that isn't a pipe or a
+   socket, such as a terminal or a file redirected inside the VM, and writes nothing but the value
+   and one newline. Every
    refusal or failure exits 2, and no message carries the value: one after the store opens names
    only the secret's id and the error's class. Every refusal of `set-root-token` leaves the file
    unchanged, and so does an empty pipe. The command exits 0 only when both sides succeed. A
    non-zero status doesn't prove the file is unchanged: ssh can lose the connection after
    `set-root-token` wrote it. Read the messages, fix the cause, and run the pipe again; it writes
    the same value, so a second run is safe. Its output carries no value. Never run the `emit-secret`
-   half alone in a session: a tool's captured stdout isn't a terminal, so the refusal doesn't
-   apply, and the value would enter the transcript.
+   half alone in a session: `orb` hands the VM process a pipe when its own stdout is a pipe, a
+   file, or a tool's capture, so the refusal can't see a redirect on the Mac or a tool capturing
+   it, and the value would enter a file or the transcript.
 4. Check the file without reading it, on the host:
    `stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`. This proves
    only the owner and mode. The value is proved by the cut-over's first pass on the host (step 4

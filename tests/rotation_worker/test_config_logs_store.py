@@ -372,6 +372,22 @@ def test_a_value_json_would_escape_is_still_scrubbed() -> None:
     assert json.dumps(secret.reveal())[1:-1] not in line
 
 
+def test_logs_go_to_stderr_so_stdout_stays_the_value_channel(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", list(root.handlers))
+    monkeypatch.setattr(root, "level", root.level)
+    configure()
+    # Through the root logger: Alembic's `fileConfig` disables loggers that exist before it runs,
+    # and a migration may run earlier in this process.
+    root.info("pass_started")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    # Not parsed: `scrub` rewrites any text an earlier test here wrapped, keys included ("v").
+    assert "pass_started" in captured.err
+
+
 def test_request_urls_are_not_logged() -> None:
     configure()
     assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
