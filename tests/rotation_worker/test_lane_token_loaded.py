@@ -181,6 +181,18 @@ def unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Unit:
     return Unit(tmp_path, monkeypatch)
 
 
+@pytest.fixture
+def logs(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> pytest.LogCaptureFixture:
+    """The executor's records, captured. A test that ran alembic's `fileConfig` on this xdist
+    worker disabled the existing loggers, which would leave a log assertion nothing to read."""
+    for name in ("rotation_worker", worker.LOG.name):
+        monkeypatch.setattr(logging.getLogger(name), "disabled", False)
+    caplog.set_level(logging.DEBUG)
+    return caplog
+
+
 def _verify_note(unit: Unit) -> str:
     (body,) = [b for b in unit.client.evidence_bodies if b["payload"]["step"] == "verify_consumers"]
     return str(body["payload"]["note"])
@@ -234,12 +246,11 @@ def test_a_reissue_s_verify_waits_unclaimed_on_anything_but_the_keeper_s_fingerp
 
 
 def test_a_wait_is_logged_with_its_unit_and_reason(
-    unit: Unit, caplog: pytest.LogCaptureFixture
+    unit: Unit, logs: pytest.LogCaptureFixture
 ) -> None:
-    caplog.set_level(logging.INFO)
     unit.helper = Helper({PRINT_KEY: printed(OLD_TOKEN)})
     unit.take()
-    (record,) = [r for r in caplog.records if r.getMessage() == "unit_waiting"]
+    (record,) = [r for r in logs.records if r.getMessage() == "unit_waiting"]
     assert getattr(record, "unit") == "u1"
     assert printed(OLD_TOKEN) in getattr(record, "reason")
 
@@ -388,15 +399,17 @@ def test_a_row_without_a_helper_target_passes_the_row_check() -> None:
 
 
 def test_no_log_line_or_failure_reason_holds_a_token(
-    unit: Unit, caplog: pytest.LogCaptureFixture
+    unit: Unit, logs: pytest.LogCaptureFixture
 ) -> None:
-    caplog.set_level(logging.DEBUG)
     unit.helper = Helper({PRINT_KEY: printed(OLD_TOKEN)})
     unit.take()
     unit.helper = Helper({PRINT_KEY: printed(NEW_TOKEN)}, {PRINT_KEY: printed(OLD_TOKEN)})
     unit.take()
     assert unit.client.failures["u1"]
-    text = caplog.text + " ".join(unit.client.failures.values())
+    names = [r.getMessage() for r in logs.records]
+    assert "unit_waiting" in names and "unit_failed" in names
+    text = " ".join(f"{r.getMessage()} {vars(r)}" for r in logs.records)
+    text += " ".join(unit.client.failures.values())
     for token in (NEW_TOKEN, OLD_TOKEN):
         assert token.reveal() not in text
     assert printed(OLD_TOKEN) in text
