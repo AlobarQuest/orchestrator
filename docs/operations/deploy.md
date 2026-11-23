@@ -1264,9 +1264,10 @@ following, in this order, each in its own change or act.
 `change-window`'s tracked files (`lanes/change-window/compose.yaml` and `crontab`) don't register
 it either. It's ADR-0059 increment 8's lane: it executes the change requests change-manager holds
 as approved, for production Coolify only (D-67 C; a person handles dev items). It keeps no state,
-so its compose mounts no volume: each pass clones infraops-mcp-server anonymously, shallow at
-`main`, into a directory it removes, and runs its bundled CLI, `dist/bundle/change-mgr-cli.js`
-(D-66 A; infraops #171), which needs no `npm ci`. It joins no external network: change-manager,
+so its compose mounts no volume. Each pass runs infraops-mcp-server's bundled CLI,
+`dist/bundle/change-mgr-cli.js` (infraops #171), from the copy the lane image bakes in at a pinned
+commit, `/app/infraops/change-mgr-cli.js` (ADR-0059 Amendment 18; D-70 A, D-66 B). It needs no
+`npm ci`, and a pass clones nothing. It joins no external network: change-manager,
 alert-hub and the Anthropic API are HTTPS URLs, and production Coolify is the tailnet address
 `http://100.92.138.19:8000`, which estate landing reaches the same way (HQ G-73). Its crontab runs
 `lane-run change-window --submit` daily at 04:00 New York time, the Mac job's hour. That's inside
@@ -1366,6 +1367,36 @@ its own change or act.
    `launchagent:com.devon.change-window` required check (D-69 A); security-standards' registry and
    governance-map lines for the moved job; and, after rollback ends, infraops-mcp-server's removal
    of the Mac job.
+
+#### Bump change-window's infraops pin
+
+The lane image pins infraops' bundle in `lanes/Dockerfile`: `ARG INFRAOPS_COMMIT` (a full commit)
+and the `ADD --checksum=sha256:` digest of `dist/bundle/change-mgr-cli.js` at that commit. The
+digest attests the bytes; that they're that commit's own build is infraops' `Build` job, which
+fails when the committed `dist/` differs from a fresh build. infraops doesn't enforce that job for
+administrators, so a bump checks it. A person bumps the pin, in an HQ or build session; no lane
+proposes it (ADR-0059 Amendment 18 decision item 4). Bump it when the bundle at infraops' `main`
+differs from the pinned digest; a commit that leaves the bundle unchanged needs no bump.
+
+1. Pick the target commit on infraops' `main`, the full 40 characters:
+   `git -C <infraops checkout> rev-parse origin/main` after a fetch.
+2. Confirm that commit's `Build` push run concluded `success`:
+   `gh run list -R AlobarQuest/infraops-mcp-server --commit <commit> --workflow Build --event push --json conclusion`.
+   Any other answer stops the bump.
+3. Fetch the file from the commit URL into a scratch directory, with no credential, and hash the
+   file only if the fetch succeeded. A pipe into `shasum` would print a digest of an error body or
+   of nothing:
+   `curl -fsS -o change-mgr-cli.js https://raw.githubusercontent.com/AlobarQuest/infraops-mcp-server/<commit>/dist/bundle/change-mgr-cli.js && shasum -a 256 change-mgr-cli.js`.
+   It must be the same digest as `git -C <infraops checkout> show <commit>:dist/bundle/change-mgr-cli.js | shasum -a 256`.
+4. In one pull request to this repository, change `INFRAOPS_COMMIT` and the digest together. Say
+   in its body which infraops pull requests the bump brings in and that step 2 passed.
+5. After it merges, the pin reaches the lane only through a release of the lane image and a
+   redeploy of `sds-lane-change-window` at that tag (`--lane change-window`), outside the 02:00 to
+   06:00 quiet slot. Prove it with the bare `lane-run change-window` in the redeployed container,
+   then the next scheduled `--submit` pass and its success ping.
+
+To roll a bump back, redeploy the lane at its previous tag. To roll the pin itself back,
+redeploy a tag from before Amendment 18: that launcher clones infraops' `main` each pass again.
 
 ### A lane's GitHub token (ADR-0059 increment 3)
 

@@ -4907,3 +4907,156 @@ work-carrier lane account's grant on `2f708d08-…`, not the bump driver's. ADR-
 bump-driver account anywhere; Amendment 13 governs ADR-0055's chain-reader passages from this file.
 And neither ADR names any holder of the two Brain keys beyond decision 2's per-lane rule and the
 broker-lane paragraph, both listed in the preceding table.
+
+## Amendment 18 (2026-11-23): change-window runs infraops-mcp-server from a pin baked into the lane image (D-70 A, D-66 B)
+
+- **Status:** Proposed. Accepted on merge: HQ merges it (act `cw-infraops-pin-merge`) only after a
+  clean Opus whole-branch review against the ADR merge bar. The ADR's own status is unchanged.
+- **Decided by:** Devon's D-70 answer, "A, with the pin. ... Pair it with pinning infraops (the
+  D-66 revisit) before the security phase" (Amendment 15, lines 4423-4425), and the shape that
+  Amendment 15 decision item 3 records as the one on record, D-66's option B: "the lane image
+  bakes infraops at a pinned commit, installed in CI with no secrets present" (lines 4477-4478).
+  The design in this amendment is HQ's, under plan amendment `cw-infraops-pin` (sds-hq
+  `state/goal.md`, 2026-11-23); no question beyond D-66 B was put to Devon, and the design needs
+  none: no new credential, BuildKit secret, image, network path or source build.
+- **Relates to:** Amendment 14 decision item 1 (lines 4146-4160) and its verify item "D-66's
+  revisit" (lines 4371-4375); Amendment 15 decision item 3 (lines 4474-4483); decision 1's lane
+  image bullet (lines 92-97).
+
+Line numbers are this file's at orchestrator `d96a6e44`, before the amendment was appended. The
+amendment appends only: no passage before it is rewritten. Where it and an earlier passage
+disagree, this amendment governs once it's accepted.
+
+### Context
+
+At `d96a6e44`, `scripts/run-change-window.sh` clones infraops-mcp-server anonymously, shallow, at
+`main`, into each pass's directory (lines 109-119), and runs the clone's
+`dist/bundle/change-mgr-cli.js` with the production Coolify window token, the Anthropic key and
+change-manager's `execute` bearer in its environment (lines 125-165). Amendment 14 decision item 1
+names the residual: infraops-mcp-server `main`'s branch protection is the trust boundary for the
+lane's whole production write authority. Amendment 15 decision item 3 bounds it: the pin lands
+before the security phase starts.
+
+The facts this design rests on, read 2026-11-23:
+
+- **The bundle is one file.** infraops' `scripts/bundle-cli.mjs` (at `8dc4d43e`) builds
+  `src/cli/change-mgr-cli.ts` with esbuild into `dist/bundle/change-mgr-cli.js`: every dependency
+  bundled, Node's built-ins external, ESM. It reads no sibling file at run time. Copied alone into
+  a directory with no `package.json` and run with Node 26, it parses its flags and calls
+  change-manager (W-278's report).
+- **The bundle's filename is part of its contract.** The bundle runs its `main()` only when
+  `process.argv[1]` ends with `change-mgr-cli.js`. Under any other name it exits 0 having done
+  nothing, which a `--submit` pass would report as a green window. So the baked file keeps that
+  name.
+- **The bundle is public by commit.** infraops-mcp-server is a public repository, and
+  `https://raw.githubusercontent.com/AlobarQuest/infraops-mcp-server/<commit>/dist/bundle/change-mgr-cli.js`
+  answers with no credential. At `8dc4d43e` its sha256 is `cb94a415…d1f228` (the full digest is in
+  `lanes/Dockerfile`). The file last changed in infraops #171 (`fdf3e91b`), so the two commits
+  hold the same bytes.
+- **infraops' CI attests that the committed bundle is a fresh build.** Its `Build` workflow
+  (`.github/workflows/build.yml`, job `build`) runs `npm ci` and `npm run build` (`tsc`, then the
+  bundle script), and fails if `git status --porcelain dist/` shows any change: the committed
+  `dist/`, the bundle included, must equal a fresh build of that commit's source. It runs on every
+  pull request to `main` and every push to `main`. infraops' branch protection on `main` requires
+  `build` and `Lint, type-check, and test`; it requires no review, and `enforce_admins` is off. On
+  `8dc4d43e` the push run of `Build` concluded `success`.
+
+### Decision
+
+1. **The lane image bakes the bundle at a pinned commit.** `lanes/Dockerfile`'s `tools` stage
+   names the commit in `ARG INFRAOPS_COMMIT` (a full 40-character commit, never a branch or tag)
+   and fetches the one file by commit URL with `ADD --checksum=sha256:<digest>`, the form every
+   other download in the image uses. The final stage copies it to
+   `/app/infraops/change-mgr-cli.js`, root-owned, mode `0444`, in a root-owned `0755` directory,
+   so a lane process can't rewrite it, as it can't rewrite its launcher. No `npm ci` and no package
+   script runs, at build time or at run time.
+2. **What the pin attests, exactly.** The pin is two values, and they attest different things:
+   - **The digest attests the bytes.** BuildKit fails the build when the fetched file's sha256
+     differs from the pinned digest (proved for W-278 with a wrong digest: `digest mismatch`). So
+     the image holds exactly the bytes chosen when the digest was written, whatever GitHub
+     serves later. Nothing reviews those bytes: infraops' `main` requires no review, and a bump
+     checks the commit, its `Build` run and the digest, not the source diff.
+   - **The commit is a locator.** It says where the bytes are fetched from, and which infraops
+     source they claim to come from. The orchestrator's build doesn't check that claim.
+   - **"Built from that commit's source" rests on infraops' `build` job**, which proves the
+     committed bundle equals a fresh build of the same commit. That job is required on infraops'
+     `main`, but an administrator can push past it, since `enforce_admins` is off. So a pin bump
+     confirms that the `Build` workflow's push run on the pinned commit concluded `success`
+     (decision item 4). The pin attests the bundle's bytes at a commit; that the bytes are that
+     commit's build is the bump's check of infraops' CI, not a property of the orchestrator's
+     image.
+3. **No secret at fetch time, and no clone at pass time.** `Release image` builds the lane image
+   in GitHub Actions with `docker buildx build` and no `--secret` and no token in its build
+   arguments; the bundle's URL is public and needs none. The fetch is the Actions runner's, over
+   HTTPS, at build time; the lane container fetches nothing from GitHub at run time. A pass no
+   longer clones infraops-mcp-server: the launcher runs `node /app/infraops/change-mgr-cli.js`,
+   the path it derives from its own location (`$REPO_ROOT/infraops/change-mgr-cli.js`), with no
+   environment variable that could name another file. A missing bundle still fails the pass
+   before any secret is read, with exit 2 and a `FATAL:` line, reworded to name the baked file:
+   `FATAL: the lane image has no infraops/change-mgr-cli.js (lanes/Dockerfile's pinned bundle):
+   the window can't run`. With no clone, the launcher's clone-failure exit (1) and its message
+   leave. Every other exit code and `FATAL:` line is unchanged.
+4. **Who bumps the pin, and how.** A person bumps it, in an HQ or build session, until a later
+   step gives the bump to a lane; no lane proposes it now. A bump is one pull request to this
+   repository that changes `INFRAOPS_COMMIT` and the digest beside it, together. Before the pull
+   request, the session confirms three things: the target commit is on infraops' `main`; that
+   commit's `Build` push run concluded `success`; and the digest is the sha256 of the file fetched
+   from the commit URL. The bump reaches the lane only through a release of the lane image and a
+   redeploy of `sds-lane-change-window` (`docs/operations/deploy.md`, "Bump change-window's
+   infraops pin"). The bundle hasn't changed since infraops #171 added it, so the
+   pin can lag `main` without a cost until the bundle changes.
+5. **A stale pin's signal (design; verify item).** A stale pin is one whose bundle differs from
+   the bundle at infraops' `main`. It's judged on the bundle's digest, not on the commit: almost
+   every infraops commit leaves the bundle unchanged, and a commit-based check would report
+   every one of them. The signal is a keyed alert, `infraops-pin-behind:change-window`, raised
+   when the sha256 of `dist/bundle/change-mgr-cli.js` at infraops `main` differs from the digest
+   in `lanes/Dockerfile` at `main`, and resolved when a later read finds them equal. It needs no
+   credential (both files are public). The pin watcher is the candidate owner: it already
+   measures the estate's pins against a recommendation and alerts per key. This amendment builds
+   no part of it (the verify items).
+6. **The Mac job is untouched.** `com.devon.change-window` and infraops' own
+   `scripts/change-window.sh` stay as Amendment 14 left them while the lane's rollback is open:
+   booted out, disabled, with the plist kept. They run infraops' working copy, not the pin.
+7. **Rollback.** The previous lane image tag still holds the launcher that clones `main`. So
+   redeploying `sds-lane-change-window` at that tag undoes the pin, and Amendment 14 decision item
+   1's residual applies again until the pin is redeployed. No state, secret or record changes with
+   either move.
+8. **Authority.** This amendment authorizes the image change, the launcher change and the bump
+   procedure. It authorizes no credential, grant, account, network path, release or deploy; the
+   release and redeploy that bring the pin to the lane are HQ's acts.
+
+### Verify items
+
+- **The stale-pin signal (closed by step `cw-infraops-pin-staleness`, before the security phase
+  starts).** Decision item 5's alert isn't built. Step `cw-infraops-pin-staleness` builds it; HQ
+  records the step in sds-hq `state/goal.md` with this amendment's merge, and the security phase
+  doesn't start while it's open. Until it lands, a stale pin is found only when a person bumps the
+  pin or reads infraops' `main`. A stale pin runs no code newer than its bump, but it can withhold
+  a fix, a security fix included, until someone notices.
+- **The baked bundle runs in the lane (closed by the first scheduled pass after the release).**
+  The tests read the tracked files; they don't run the image. HQ's release (act
+  `cw-infraops-pin-release`, after `change-window-schedule-on` is verified) builds the image and
+  runs the digest check. The bare `lane-run change-window` in the redeployed container, then the
+  next scheduled `--submit` pass and its success ping, prove the baked file runs under its name.
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `d96a6e44`:
+
+| Passage | Disposition |
+|---|---|
+| Decision 1's lane image bullet, "It adds only what the lanes need beyond the orchestrator. The tools are ... The files come from this repository" (lines 92-97) | Extended by decision item 1: the image also holds one file from infraops-mcp-server, `dist/bundle/change-mgr-cli.js`, fetched by commit and checked against its sha256. Every other file still comes from this repository. |
+| Amendment 14 decision item 1, "The window's code: a per-pass clone of infraops-mcp-server at `main` (D-66 A)" and its clone sentences (lines 4146-4153) | Superseded by decision items 1 and 3: the lane runs the bundle baked into the image at a pinned commit, and a pass clones nothing. The sentence that no package script runs where the secrets are still holds. |
+| Amendment 14 decision item 1, "The lane image gains no infraops pin, and infraops gains no image" (lines 4153-4154) | Superseded for the first half: the lane image gains the pin (decision item 1). "infraops gains no image" stands. |
+| Amendment 14 decision item 1, "The residual, plainly", "The code that holds the production Coolify window token, the Anthropic key and the `execute` bearer is infraops-mcp-server's unpinned `main` at pass time ... the trust boundary for the lane's whole production write authority" (lines 4156-4160) | Narrowed by decision item 2: the code is the pinned bundle, as infraops' `main` held it at the pinned commit. A later change to `main` no longer reaches a pass; only a bump does. The residual that's left: the bundle is trusted as infraops' `main` held it, without a review of its source, and infraops' branch protection is part of what a bump checks (decision item 4). The unpinned residual applies again only after a rollback (decision item 7). |
+| Amendment 14 decision item 7, "The lane gains no GitHub credential: infraops-mcp-server is public, so its clone is anonymous (lines 307-309)" (lines 4327-4328) | Stands, reworded for the pin: the lane gains no GitHub credential, and nothing it runs fetches from GitHub. The image build fetches the bundle anonymously, because the repository is public (decision item 3). |
+| Amendment 14's verify item "D-66's revisit (Devon's; no step)", "a revisit that changes the code's source is its own amendment" (lines 4371-4375) | Closed: this is that amendment. |
+| Amendment 14's table row on decision 1's clone bullet, "the change-window lane also clones infraops-mcp-server, anonymous, shallow, at `main`, into a directory the pass removes, and runs its bundled CLI from the clone" (line 4383) | Superseded: the change-window lane clones nothing (decision item 3). Decision 1's clone bullet (lines 306-311), which never listed it, stands as written. |
+| Amendment 14's table row on the `change-window` row of "Agents outside this repository", "it runs the bundled CLI from a per-pass clone, not infraops' working copy" (line 4385) | Superseded for that clause: it runs the bundle baked into the lane image at a pinned commit, not infraops' working copy. The rest of the row stands. |
+| Amendment 15 decision item 3, "Until the pin lands, Amendment 14 decision item 1's residual stands ... the code that holds it is infraops-mcp-server's unpinned `main` at pass time" (lines 4481-4483) | The pin lands with this amendment's code. The residual ends when a release holding it is redeployed to `sds-lane-change-window`, not at merge: merged isn't deployed. |
+| Amendment 15's table row on the "D-66's revisit" verify item, "Stands as a verify item with no step" (line 4500) | Closed with the verify item it governs. |
+
+Amendment 14's citations of the launcher (decision item 1's "lines 111-121" and "line 93", and
+decision item 2's "lines 151-153") name lines at its own base. At `d96a6e44` the clone is lines
+109-119, `sds_outcome_begin` is line 101, and the `unset` is line 152. The behavior they describe
+was true at `d96a6e44`; only the line numbers had moved.

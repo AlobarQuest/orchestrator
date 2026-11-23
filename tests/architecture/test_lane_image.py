@@ -43,7 +43,7 @@ def _instructions() -> list[str]:
 def test_every_download_is_checked_against_a_sha256_digest() -> None:
     adds = [line for line in _instructions() if line.startswith("ADD ")]
 
-    assert len(adds) == 5, "supercronic, gh, uv, node and bws"
+    assert len(adds) == 6, "supercronic, gh, uv, node, bws and infraops' change-window bundle"
     for add in adds:
         assert re.search(r"--checksum=sha256:[0-9a-f]{64} ", add), add
     runs = [line for line in _instructions() if line.startswith("RUN")]
@@ -65,6 +65,36 @@ def test_no_tool_or_image_floats() -> None:
         assert re.search(rf'"{re.escape(package)}=\$\{{[A-Z_]+_VERSION\}}"', text), package
     for argument in re.findall(r"^ARG ([A-Z_]+_VERSION)=(\S*)$", text, re.MULTILINE):
         assert argument[1], f"{argument[0]} has no pinned value"
+
+
+def test_the_infraops_bundle_is_pinned_to_a_commit_and_checked_against_a_digest() -> None:
+    """ADR-0059 Amendment 18: one file at an exact commit, over HTTPS, checked by sha256; never a
+    branch, a tag or an unchecked fetch."""
+    [commit] = re.findall(r"^ARG INFRAOPS_COMMIT=(\S*)$", DOCKERFILE.read_text(), re.MULTILINE)
+    assert re.fullmatch(r"[0-9a-f]{40}", commit), commit
+    [add] = [line for line in _instructions() if line.startswith("ADD ") and "infraops" in line]
+    assert re.fullmatch(
+        r"ADD --checksum=sha256:[0-9a-f]{64} +"
+        r"https://raw\.githubusercontent\.com/AlobarQuest/infraops-mcp-server/\$\{INFRAOPS_COMMIT\}"
+        r"/dist/bundle/change-mgr-cli\.js +change-mgr-cli\.js",
+        add,
+    ), add
+
+
+def test_the_baked_bundle_is_read_only_and_where_the_launcher_runs_it() -> None:
+    """The bundle runs `main()` only when its path ends with `change-mgr-cli.js` and otherwise
+    exits 0 having done nothing, so its installed name and the launcher's path must agree. The
+    final stage copies it without `--chown`, so it stays root's."""
+    instructions = _instructions()
+    assert any(
+        "install -m 0444 change-mgr-cli.js /out/infraops/change-mgr-cli.js" in line
+        for line in instructions
+        if line.startswith("RUN")
+    )
+    final = instructions[instructions.index("FROM ${ORCHESTRATOR_IMAGE}") :]
+    assert "COPY --from=tools /out/infraops/ /app/infraops/" in final
+    launcher = (ROOT / "scripts/run-change-window.sh").read_text()
+    assert 'BUNDLE="$REPO_ROOT/infraops/change-mgr-cli.js"' in launcher
 
 
 def test_both_stages_build_from_the_orchestrator_image_argument() -> None:
