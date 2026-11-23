@@ -38,6 +38,8 @@
     approvers append, the carrier verifies there).
   - 2026-11-20, amendment 30, proposed (the lane secrets broker: a lane reads its secrets over a
     socket and holds no BWS token).
+  - 2026-11-23, amendment 31, proposed (the executor's root paths stay root for development:
+    D-73 B and D-74 A; the `loaded` proof as built).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -4401,8 +4403,9 @@ target and the `loaded` proof) and item 4 (the cut-over), with D-64 and D-65.
 This amendment answers amendment 29 item 2's bullet "Cut-over prerequisites: the root paths narrow
 first (D-65)" (lines 4128-4133; every line number here is at `4d8ca873`). It records how
 orchestrator #789 (`4d8ca873`) built item 3's helper change. It changes no resource, identity,
-token or grant. Devon answered two questions on 2026-11-23. They are quoted from sds-hq
-`state/decisions.md` at commit `effa6ea`, which records both. Each question carried its own
+token or grant. Devon answered two questions in an interactive session on 2026-11-22, recorded
+at 2026-11-23T00:49:54Z. They are quoted from sds-hq `state/decisions.md` at commit `effa6ea`,
+which records both. Each question carried its own
 findings, and this amendment cites them there rather than restating them. Neither answer was made
 standing, so neither is a general rule.
 
@@ -4497,9 +4500,10 @@ choice for the development phase").
      650-671). The claimed step reads once more and raises on a mismatch, failing the unit
      (`bws_lane_token.py`, lines 297-320).
    - **What isn't done.** Item 3's other changes, one helper target per lane in `targets.toml` and
-     a lane-token row naming it as its `helper_target`, aren't made. No `.cred-consumers.toml` row
-     names `helper_target`, so every lane token keeps the `PATCH` proof and D-27's departure
-     (amendment 19 item 7) until a row names its target. The cut-over reinstalls the helper first.
+     a lane-token row naming it as its `helper_target`, aren't made. No `bws-lane-token` row in
+     `.cred-consumers.toml` names `helper_target`, so every lane token keeps the `PATCH` proof and
+     D-27's departure (amendment 19 item 7) until a row names its target. The cut-over reinstalls
+     the helper first (#789's report, follow-up 1).
 
 ### What it grants, and nothing more
 
@@ -4516,8 +4520,8 @@ unchanged (Infra Brain 1031).
 - **Increment 7's cut-over has no open root-path prerequisite.** What remains is its plan and its
   checks (amendment 29 items 4 and 5).
 - **The terminal stays off by its own act.** Turning it on again returns its users to T1 (item 3).
-- **Stale until updated, outside this amendment:** this ADR's header list, which stops at
-  amendment 24, and amendment 29 item 3's helper line citations (line 4146), which predate #789.
+- **Stale until updated, outside this amendment:** amendment 29 item 3's helper line citations
+  (line 4146), which predate #789.
 
 ### Passages it governs
 
@@ -4533,6 +4537,6 @@ Line numbers are at `4d8ca873`. This amendment edits none of them.
 | Amendment 29 item 3, the consumers-only helper target (lines 4150-4152) | Built at `4d8ca873` (item 5). "Today `_target` requires all three keys for every verb" no longer holds. |
 | Amendment 29 item 3, one target per lane and the row's `helper_target` (lines 4153-4156) | Stands, not yet made (item 5). |
 | Amendment 29 item 4, the cut-over | Stands, and isn't planned here. |
-| Amendment 29, "What it grants, and nothing more", "Each root-path narrowing in item 2 is a later decision of Devon's" (lines 4247-4248) | Answered by D-73 B and D-74 A. |
+| Amendment 29, "What it grants, and nothing more", "Each root-path narrowing in item 2 is a later decision of Devon's" (lines 4246-4247) | Answered by D-73 B and D-74 A. |
 | Amendment 29, Consequences, "VPS root becomes the executor's root" (lines 4252-4253) | Amended by item 3: the holders are named, and the narrowings are decided. |
 | ADR-0055 T1 (line 350) | Amended by amendment 29 item 2, as item 3 here reads it. |

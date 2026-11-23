@@ -1424,7 +1424,8 @@ A reissue's `verify` proves that start one of two ways, chosen by the lane token
   --read`), outside the plan, which stands in for decision 3's machine check before the revoke
   (D-27).
 
-No `.cred-consumers.toml` row names `helper_target`, so every lane token keeps the `PATCH` proof
-(D-27). Increment 7's cut-over reinstalls the helper, with each lane's target, before any row
-names one.
+No `bws-lane-token` row in `.cred-consumers.toml` names `helper_target`, so every lane token keeps
+the `PATCH` proof (D-27). Increment 7's cut-over reinstalls the helper first, before any lane-token
+row names a target. Until then the installed helper refuses a consumers-only target, so a row
+naming one would wait on its 48-hour alert, never pass.
 
