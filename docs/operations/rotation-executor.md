@@ -1124,6 +1124,22 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    List one `consumer` table for each container that loads the password. A missing key is refused
    as `bad_target` before anything runs. The name after `target.` is what the registry row's
    `helper_target` must equal.
+
+   A lane token's target is consumers-only (ADR-0055 amendment 29 item 3): it names no
+   `container`, `role` or `database`, only the lane container and the variable it loads.
+
+   ```toml
+   [target.execution-watch]
+
+   [[target.execution-watch.consumer]]
+   container = "<the lane's container name>"
+   env = "BWS_ACCESS_TOKEN"
+   ```
+
+   It answers `loaded` alone. `set` and `probe` on it are refused as `bad_target`, and a target
+   naming only some of the three database keys is refused for every verb. `loaded` answers each
+   consumer's fingerprint, the sha256's first 16 hex characters, a colon and the length, or an
+   empty string when the container loaded nothing; never the value.
 3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
    run a short script as that user through `orb -m rotation-executor -u root runuser -u rotation --
    env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/python -`.
@@ -1391,7 +1407,25 @@ first issue is due from `rotate_requested` alone. For more information, see
   phases' `--token` run passes (D-26).
 
 The lane loads its new token only at its next start, a lane phases' redeploy in its quiet slot.
-That the lane runs on it is the lane phases' proof (`lanes-finish` and `lane-run --read`), outside
-the plan, which stands in for decision 3's machine check before a lane token's revoke until
-ADR-0059 increment 7 (D-27).
+A reissue's `verify` proves that start one of two ways, chosen by the lane token's registry row.
+
+- **A row naming `helper_target`** (ADR-0055 amendment 29 item 3, D-63 C). The row names the
+  helper's consumers-only target for the lane (see "Install the helper"). Before each pass claims
+  the `verify` unit, the executor reads the helper's `loaded` for that target. The unit stays
+  unclaimed until every consumer's loaded fingerprint equals the keeper's, compared exactly. A
+  mismatch, a target that lists no consumer, and an unreadable or malformed answer all wait, on the
+  48-hour `rotation-unit-waiting` clock; none of them passes. The claimed step reads `loaded` once
+  more and fails the unit on anything but a match for every consumer. That read is the attestation
+  Infra Brain 1032 requires before a revoke: the "Revoke the old … value" alert is first sent
+  only after `verify` passes. An issue still counts the `PATCH`, since its `verify_consumers`
+  runs before any restart and it has no revoke.
+- **A row without it.** `verify_consumers` counts the `PATCH` answering 2xx, as an issue does.
+  That the lane runs on the new token is the lane phases' proof (`lanes-finish` and `lane-run
+  --read`), outside the plan, which stands in for decision 3's machine check before the revoke
+  (D-27).
+
+No `bws-lane-token` row in `.cred-consumers.toml` names `helper_target`, so every lane token keeps
+the `PATCH` proof (D-27). Increment 7's cut-over reinstalls the helper first, before any lane-token
+row names a target. Until then the installed helper refuses a consumers-only target, so a row
+naming one would wait on its 48-hour alert, never pass.
 
