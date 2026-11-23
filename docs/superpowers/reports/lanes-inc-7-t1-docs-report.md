@@ -43,12 +43,11 @@ Docs only. No code, test, TOML, script or plist changed.
 - `make check` ran on worktree database `orchestrator_test_hq_w_273`, with
   `SECURITY_STANDARDS_DIR` at the fixtures and `PGTZ=UTC`. Ruff and pyright were clean (0 errors).
   Pytest collected 14,669 items: 14,668 passed and 1 skipped. That run was on the first commit.
-  The fix commit changed only the same three docs. After this report was added, I reran the
-  layer-manifest test (see the following list).
+  The fix commit changed only the same three docs.
 - `code-standards risk --repo .` returned `normal`, before and after the commit, so I ran no
   `vendor-review`.
 - `tests/architecture/test_layer_manifest.py` ran on the committed tree after this report was
-  added. Its result is in the commit that adds this report.
+  added: 3 passed.
 
 ## Files changed
 
