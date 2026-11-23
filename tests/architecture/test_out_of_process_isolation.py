@@ -450,6 +450,7 @@ TABLE: dict[str, Row] = {
         "__future__",
         "alert_hub_client",
         "base64",
+        "collections",
         "dataclasses",
         "estate_clients",
         "hashlib",

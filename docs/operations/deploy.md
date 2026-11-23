@@ -1378,6 +1378,12 @@ administrators, so a bump checks it. A person bumps the pin, in an HQ or build s
 proposes it (ADR-0059 Amendment 18 decision item 4). Bump it when the bundle at infraops' `main`
 differs from the pinned digest; a commit that leaves the bundle unchanged needs no bump.
 
+The pin watcher's daily acting pass compares the two digests, logs both, and raises the keyed
+alert `infraops-pin-behind:change-window` when they differ (its state:
+`infraops-pin-alerts.json` in `PIN_WATCHER_STATE_DIR`). To resolve it, bump the pin with the
+following steps; the first pass after the bump merges resolves the alert, because it reads
+`lanes/Dockerfile` at `main`, not the deployed image (ADR-0059 Amendment 19).
+
 1. Pick the target commit on infraops' `main`, the full 40 characters:
    `git -C <infraops checkout> rev-parse origin/main` after a fetch.
 2. Confirm that commit's `Build` push run concluded `success`:

@@ -846,6 +846,11 @@ OUTBOUND_ALLOWLIST = {
     # tests/pin_watcher/test_client_surface.py.
     # Its egress is not the orchestrator's.
     Path("src/pin_watcher/orchestrator_client.py"),
+    # The pin watcher's infraops bundle check (ADR-0059 Amendment 19): two GETs on the public raw
+    # host, orchestrator main's `lanes/Dockerfile` and the bundle path that file names, with no
+    # credential. A stale pin is a fact about two remote files, so no local surface can answer it.
+    # Its egress is not the orchestrator's.
+    Path("src/pin_watcher/bundle.py"),
     # The revision watcher. Three readers and one writer, all out of process (ADR-0002's shape),
     # because the question is about applications this repository does not run and the answer is
     # filed rather than acted on. `estate.py` performs one GET per declared application against
