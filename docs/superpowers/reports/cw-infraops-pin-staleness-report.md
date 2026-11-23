@@ -2,7 +2,7 @@ Outcome: done
 
 # Report: cw-infraops-pin-staleness (ADR-0059 Amendment 18 item 5)
 
-Worker W-279. Branch `hq/cw-infraops-pin-staleness`, base `origin/main` `a2c27ce7`.
+Worker W-279. Branch `hq/cw-infraops-pin-staleness`, base `origin/main` `a2c27ce7`. PR #796.
 
 ## What I built
 
@@ -139,11 +139,14 @@ The exit codes and `sds_deadman_arm sds-pin-watcher --finding 2` are unchanged.
 
 ## Concerns and follow-ups
 
-1. **A bundle that's never readable is silent.** Per the spec, unread holds the key and changes no
-   exit code. If the pin lines are reformatted, or the raw host keeps failing, no alert ever fires;
-   only stderr and CI's parse test notice. A follow-up could raise a second keyed alert after N
-   consecutive unread passes. That needs either state or an exit-code decision, so I didn't build
-   it.
+1. **Decision for HQ: a stale pin and an unreadable check both exit 0.** I kept the exit codes
+   unchanged, as the handoff's wording directs, so the bundle check affects the exit code only
+   through a failed send (3). That differs from the lane's own convention in two ways. The
+   launcher header defines 0 as "nothing was found", yet a stale pin also exits 0, because the
+   alert is its signal. And an unreadable caller exits 3, while an unreadable bundle exits 0, with
+   only stderr and CI's parse test to notice it. Mapping stale to 2 and unread to 3 would follow
+   the lane's convention, but it changes which passes the dead-man switch reports as failed. That
+   change is HQ's to make.
 2. **The parse is strict by design.** `ADD --checksum=… <url> change-mgr-cli.js` must be the
    instruction's exact shape. An added `--link` or `--chmod` flag makes it unreadable. The tracked
    Dockerfile test fails in CI first, which is the behavior the handoff asked for.

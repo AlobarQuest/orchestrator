@@ -405,7 +405,8 @@ A deploy watcher pass takes about 6 to 7 minutes (118 changes at about 3 s each,
 the lane from the scheduled pass's `job succeeded` line in the container log.
 
 `revision-watcher`'s tracked files (`lanes/revision-watcher/compose.yaml` and `crontab`) don't
-register it either. Its state is the acting pass's `alerts.json`, so its compose mounts the named
+register it either. Its state is the acting pass's `alerts.json` and `infraops-pin-alerts.json`, so its
+compose mounts the named
 volume `sds-lanes-revision-watcher-state` at `REVISION_WATCHER_STATE_DIR`
 (`/var/lib/sds/revision-watcher`). Its crontab runs `lane-run revision-watcher` hourly at minute
 40, as the Mac job's `StartInterval` of 3600 does; the minute keeps it clear of every other lane's
