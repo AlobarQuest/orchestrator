@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import UTC, datetime
 from typing import Final
 
@@ -41,7 +42,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure() -> None:
-    handler = logging.StreamHandler()  # stderr: see the module docstring
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.handlers = [handler]
