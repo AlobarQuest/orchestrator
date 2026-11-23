@@ -1,7 +1,10 @@
-"""Structured JSON logs on stdout, every line scrubbed of every value the process has handled.
+"""Structured JSON logs on stderr, every line scrubbed of every value the process has handled.
 
-Code Brain's `error-logging` road: JSON to stdout, never a secret. The executor never logs a value
-on purpose; `values.scrub` is the net behind that, applied to the whole rendered line.
+Code Brain's `error-logging` road: JSON lines, never a secret. They go to stderr, not the road's
+stdout, because stdout is `emit-secret`'s value channel: anything else written there would reach
+the host's `set-root-token --stdin` as the value. The systemd unit sets neither stream, so the
+journal takes both and a pass's lines read the same. The executor never logs a value on purpose;
+`values.scrub` is the net behind that, applied to the whole rendered line.
 """
 
 from __future__ import annotations
@@ -38,7 +41,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure() -> None:
-    handler = logging.StreamHandler()
+    handler = logging.StreamHandler()  # stderr: see the module docstring
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.handlers = [handler]

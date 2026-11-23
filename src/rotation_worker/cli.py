@@ -21,8 +21,9 @@ before the registry row exists, since the row names the id it prints.
 `grants` is read-only: it reads the member record with the instance's own bearer and prints whether
 each registry repository holds the `credential_rotation` grant. Exit 0, or 2 when it can't be read.
 `emit-secret <secret-id>` writes one BWS secret's value, read with the root, to a pipe and nothing
-else to stdout: the one verb that prints a value (increment 7, D-75 B). It refuses a terminal, and
-exits 2 on any failure, naming only the secret's id and the error's class.
+else to stdout: the one verb that prints a value (increment 7, D-75 B). It refuses a stdout that
+isn't a pipe or a socket, and exits 2 on any failure, naming only the secret's id and the error's
+class.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import logging
 import os
 import re
 import secrets
+import stat
 import sys
 from collections.abc import Callable, Sequence
 from datetime import datetime
@@ -414,11 +416,14 @@ def create_keeper(config: Config, credential_id: str) -> int:
 
 
 def emit_secret(config: Config, secret_id: str, out: TextIO) -> int:
-    """Write one secret's value and a newline to `out`, a pipe, for the host's `set-root-token
-    --stdin` (increment 7, D-75 B). Any secret the root reads: the config names no project to
-    limit it to. Nothing but the value goes to `out`, and no message carries it."""
-    if out.isatty():
-        print("emit-secret: writes only to a pipe, not a terminal", file=sys.stderr)
+    """Write one secret's value and a newline to `out`, a pipe or a socket, for the host's
+    `set-root-token --stdin` (increment 7, D-75 B). Any secret the root reads: the config names no
+    project to limit it to. Nothing but the value goes to `out`, and no message carries it."""
+    if not _is_pipe_or_socket(out):
+        print(
+            "emit-secret: writes only to a pipe or a socket, not a terminal or a file",
+            file=sys.stderr,
+        )
         return EXIT_UNREADABLE
     if config.store != "bws":
         print("emit-secret: only the BWS executor reads with the root", file=sys.stderr)
@@ -451,6 +456,15 @@ def emit_secret(config: Config, secret_id: str, out: TextIO) -> int:
         _discard(out)
         return EXIT_UNREADABLE
     return 0
+
+
+def _is_pipe_or_socket(out: TextIO) -> bool:
+    try:
+        mode = os.fstat(out.fileno()).st_mode
+    except OSError, ValueError:
+        # No descriptor (an in-memory stream) or a closed one: the caller refuses, with a message.
+        return False
+    return stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)
 
 
 def _discard(out: TextIO) -> None:
