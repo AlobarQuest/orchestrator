@@ -4201,10 +4201,39 @@ phase, before the SDS goes into production.
    1. **Drain.** Start only when no VM-instance rotation unit is `executing`, no rotation is between `store` and `retire_old` with a hosted unit still to run,
       and no dispatched run is live. A unit waiting unclaimed, such as a mint or reader wait, may
       stay. The VPS instance picks it up with its wait clock restarted.
-   2. **The root token at the move: open, Devon's choice at the cut-over's mint gate.** He can move
-      the file, or mint a second access token on the same machine account, store it on the VPS
-      with `set-root-token`, prove one pass, and then revoke the VM's. W-215 recommends the second.
-      Either way it's the same identity with the same grants. This amendment doesn't decide it.
+   2. **The root token at the move: a second token, Devon's choice (D-75 B).** The choices were to
+      move the file, or to mint a second access token on the same machine account, store it on the
+      VPS with `set-root-token`, prove one pass, and then revoke the VM's. W-215 recommended the
+      second. Either way it's the same identity with the same grants. Devon chose the second, in an
+      interactive session on 2026-11-23, recorded at 2026-11-23T12:07:23Z in sds-hq
+      `state/decisions.md` (commit `a1b5c30b`), quoted from there:
+      - **D-75** (question): "Rotation executor's move to the VPS host (increment 7 cut-over,
+        ADR-0055 Amendment 29 item 4 step 2): how does its root token reach the host's file,
+        /etc/rotation-worker/root-token, with no terminal step for you? set-root-token needs a TTY
+        and vps_exec has none, so every route uses a session piping the value from the Mac over
+        SSH into a stdin mode of set-root-token (inert code HQ builds first). (A) Move: the session
+        pipes the VM's own token file to the host. No mint, no BWS change, nothing for you. The VM
+        and host hold the same token, so the VM can't be revoked separately: after the item 5
+        checks the session deletes the VM's file (that ends the rollback), and the old copy stays
+        on the VM's disk until the token's next rotation. (B) Second token, stored where only the
+        root reads: you mint a second access token on machine account rotation-executor and store
+        it as a secret in Rotation / Admin (the runbook says only the root reads that project, so
+        no grant changes). A session, as root in the VM, fetches it with the VM's token and pipes
+        it to the host; one pass proves it; after the item 5 checks you revoke the VM's token and
+        delete the BWS copy. (C) As B, but through a keeper in Rotation / Keepers with a temporary
+        sds-operator read (the D-54 pattern): departs from the runbook's no-widened-grant rule, and
+        sds-operator briefly holds the root identity." **Answer:** "B. Second token: Devon mints a
+        second access token on machine account rotation-executor and stores it in Rotation /
+        Admin (no grant change); a session, as root in the VM, fetches it with the VM's token and
+        pipes it to the host's set-root-token --stdin; one pass proves it; after the item 5 checks
+        Devon revokes the VM's token and the BWS copy is deleted."
+
+      The VM has no `bws` CLI, so the fetch is a new executor verb, `rotation-worker emit-secret
+      <secret id>`. It logs in with the VM's root token as every other verb does, reads the one
+      secret, and writes only its value and a newline to stdout, refusing a terminal. It runs as
+      `rotation`, started by root through `runuser`, because the root token file must belong to its
+      reader. The pipe and its order in the cut-over are in `docs/operations/rotation-executor.md`,
+      "Put the root token in its file" and "Cut over to the host".
    3. **The WORKER bearer** stays in `Rotation / Executor`, read at each pass. No orchestrator
       restart.
    4. **State.** Copy `announced-acts.json`, `wait-since.json` and `revokes-observed.json` from the

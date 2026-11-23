@@ -504,14 +504,47 @@ The file is `/etc/rotation-worker/root-token`, owned by `rotation`, mode `0400`,
 `rotation-executor` machine account's access token and nothing else. The account and its grants
 don't change.
 
-How the token reaches the file isn't decided on this page. Devon chooses at the cut-over's mint
-gate (amendment 29 item 4 step 2) between moving the VM's token and minting a second token on the
-same machine account. No route to the file is written yet: `set-root-token` needs a terminal, and
-`vps_exec` has none. Whatever route is chosen must meet these rules: Devon's only part is
-generating the value into BWS and granting read, he runs no terminal step, the value never enters
-a transcript, and no BWS identity, project, grant or scope is added or widened. Once the file
-exists, check it without reading it:
-`stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`.
+The host gets a second access token on the same machine account, and the VM keeps its own until
+the cut-over's checks pass (amendment 29 item 4 step 2, D-75 B). The route meets these rules: the
+value never enters a transcript, a process argument list, a file other than the target, or a log,
+and no BWS identity, project, grant or scope is added or widened.
+
+1. Devon mints the second access token on the `rotation-executor` machine account, in the BWS
+   console. He names it so the two tokens are told apart at the revoke, for example
+   `rotation-executor-vps-host`, and stores its value as a BWS secret in `Rotation / Admin`. Only
+   the root identity reads that project, so no grant changes. He gives the session the secret's
+   id, which isn't a value. That is Devon's whole part: he runs no terminal step.
+2. The VM must run a commit that has `rotation-worker emit-secret`. Update it with "Install or
+   update it" step 1 at this change's merge commit, or a later one, before the cut-over. That's a
+   separate act from the cut-over.
+3. A session runs the pipe from the Mac. The VM's executor reads the secret with its own root
+   token and writes the value to its stdout, and ssh carries it to the host's
+   `set-root-token --stdin`:
+
+   ```sh
+   set -o pipefail
+   orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \
+     HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker emit-secret \
+     <the host token's secret id> --config /etc/rotation-worker/config.toml \
+     | ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+       -i ~/.ssh/hetzner_infraops root@40.160.102.182 /opt/rotation-worker/bin/set-root-token --stdin
+   ```
+
+   `40.160.102.182` is `prod-vps`. The VM needs no SSH key to the host: ssh runs on the Mac.
+   `emit-secret` runs as `rotation` because the VM's root token file must belong to the reader.
+   It refuses a terminal on stdout and writes nothing but the value and one newline. Every
+   refusal or failure exits 2, and no message carries the value: one after the store opens names
+   only the secret's id and the error's class. Every refusal of `set-root-token` leaves the file
+   unchanged, and so does an empty pipe. The command exits 0 only when both sides succeed. A
+   non-zero status doesn't prove the file is unchanged: ssh can lose the connection after
+   `set-root-token` wrote it. Read the messages, fix the cause, and run the pipe again; it writes
+   the same value, so a second run is safe. Its output carries no value. Never run the `emit-secret`
+   half alone in a session: a tool's captured stdout isn't a terminal, so the refusal doesn't
+   apply, and the value would enter the transcript.
+4. Check the file without reading it, on the host:
+   `stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`. This proves
+   only the owner and mode. The value is proved by the cut-over's first pass on the host (step 4
+   of "Cut over to the host"), which logs in with it, before anything is revoked.
 
 ### Check the helper's key and host pin
 
@@ -538,7 +571,7 @@ Amendment 29 item 4 is the outline. The steps on this page run in this order, be
 instance may run at a time (item 4 step 6), and that includes a pass run by hand:
 
 1. Drain (item 4 step 1), install the code, write the config, check the pin, and put the root
-   token in its file.
+   token in its file with the `emit-secret` pipe ("Put the root token in its file", step 3).
 2. Stop and disable the VM's timer: `orb -m rotation-executor -u root systemctl disable --now
    rotation-worker.timer`. Then wait until `orb -m rotation-executor -u root systemctl is-active
    rotation-worker.service` prints `inactive`, so no VM pass is still running. Disable the timer;
@@ -572,10 +605,12 @@ instance may run at a time (item 4 step 6), and that includes a pass run by hand
 5. Check that no pass is running: `pgrep -u rotation` prints nothing. Then enable the host's
    timer: `systemctl enable --now rotation-worker.timer`. Read its passes with
    `journalctl -u rotation-worker -o cat`, one JSON line per event.
-6. Run amendment 29 item 5's checks. If the host got a second token, the VM's root token is
-   revoked only after every other check passes: no revoke without attested consumers (Infra Brain
-   1032). Its last check then proves the revoked token is refused on a fresh login with an empty
-   `HOME`. If the VM's token was moved instead, there's no second token and nothing to revoke.
+6. Run amendment 29 item 5's checks. Only after every other check passes, Devon revokes the VM's
+   token in the BWS console, the original token on `rotation-executor` by its name, never the
+   host's: no revoke without attested consumers (Infra Brain 1032). The last check then proves the
+   revoked token is refused on a fresh login with an empty `HOME`.
+7. Devon deletes the host token's BWS copy in `Rotation / Admin`. The host's file is then the
+   token's only copy.
 
 ### Roll back to the VM
 
@@ -586,8 +621,9 @@ While the VM's root token is unrevoked, the VM is the rollback. Keep one instanc
 2. On the VM, run `orb -m rotation-executor -u root systemctl enable --now rotation-worker.timer`.
 
 The host's state files don't carry back unless you copy them, with the same loss rule as step 3 of
-"Cut over to the host". This needs the VM to still hold a working root token. After its token is
-revoked, or if the token was moved off the VM, this page has no rollback.
+"Cut over to the host". This needs the VM to still hold a working root token, which it does until
+Devon revokes it in step 6 of "Cut over to the host". After that revoke, this page has no
+rollback.
 
 ## Its credentials
 
