@@ -336,9 +336,13 @@ def test_a_context_built_without_issue_takes_the_loaded_read(unit: Unit) -> None
     unit.helper = Helper({PRINT_KEY: printed(OLD_TOKEN)})
     provider = ADAPTERS["bws-lane-token"].build(_context(unit))
     variable = lane.lane_variable(LANE_DESTINATIONS, f'bws-secret uuid="{KEEPER}"')
-    with pytest.raises(ContractError, match="hasn't loaded"):
+    with pytest.raises(ContractError, match="hasn't loaded") as raised:
         provider.consumer_loaded(variable, NEW_TOKEN)
     assert unit.requests == []
+    # The raised text names fingerprints only: no scrub stands between it and a test here.
+    assert printed(OLD_TOKEN) in str(raised.value)
+    for token in (NEW_TOKEN, OLD_TOKEN):
+        assert token.reveal() not in str(raised.value)
 
 
 def test_a_helper_target_with_no_helper_configured_is_refused_at_build(unit: Unit) -> None:

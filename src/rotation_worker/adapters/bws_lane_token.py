@@ -155,11 +155,11 @@ def build_provider(
     coolify_url: str | None,
     organization_id: str | None,
     siblings: Callable[[], list[str]],
-    pg_helper: Callable[[], HelperClient] | None = None,
-    issue: bool = False,
+    pg_helper: Callable[[], HelperClient] | None,
+    issue: bool,
 ) -> BwsLaneTokenProvider:
-    """`issue` defaults to the strict path: a row naming a helper target takes the `loaded` read
-    unless the plan is an issue."""
+    """A row naming a helper target takes the `loaded` read unless `issue` says the plan is an
+    issue (`AdapterContext.issue`, whose default is that strict path)."""
     if rotation is None or credential is None:
         raise ContractError("the bws-lane-token adapter needs its rotation and registry row")
     if coolify_token_id is None or not coolify_url:
