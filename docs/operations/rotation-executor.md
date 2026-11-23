@@ -467,7 +467,8 @@ without the config and the root token's file. So you can install before the cut-
      bash /root/rotation-worker-provision/provision-<40-character commit>.sh <40-character commit>
    ```
 
-   They are two calls because the Mac's high-power gate denies a `vps_exec` command that holds
+   They are two calls so you read the download's result before anything runs, and so neither
+   needs the cleanup the Mac's high-power gate denies: it refuses a `vps_exec` command that holds
    `rm -f` or a pipe into `bash`. The script downloads to a file first: a pipe into `bash` would
    run an empty script and exit 0 if the download failed. The file is renamed into place only
    when `curl` succeeds, so the second call finds the whole script at that commit or no file. A
@@ -623,7 +624,8 @@ instance may run at a time (item 4 step 6), and that includes a pass run by hand
    systemctl is-active rotation-worker.service; pgrep -af '/opt/rotation-worker/venv/bin/[r]otation-worker'
    ```
 
-   It must print `inactive` and nothing else. `is-active` alone misses step 4's pass, which
+   It must print `inactive` and nothing else; the call then exits 1, because `pgrep` found no
+   process, and that exit is the clear answer. `is-active` alone misses step 4's pass, which
    `runuser` starts outside the unit. The bracket stops `pgrep` matching the shell that carries
    the command. Don't use `pgrep -u rotation`: on the host the `rotation` user's uid, 999, is also
    the uid of lane and Postgres container processes, so it lists them. Then enable the host's

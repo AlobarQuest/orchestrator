@@ -31,7 +31,9 @@ The Mac's log agrees for its own instance: its last pass logged
 Only `docs/operations/rotation-executor.md` line 497 named the wrong literal. I corrected it and
 said why the key ends in `bws-secret`. ADR-0055 Amendment 29 item 4 step 9 and the runbook's alert
 table say `rotation-heartbeat:<store kind>`, which is correct, so I left them. `deploy.md` doesn't
-name the key. No file names a literal `rotation-instance-behind:bws` either.
+name the key. No file names a literal `rotation-instance-behind:bws` either. Under
+`docs/superpowers/`, only `reports/lanes-inc-7-host-install-report.md` line 114 names
+`rotation-heartbeat:bws`; it's a finished build's record, so I left it.
 
 ### Item 2: the install step as two calls
 
@@ -79,7 +81,8 @@ the map is empty, the loop prints nothing, and rc 0 means "every scheduled reade
 zero readers. That row's lane is proved by the helper's `loaded` fingerprint (`helper_target =
 "execution-watch"`), which `read-consumers` doesn't read. Making it read that would be a design
 choice the handoff doesn't name, so I didn't. The runbook now says what an empty answer with exit
-0 means, naming this row.
+0 means, naming this row. I checked all 12 `bws-lane-token` rows that name `helper_target`:
+none has a scheduled read, so the sentence holds for each.
 
 ### Item 5: the change-window comment
 
@@ -108,8 +111,19 @@ file. Source was restored by copying a saved file back, with `PYTHONDONTWRITEBYT
 | Delete the `out.isatty()` guard | 1 failed | 1 failed |
 
 The terminal test already caught its mutant through its `"pipe"` check, as #797 said; it now
-also asserts `opened == []`. #797's other follow-ups (2-9) are listed as not done in the PR body.
-None is a doc wording fix inside this handoff's named sections.
+also asserts `opened == []`.
+
+#797's other follow-ups:
+
+- **7, done (doc wording):** ADR-0055 Amendment 29 item 4 step 2 said `emit-secret` logs in "as
+  every other verb does". `compare_destinations` (`cli.py:103`) reads only the git mirror and
+  doesn't log in, so the sentence now says "as every verb that reads the store does".
+- **2, 3, 5 and 9, not done:** they aren't wording fixes in the files this handoff names. 2 and 9
+  are about #797's report, 3 needs a test of behaviour, and 5 is a guard design choice.
+- **4 and 6, not done:** each is wording in a runbook section no item names, and the handoff bars
+  editing other sections.
+- **8, not done:** the fix is a docstring in `src/rotation_worker/logs.py`, which is under
+  `BEHIND_PATHS`. Editing it would start the behind clock on every instance for a comment.
 
 ### Item 7: the Mac Keychain instance and `rotation-instance-behind`
 
@@ -144,8 +158,8 @@ the alert enforces that.
    `deploy.md` says. That clears the alert and keeps the rule as written. It's a deploy on the
    operator Mac, so it's HQ's act, not this PR's. I recommend this one, before
    2026-11-24T04:32Z.
-2. **Accept the alert** until a Keychain-relevant change is installed. It reopens on every pass, so
-   this trains people to ignore it.
+2. **Accept the alert** until a Keychain-relevant change is installed. It stays open the whole
+   time, which teaches people to ignore it.
 3. **Narrow what counts per instance** (for example, a per-store `BEHIND_PATHS`, or ignoring
    commits that touch no code the Keychain instance runs). That's a code and design change to the
    alert, which the handoff rules out for this PR; it would need its own decision, and
@@ -158,7 +172,7 @@ the alert enforces that.
 
 - `make check` with my own database `orchestrator_test_hq_w_282` and the worktree's own venv:
   **rc 0, 14768 passed, 1 skipped** (5 min 57 s). Lint, format, type check and the whole-repo
-  scans passed.
+  scans passed. That run was at `386142fa`; FINAL_CHECK
 - `uv run pytest tests/rotation_worker/test_emit_secret.py`: 16 passed before the mutants.
 - The four mutants in the preceding "Item 6" table.
 - `code-standards risk --repo .`: **high-risk**, rule `secrets`, matching
@@ -179,6 +193,8 @@ the alert enforces that.
   "Write the config", "Cut over to the host" step 5, and the `read-consumers` paragraph.
 - `lanes/change-window/compose.yaml`: item 5, comment only.
 - `tests/rotation_worker/test_emit_secret.py`: item 6.
+- `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md`: #797 follow-up 7,
+  one sentence.
 - `docs/superpowers/reports/lanes-inc-7-cut-over-follow-ups-report.md`: this report.
 
 ## Self-review
