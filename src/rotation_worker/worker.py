@@ -55,6 +55,7 @@ from rotation_worker.contract import (
     Rotation,
     Step,
     StepKind,
+    UnitPlan,
     UnitRun,
 )
 from rotation_worker.coolify import CoolifyClient
@@ -467,6 +468,7 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
         _mint_waits(setup, approved, provider, unit, found)
         or _read_mint_waits(setup, approved, provider, unit, found)
         or _adapter_waits(setup, approved, unit_id, found)
+        or _loaded_waits(setup, approved, provider, unit_id, found)
         or _revoke_waits(setup, approved, provider, unit_id, found)
         or _overlap_waits(setup, approved, unit, found)
         or _restart_waits(setup, approved, held, unit_id, found)
@@ -591,6 +593,7 @@ def _provider(setup: Setup, approved: Approved) -> Provider:
             credential=approved.registry.credential,
             organization_id=setup.organization_id,
             pg_helper=setup.pg_helper,
+            issue=approved.plan.issue,
         )
     )
 
@@ -627,6 +630,41 @@ def _adapter_waits(setup: Setup, approved: Approved, unit_id: str, found: PassAc
     """Whether the adapter says the unit can't be claimed yet; the reason is logged."""
     wait = approved.adapter.wait
     reason = wait(approved.unit, setup.client.history(unit_id), _now()) if wait else None
+    if reason is not None:
+        LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
+        found.waits[unit_id] = Wait(reason)
+    return reason is not None
+
+
+@runtime_checkable
+class WaitsForLoad(Protocol):
+    """A provider whose unit waits, unclaimed, until a consumer has loaded the keeper's value: a
+    lane token's reissue on a row naming its helper target (ADR-0055 amendment 29 item 3)."""
+
+    def loaded_wait(self, unit: UnitPlan, keeper: Callable[[], Fingerprint]) -> str | None:
+        """Why the unit can't be claimed yet, or `None`. `keeper` reads the keeper's fingerprint,
+        called only when the unit waits on a read. Raises when either can't be read."""
+        ...
+
+
+def _loaded_waits(
+    setup: Setup, approved: Approved, provider: Provider, unit_id: str, found: PassActs
+) -> bool:
+    """Whether the unit waits for a consumer to load the keeper's value. The read is made here,
+    before the claim, because a claimed step that raises spends an attempt; the claimed step reads
+    once more. An answer that doesn't match and one that can't be read both wait, on the ordinary
+    48-hour clock, and neither is ever a pass."""
+    if not isinstance(provider, WaitsForLoad):
+        return False
+    keeper_id = approved.rotation.keeper_id
+    try:
+        reason = provider.loaded_wait(
+            approved.unit, lambda: setup.store.read(keeper_id).fingerprint
+        )
+    except (ContractError, StoreError) as error:
+        # Deliberately not raised: an unreadable answer (a refusal, no answer, a key the store
+        # won't give) is a wait, logged below and alerted on the 48-hour clock, never a pass.
+        reason = f"what the consumer loaded can't be read: {scrub(str(error))}"
     if reason is not None:
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
         found.waits[unit_id] = Wait(reason)

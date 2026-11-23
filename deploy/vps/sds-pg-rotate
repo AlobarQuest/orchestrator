@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-"""Rotate a Postgres role's password on this host. Runs as root behind an SSH forced command.
+"""Rotate a Postgres role's password, and read what a container loaded, on this host. Runs as root
+behind an SSH forced command.
 
 One JSON line on stdin, one JSON line on stdout:
 
@@ -8,8 +9,10 @@ One JSON line on stdin, one JSON line on stdout:
 `set` answers {"changed": bool}, `probe` {"status": 200 | 401 | null}, `loaded`
 {"fingerprints": {"<container>/<env>": "<sha256 first 16>:<length>"}}. A refusal answers
 {"refused": reason} and exits 2. Targets come from the root-owned TARGETS_PATH, never from the
-request. No verb returns a password, logs one, or puts one in argv; `set` sends Postgres only a
-SCRAM-SHA-256 verifier, so the plaintext cannot reach its statement log. Stdlib only, Python 3.12.
+request. A consumers-only target (no container, role or database) answers `loaded` and refuses
+`set` and `probe` as `bad_target`. No verb returns a password, logs one, or puts one in argv;
+`set` sends Postgres only a SCRAM-SHA-256 verifier, so the plaintext cannot reach its statement
+log. Stdlib only, Python 3.12.
 """
 
 from __future__ import annotations
@@ -97,11 +100,21 @@ def _ident(value: object) -> str:
     return value
 
 
-def _target(name: object) -> dict[str, Any]:
+def _target(name: object, verb: str) -> dict[str, Any]:
+    """The named target, refused unless `verb` can act on it.
+
+    A Postgres target names its `container`, `role` and `database`, each a valid identifier, and
+    serves every verb. A consumers-only target names none of the three and serves `loaded` alone:
+    a lane's container and the variable it loads (ADR-0055 amendment 29 item 3). A target naming
+    only some of them is refused for every verb.
+    """
     target = _load_targets().get(name) if isinstance(name, str) else None
     if not isinstance(target, dict):
         raise Refused("unknown_target")
-    for key in ("container", "role", "database"):
+    database_keys = ("container", "role", "database")
+    if verb == "loaded" and not any(key in target for key in database_keys):
+        return target
+    for key in database_keys:
         _ident(target.get(key))
     return target
 
@@ -201,7 +214,7 @@ def run(raw: bytes) -> tuple[dict[str, Any], int]:
         password = request.get("password")
         if verb != "loaded" and not (isinstance(password, str) and PASSWORD.fullmatch(password)):
             raise Refused("bad_password")
-        target = _target(request.get("target"))
+        target = _target(request.get("target"), verb)
         if verb == "loaded":
             return _loaded(target), 0
         if verb == "probe":
