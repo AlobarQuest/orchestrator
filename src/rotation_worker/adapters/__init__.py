@@ -68,6 +68,9 @@ class AdapterContext:
     organization_id: str | None = None
     # The VPS Postgres helper, built on demand so its SSH key is read only when a step needs it.
     pg_helper: Callable[[], HelperClient] | None = None
+    # Whether the unit's plan is an issue (`Plan.issue`). False is the strict path: a lane token
+    # whose row names a helper target then proves its variable by the `loaded` read.
+    issue: bool = False
 
 
 # Why a unit can't be claimed yet, from the unit, its history and the time; `None` means now.
@@ -164,6 +167,8 @@ def _bws_lane_token(context: AdapterContext) -> Provider:
         coolify_url=context.coolify_url,
         organization_id=context.organization_id,
         siblings=siblings,
+        pg_helper=context.pg_helper,
+        issue=context.issue,
     )
 
 

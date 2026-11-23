@@ -15,7 +15,9 @@ from types import ModuleType
 
 import pytest
 
-from rotation_worker.helper_client import PROBE_TIMEOUT_SECONDS, SET_TIMEOUT_SECONDS
+from rotation_worker.adapters.bws_lane_token import LoadedRead
+from rotation_worker.helper_client import PROBE_TIMEOUT_SECONDS, SET_TIMEOUT_SECONDS, HelperClient
+from rotation_worker.values import Value
 
 HELPER = Path(__file__).resolve().parents[2] / "deploy" / "vps" / "sds-pg-rotate"
 GOOD = "a" * 64
@@ -320,3 +322,97 @@ def test_the_helper_finishes_before_the_client_stops_waiting(helper):
     """Otherwise an ALTER can land after the client gave up, behind the undo's `set`."""
     assert SET_DOCKER_CALLS * helper.TIMEOUT < SET_TIMEOUT_SECONDS
     assert helper.TIMEOUT < PROBE_TIMEOUT_SECONDS
+
+
+# ---- a consumers-only target (ADR-0055 amendment 29 item 3) ---------------------------------
+
+LANE_TARGETS = """
+[target.lane]
+
+[[target.lane.consumer]]
+container = "lane1"
+env = "BWS_ACCESS_TOKEN"
+"""
+
+
+def test_a_consumers_only_target_answers_loaded(helper, monkeypatch, tmp_path):
+    retarget(helper, LANE_TARGETS)
+    monkeypatch.setenv("FAKE_ENV_VALUE", NEW)
+    answer, code = ask(helper, verb="loaded", target="lane")
+    assert code == 0
+    assert answer == {
+        "fingerprints": {
+            "lane1/BWS_ACCESS_TOKEN": f"{hashlib.sha256(NEW.encode()).hexdigest()[:16]}:64"
+        }
+    }
+    assert calls(tmp_path)[0]["argv"] == [
+        "exec",
+        "lane1",
+        "sh",
+        "-c",
+        'printf %s "$BWS_ACCESS_TOKEN"',
+    ]
+
+
+@pytest.mark.parametrize("verb", ["set", "probe"])
+def test_a_consumers_only_target_refuses_set_and_probe(helper, tmp_path, verb):
+    retarget(helper, LANE_TARGETS)
+    assert ask(helper, verb=verb, target="lane", password=GOOD) == ({"refused": "bad_target"}, 2)
+    assert calls(tmp_path) == []
+
+
+@pytest.mark.parametrize("key", ['container = "db1"', 'role = "app"', 'database = "appdb"'])
+@pytest.mark.parametrize("verb", ["set", "probe", "loaded"])
+def test_a_target_naming_only_part_of_a_database_is_refused_for_every_verb(
+    helper, tmp_path, key, verb
+):
+    retarget(helper, LANE_TARGETS.replace("[target.lane]\n", f"[target.lane]\n{key}\n"))
+    assert ask(helper, verb=verb, target="lane", password=GOOD) == ({"refused": "bad_target"}, 2)
+    assert calls(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "consumers",
+    [
+        "",
+        "consumer = []\n",
+        '[[target.lane.consumer]]\ncontainer = "lane1"\n',
+        '[[target.lane.consumer]]\nenv = "BWS_ACCESS_TOKEN"\n',
+        '[[target.lane.consumer]]\ncontainer = "lane1"\nenv = "bws_access_token"\n',
+        '[[target.lane.consumer]]\ncontainer = "lane1"\nenv = "X; id"\n',
+    ],
+    ids=["no-consumer", "empty", "no-env", "no-container", "lowercase-env", "injected-env"],
+)
+def test_a_consumers_only_target_with_a_missing_or_malformed_consumer_is_refused(
+    helper, tmp_path, consumers
+):
+    retarget(helper, "[target.lane]\n" + consumers)
+    assert ask(helper, verb="loaded", target="lane") == ({"refused": "bad_target"}, 2)
+    assert calls(tmp_path) == []
+
+
+def test_a_postgres_target_still_serves_every_verb(helper, monkeypatch):
+    monkeypatch.setenv("FAKE_ENV_VALUE", NEW)
+    assert ask(helper, verb="probe", target="app", password=GOOD) == ({"status": 200}, 0)
+    assert ask(helper, verb="set", target="app", password=GOOD) == ({"changed": False}, 0)
+    assert ask(helper, verb="loaded", target="app")[1] == 0
+
+
+def test_the_helper_s_print_and_the_lane_token_adapter_s_compare_equal(
+    helper, monkeypatch, tmp_path
+):
+    """The helper's `loaded` answer, through the executor's client and the adapter's comparison,
+    matches the value it read and no other: a drift in either side's format fails here instead of
+    making every reissue wait forever."""
+    retarget(helper, LANE_TARGETS)
+    monkeypatch.setenv("FAKE_ENV_VALUE", NEW)
+
+    def ssh(argv: list[str], *, input: bytes, **_options: object) -> subprocess.CompletedProcess:
+        answer, code = helper.run(input)
+        return subprocess.CompletedProcess(argv, code, (json.dumps(answer) + "\n").encode(), b"")
+
+    client = HelperClient("root@vps", "vps ssh-ed25519 AAAA", Value("k" * 32), tmp_path, run=ssh)
+    read = LoadedRead("lane", lambda: client)
+    assert read.mismatch(Value(NEW).fingerprint) is None
+    assert read.mismatch(Value(GOOD).fingerprint) is not None
+    assert read.mismatch(Value(NEW[:-1]).fingerprint) is not None
