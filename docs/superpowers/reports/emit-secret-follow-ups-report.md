@@ -150,7 +150,8 @@ I reran it with a valid import, and again after `sys.stderr` was made explicit.
 - Vendor review (`/tmp/vendor-review-dh_o4196`, diff sha256 `d6b4caf0…`): complete, 2 of 2
   seats ran; claude approve, codex approve, 0 findings kept, 0 dropped. agy: off by
   configuration. With no findings, there was nothing to reproduce.
-- CI: CI_PLACEHOLDER
+- CI on head `dfd74f4a` (run 45230925041): all three jobs pass. `Quality` collected and
+  passed 14,763 tests, 14 skipped. The commit that adds this line changes only this report.
 
 ## Files changed
 
