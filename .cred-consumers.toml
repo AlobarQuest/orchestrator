@@ -1148,7 +1148,9 @@ healthchecks_check = "sds-change-proposer"
 # first issue by `rotate_requested`. The ping URL's row is dated only after the token's `store` unit
 # completed, so the two issue units never waited on a mint at once. Both keepers were created in
 # Rotation / Keepers at HQ gate G-53, where the lane's account got its four reads.
-# Neither row carries `created`, for the reason the landing ledger's block gives.
+# Neither row carries `created`, for the reason the landing ledger's block gives. The token's row is
+# dated 2026-11-23 for its first reissue (D-76 B, revision 2, approved by Devon by name); the ping
+# URL's row keeps its date, because a ping URL can't be reissued, only replaced.
 [[credential]]
 id = "rotation-decomposer-bws-token"
 class = "bws-lane-token"
@@ -1156,7 +1158,7 @@ provider = "bws-lane-token"
 bws_uuid = "623e61a6-d613-4e89-9626-b501013afbeb"
 rotated_by_sds = true
 helper_target = "rotation-decomposer"
-rotate_requested = "2026-11-13"
+rotate_requested = "2026-11-23"
 # What the lane's account sees, exactly: .bws-secrets.toml's rotation-decomposer secrets
 # (ORCHESTRATOR_M2M_CREDENTIALS, change-manager/M2M_TOKEN_READ, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE)
 # and the ping URL's keeper.

@@ -126,7 +126,7 @@ def test_the_ping_url_row_names_only_its_keeper(rows: dict[str, RegistryEntry]) 
 def test_both_rows_are_due(rows: dict[str, RegistryEntry]) -> None:
     """The ping URL's row is dated only after the token's `store` unit completed, so the two issue
     units never waited on a mint at once."""
-    assert rows[TOKEN].credential["rotate_requested"] == "2026-11-13"
+    assert rows[TOKEN].credential["rotate_requested"] == "2026-11-23"
     assert rows[PING_URL].credential["rotate_requested"] == "2026-11-13"
 
 
