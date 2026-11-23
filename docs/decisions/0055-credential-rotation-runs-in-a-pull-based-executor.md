@@ -4254,12 +4254,20 @@ phase, before the SDS goes into production.
    - `rotation-instance-behind` is clear.
    - The tailnet Coolify `PATCH` answers 2xx, on a canary or the next real issue.
    - The helper's `loaded` answers for its targets.
-   - A ping-URL listing logs `ping_url_read`.
    - The VM's timer is disabled, and after its revoke its root token is refused on a fresh login
      with an empty `HOME`.
    - One lane token's `loaded` fingerprint equals its keeper's.
 
    These are the exit. No week is run.
+
+   2026-11-23, D-77 C: the check "A ping-URL listing logs `ping_url_read`" is dropped, because
+   no pass can meet it. `ping_url_read` is logged only inside an issue's mint step
+   (`src/rotation_worker/worker.py`), a `healthchecks-ping-url` has no rotation plan once issued
+   (`src/rotation_worker/plans.py`), and all 17 ping-URL rows in `.cred-consumers.toml` are
+   already issued. The G-91 session's evidence stands in its place: the host's BWS login works in
+   every pass, Healthchecks is reachable from the host, and the Management key's read is a BWS
+   grant the move didn't change. The next new lane's first ping-URL issue on the host is the
+   natural proof: if the read fails, its mint step fails visibly.
 
 ### Verify items
 
