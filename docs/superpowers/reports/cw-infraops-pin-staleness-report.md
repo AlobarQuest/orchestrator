@@ -187,7 +187,8 @@ The exit codes and `sds_deadman_arm sds-pin-watcher --finding 2` are unchanged.
 
 ## Fix round 1
 
-Worker W-280, on PR #796's head `65961049`. Nothing later than that commit was on the branch.
+Worker W-280. The round builds on PR #796's head at its start, `65961049`; nothing later than
+that commit was on the branch. The round's commits sit on top of it.
 I reached the head with `git merge --ff-only`: `git reset --hard` was denied by the harness, and a
 fast-forward gives the same result because the worktree branch was at the PR's base, `a2c27ce7`.
 
@@ -278,3 +279,22 @@ cleared around each. The file was restored byte-for-byte afterward.
 - **Infra Brain BLOCK 3:** no image tag was touched.
 - Rules 1, 4, 5, 6, 211, and 212 don't apply. The do-not-touch list is unchanged, and so are
   `scripts/run-pin-watcher.sh` and `sds_deadman_arm`.
+
+### Code review
+
+I ran `/code-review` at medium effort on `65961049..HEAD`. It returned three nits and no blocking
+findings:
+
+- **An unread bundle beside a caller finding exits 3, not 2.** This is intended. It follows HQ's
+  decision and the lane's existing rule that 3 outranks 2. `test_unread_outranks_a_caller_finding`
+  pins it, and I added one sentence to Amendment 19 item 4 that states it.
+- **This section named the starting head ambiguously.** I reworded its first paragraph.
+- **`_check_bundle` returns one bit for two causes (unread, sync failed).** I kept the single
+  bit, because the pass needs only completeness, the stderr line says which cause it was, and the
+  mutation runs show the tests pin both causes. No change.
+
+After review, I also added the unread bundle to the exit-code table at the top of `cli.py`'s
+docstring (also its `--help` text). I confirmed the dead-man claim against the exit trap
+(`scripts/sds-deadman.sh`, `sds_deadman_finish`): an exit other than 0 or the declared finding
+code (2) sends `/fail`.
+

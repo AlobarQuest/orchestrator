@@ -5096,7 +5096,8 @@ amendment appends only.
    as exactly one pin is logged with what failed (the URL and status, the transport error's type,
    or the parse reason) and passed to the sync as unread, so the key the last pass left stays as it
    was, held and never resolved. An unread bundle makes the pass exit with the incomplete code
-   (3), a dry run included, as an unreadable caller does. Otherwise a bundle that moved or was
+   (3), a dry run included, as an unreadable caller does, and it outranks a caller finding (2)
+   for the same reason: an incomplete pass can't claim it found everything. Otherwise a bundle that moved or was
    renamed while no key was open would send nothing and exit clean on every pass, and the dead-man
    check would stay green.
 5. **The exit codes and the dead-man switch are otherwise unchanged.** The check runs before the

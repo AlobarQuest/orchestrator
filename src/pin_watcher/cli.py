@@ -11,8 +11,8 @@ already paid for.
   0  every caller was measured and every one is at the recommendation.
   1  the tool itself failed -- a missing credential, an unusable URL, an unhandled error.
   2  a caller is not at the recommendation. The pass worked; the estate did not.
-  3  some caller could not be read, or its row could not be filed, so the answer is missing
-     rather than clean.
+  3  some caller could not be read, or its row could not be filed, or change-window's infraops
+     pin could not be read, so the answer is missing rather than clean.
 
 3 OUTRANKS 2, and the reason is the same one every sibling lane states: an incomplete pass cannot
 claim it found everything there was to find.
