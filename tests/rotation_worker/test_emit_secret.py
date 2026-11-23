@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import os
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -186,3 +188,62 @@ def test_a_config_error_names_its_reason(
     assert cli.emit_secret(_config(tmp_path), secret_id, Pipe()) == cli.EXIT_UNREADABLE
     # Scrubbed: an earlier test in the same process may have wrapped a value this text holds.
     assert capsys.readouterr().err == f"emit-secret: {scrub('the root token file is empty')}\n"
+
+
+@pytest.mark.parametrize(
+    "stored", ["placeholder value-1", "placeholder-\nvalue-1", "placeholder-\x07"]
+)
+def test_a_value_holding_whitespace_or_a_control_character_is_refused(
+    tmp_path: Path, store: CountingStore, capsys: pytest.CaptureFixture[str], stored: str
+) -> None:
+    secret_id = store.put(ADMIN, "rotation-executor host token", Value(stored))
+    pipe = Pipe()
+    assert cli.emit_secret(_config(tmp_path), secret_id, pipe) == cli.EXIT_UNREADABLE
+    assert pipe.getvalue() == ""
+    assert stored not in capsys.readouterr().err
+
+
+CLOSED_PIPE_RUN = """
+import sys
+from pathlib import Path
+from rotation_worker import cli
+from rotation_worker.config import Config
+from rotation_worker.values import Value
+
+class Store:
+    def read(self, secret_id):
+        return Value("placeholder-value-1" * 4096)
+
+cli.open_store = lambda config: Store()
+config = Config(
+    orchestrator_url="https://sds.example",
+    credential_key_id="rotation-executor-1",
+    organization_id="11111111-1111-4111-8111-111111111111",
+    work_project_id="22222222-2222-4222-8222-222222222222",
+    bearer_secret_id=None,
+    root_token_file=Path("root-token"),
+    state_dir=Path("."),
+    source_revision="0123456789ab",
+)
+sys.exit(cli.emit_secret(config, "99999999-9999-4999-8999-999999999999", sys.stdout))
+"""
+
+
+def test_a_real_closed_pipe_exits_2_with_one_message() -> None:
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    try:
+        finished = subprocess.run(
+            [sys.executable, "-c", CLOSED_PIPE_RUN],
+            stdout=write_end,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    finally:
+        os.close(write_end)
+    assert finished.returncode == cli.EXIT_UNREADABLE
+    assert finished.stderr == (
+        "emit-secret: 99999999-9999-4999-8999-999999999999 not written: BrokenPipeError\n"
+    )

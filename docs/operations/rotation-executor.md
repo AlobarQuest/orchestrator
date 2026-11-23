@@ -532,14 +532,18 @@ and no BWS identity, project, grant or scope is added or widened.
 
    `40.160.102.182` is `prod-vps`. The VM needs no SSH key to the host: ssh runs on the Mac.
    `emit-secret` runs as `rotation` because the VM's root token file must belong to the reader.
-   It refuses a terminal on stdout, writes nothing but the value and one newline, and on any
-   failure exits 2 with a message naming only the secret's id and the error's class. Every
-   refusal of `set-root-token` leaves the file unchanged, and so does an empty pipe. The command
-   exits 0 only when both sides succeed; its output carries no value. Never run the `emit-secret`
+   It refuses a terminal on stdout and writes nothing but the value and one newline. Every
+   refusal or failure exits 2, and no message carries the value: one after the store opens names
+   only the secret's id and the error's class. Every refusal of `set-root-token` leaves the file
+   unchanged, and so does an empty pipe. The command exits 0 only when both sides succeed, and
+   that exit status is the proof the new token landed; anything else means the file is unchanged.
+   Its output carries no value. Never run the `emit-secret`
    half alone in a session: a tool's captured stdout isn't a terminal, so the refusal doesn't
    apply, and the value would enter the transcript.
 4. Check the file without reading it, on the host:
-   `stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`.
+   `stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`. This proves
+   only the owner and mode; the pipe's exit status, then the cut-over's first pass, prove the
+   value.
 
 ### Check the helper's key and host pin
 

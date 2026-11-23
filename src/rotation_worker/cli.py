@@ -31,6 +31,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import sys
@@ -436,14 +437,33 @@ def emit_secret(config: Config, secret_id: str, out: TextIO) -> int:
         # a value read in this process might stand in its message, and a traceback would show it.
         print(f"emit-secret: {secret_id} unreadable: {type(error).__name__}", file=sys.stderr)
         return EXIT_UNREADABLE
+    text = value.reveal()
+    if not text.isprintable() or any(character.isspace() for character in text):
+        # `set-root-token --stdin` reads one line and refuses inner whitespace anyway.
+        print(f"emit-secret: {secret_id} holds whitespace or a control character", file=sys.stderr)
+        return EXIT_UNREADABLE
     try:
-        out.write(f"{value.reveal()}\n")
+        out.write(f"{text}\n")
         out.flush()
     except OSError as error:
         # The reader went away (for example, ssh failed): the value reached no one.
         print(f"emit-secret: {secret_id} not written: {type(error).__name__}", file=sys.stderr)
+        _discard(out)
         return EXIT_UNREADABLE
     return 0
+
+
+def _discard(out: TextIO) -> None:
+    """Point `out`'s descriptor at /dev/null, so the interpreter's flush at exit of what is left in
+    its buffer succeeds and the exit code stays 2, not 120."""
+    try:
+        descriptor = out.fileno()
+    except OSError:
+        # An in-memory stream has no descriptor, and nothing is flushed from it at exit.
+        return
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, descriptor)
+    os.close(devnull)
 
 
 def pg_restore(setup: Setup, credential_id: str) -> int:
