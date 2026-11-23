@@ -10,6 +10,7 @@ other in-repo loader of the file reads it unchanged.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -173,3 +174,19 @@ def test_the_other_in_repo_loaders_read_the_file_unchanged() -> None:
     assert hands_over(text) == hands_over(bare)
     assert hands_over(text).target is True
     assert lanes_in_registry(text) == lanes_in_registry(bare)
+
+
+def test_the_install_page_lists_each_target_s_container_as_derived(
+    rows: dict[str, RegistryEntry],
+) -> None:
+    """The operations page's table is `<service>-<resource uuid>`, from the lane's compose file and
+    the row's `coolify-env` consumer, for exactly the rows naming a target."""
+    page = (ROOT / "docs/operations/rotation-executor.md").read_text()
+    listed = dict(re.findall(r"^ {3}\| `([a-z-]+)` \| `([a-z0-9-]+)` \|$", page, re.MULTILINE))
+    derived = {}
+    for credential in _lane_tokens(rows).values():
+        target = bws_lane_token.helper_target(credential)
+        if target is not None:
+            (variable,) = [c for c in credential["consumer"] if c["kind"] == "coolify-env"]
+            derived[target] = f"{_loading_service(credential)}-{variable['uuid']}"
+    assert listed == derived
