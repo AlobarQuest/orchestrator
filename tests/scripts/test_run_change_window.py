@@ -4,10 +4,11 @@ tracked files.
 The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it (on the
 secrets broker, `SDS_SECRETS_SOCKET` naming a stand-in broker's socket, `conftest.py`'s; or a
 lane's token as `BWS_ACCESS_TOKEN`; a ping-URL secret id, PATH and HOME), plus the test seams that
-name the four secret ids, unless a test removes them to read the launcher's own defaults. `bws`,
-`git`, `node` and `curl` are stubs on PATH that log what reached them: nothing reads BWS, clones
-infraops-mcp-server, runs the window, or reaches change-manager, Coolify, alert-hub or
-Healthchecks.
+name the four secret ids, unless a test removes them to read the launcher's own defaults. The
+tree holds an empty stand-in for the bundle the lane image bakes (`infraops/change-mgr-cli.js`,
+ADR-0059 Amendment 18). `bws`, `git`, `node` and `curl` are stubs on PATH that log what reached
+them: nothing reads BWS, runs the window, or reaches change-manager, Coolify, alert-hub or
+Healthchecks, and `git` is there only so a test sees that a pass never runs it.
 """
 
 from __future__ import annotations
@@ -26,7 +27,9 @@ from scripts import deploy_orchestrator as deploy
 from scripts.secrets_broker import load_allowlist
 
 LAUNCHER = Path("scripts/run-change-window.sh")
-HELPERS = ("sds-deadman.sh", "sds-bws.sh", "sds-cred-registries.sh")
+HELPERS = ("sds-deadman.sh", "sds-bws.sh")
+# Where the launcher runs the baked bundle, relative to its tree (`/app` in the image).
+BUNDLE = "infraops/change-mgr-cli.js"
 COMPOSE = Path("lanes/change-window/compose.yaml")
 CRONTAB = Path("lanes/change-window/crontab")
 
@@ -73,14 +76,10 @@ case " $BWS_EMPTY " in *" $3 "*) echo '{{"value": ""}}'; exit 0 ;; esac
 [ "$3" = "{PING_URL_UUID}" ] && {{ echo '{{"value": "{PING_URL}"}}'; exit 0; }}
 printf '{{"value": "value-of-%s"}}' "$3"
 """
-# `git clone ... <url> <directory>`: makes the directory, with the bundle unless `$FAKE_NO_BUNDLE`.
+# `git` only logs: a pass that runs it at all is the clone of `main` the pin replaced.
 _GIT = """#!/bin/bash
-echo "git $* lane_token=${BWS_ACCESS_TOKEN:+set} socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
+echo "git $*" >> "$LANE_LOG"
 echo "git $*" >> "$ARGV_LOG"
-[ -n "${FAKE_CLONE_FAILS:-}" ] && { echo "fatal: unable to access" >&2; exit 128; }
-directory="${@: -1}"
-mkdir -p "$directory/dist/bundle"
-[ -n "${FAKE_NO_BUNDLE:-}" ] || : > "$directory/dist/bundle/change-mgr-cli.js"
 """
 # `node <bundle> run-window ...`: logs its arguments and its whole environment, writes the digest
 # when given `--report-dir` (unless `$FAKE_NO_DIGEST`), and exits `$FAKE_RC`.
@@ -168,10 +167,15 @@ class Run:
 
 def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
     """`fake` is added to the environment, and a `None` in it removes that variable;
-    `NO_NODE="1"` leaves `node` off PATH instead."""
+    `NO_NODE="1"` leaves `node` off PATH instead, and `NO_BUNDLE="1"` leaves the baked bundle out of
+    the tree."""
     no_node = fake.pop("NO_NODE", "") == "1"
+    no_bundle = fake.pop("NO_BUNDLE", "") == "1"
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
+    if not no_bundle:
+        (root / BUNDLE).parent.mkdir()
+        (root / BUNDLE).write_text("")
     shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
     for helper in HELPERS:
         shutil.copy(Path("scripts") / helper, root / "scripts" / helper)
@@ -222,7 +226,7 @@ def _run(tmp_path: Path, *args: str, **fake: str | None) -> Run:
         check=False,
     )
     run = Run(result, tmp_path)
-    # Every pass removes its directory: the clone, the report and the digest's request body.
+    # Every pass removes its directory: the report and the digest's request body.
     assert list(pass_tmp.iterdir()) == [], list(pass_tmp.iterdir())
     return run
 
@@ -240,8 +244,7 @@ def test_a_bare_pass_is_a_prod_dry_run_that_reads_only_the_change_manager_bearer
     assert run.returncode == 0, run.stderr
     [node] = run.nodes()
     assert re.fullmatch(
-        r"node \S+/infraops-mcp-server/dist/bundle/change-mgr-cli\.js"
-        r" run-window --dry-run --instance prod",
+        rf"node \S+/tree/{BUNDLE} run-window --dry-run --instance prod",
         node,
     ), node
     # The ping-URL secret isn't read either: a dry run is no window, so it pings nothing.
@@ -267,7 +270,7 @@ def test_a_submit_pass_runs_the_prod_window_with_every_name_the_bundle_reads(
     assert run.returncode == 0, run.stderr
     [node] = run.nodes()
     assert re.fullmatch(
-        r"node \S+/infraops-mcp-server/dist/bundle/change-mgr-cli\.js run-window --instance prod"
+        rf"node \S+/tree/{BUNDLE} run-window --instance prod"
         rf" --report-dir \S+/reports --now {_NOW}",
         node,
     ), node
@@ -321,13 +324,15 @@ def test_no_coolify_instance_setting_but_the_prod_base_reaches_the_window(tmp_pa
 
 
 @pytest.mark.parametrize("mode", [(), ("--submit",)], ids=["bare", "submit"])
-def test_the_lanes_token_reaches_neither_git_nor_node(tmp_path: Path, mode: tuple[str]) -> None:
+def test_a_pass_clones_nothing_and_the_lanes_token_never_reaches_node(
+    tmp_path: Path, mode: tuple[str]
+) -> None:
+    """The window is the bundle baked at the pin (ADR-0059 Amendment 18): a pass that ran `git`
+    would be running infraops' `main` again."""
     run = _run(tmp_path, *mode)
     assert run.returncode == 0, run.stderr
-    [git] = run.gits()
-    assert git.endswith(" lane_token= socket=")
-    assert "https://github.com/AlobarQuest/infraops-mcp-server.git" in git
-    assert "--depth 1" in git and "--branch main" in git
+    assert run.gits() == []
+    assert not any(line.startswith("git ") for line in run.argv)
     assert run.node_env is not None
     assert "BWS_ACCESS_TOKEN" not in run.node_env
 
@@ -454,9 +459,9 @@ def test_a_sender_token_curls_config_cant_carry_fails_before_the_window(
 def test_a_missing_bundle_exits_2_before_any_secret_is_read(
     tmp_path: Path, mode: tuple[str]
 ) -> None:
-    run = _run(tmp_path, *mode, FAKE_NO_BUNDLE="1")
+    run = _run(tmp_path, *mode, NO_BUNDLE="1")
     assert run.returncode == 2
-    assert "has no dist/bundle/change-mgr-cli.js" in run.stderr
+    assert "FATAL: the lane image has no infraops/change-mgr-cli.js" in run.stderr
     assert run.secret_reads() == [] and run.nodes() == []
     assert run.pings == ([f"{PING_URL}/start", f"{PING_URL}/fail"] if mode else [])
 
@@ -466,16 +471,6 @@ def test_no_node_exits_2_before_any_secret_is_read(tmp_path: Path) -> None:
     assert run.returncode == 2
     assert "FATAL: no node on PATH" in run.stderr
     assert run.secret_reads() == []
-
-
-def test_a_failed_clone_exits_1_before_any_secret_is_read(tmp_path: Path) -> None:
-    run = _run(tmp_path, "--submit", FAKE_CLONE_FAILS="1")
-    assert run.returncode == 1
-    assert "FATAL: could not clone https://github.com/AlobarQuest/infraops-mcp-server.git" in (
-        run.stderr
-    )
-    assert run.secret_reads() == [] and run.nodes() == []
-    assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
 
 
 _OUTSIDE = (
@@ -545,8 +540,7 @@ def test_on_the_socket_a_dry_run_asks_for_the_execute_bearer_alone(tmp_path: Pat
     assert run.node_env["CHANGE_MGR_M2M_TOKEN"] == "brokered-CHANGE_MANAGER_EXECUTE_UUID"
     for name in ("SDS_SECRETS_SOCKET", "BWS_ACCESS_TOKEN"):
         assert name not in run.node_env, name
-    [git] = run.gits()
-    assert git.endswith(" lane_token= socket="), git
+    assert run.gits() == []
 
 
 def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(tmp_path: Path, broker) -> None:
@@ -565,8 +559,7 @@ def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(tmp_path: Pat
         DEFAULT_IDS["DIGEST_SENDER_UUID"],
     ]
     assert run.bws == []
-    [git] = run.gits()
-    assert git.endswith(" lane_token= socket="), git
+    assert run.gits() == []
     assert run.node_env is not None
     for name in ("SDS_SECRETS_SOCKET", "BWS_ACCESS_TOKEN"):
         assert name not in run.node_env, name
@@ -581,8 +574,8 @@ def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(tmp_path: Pat
 
 @pytest.mark.parametrize(
     "fault",
-    [{"FAKE_CLONE_FAILS": "1"}, {"FAKE_NO_BUNDLE": "1"}, {"NO_NODE": "1"}],
-    ids=["clone-fails", "no-bundle", "no-node"],
+    [{"NO_BUNDLE": "1"}, {"NO_NODE": "1"}],
+    ids=["no-bundle", "no-node"],
 )
 def test_on_the_socket_a_pass_that_cant_run_asks_for_nothing_but_its_ping_url(
     tmp_path: Path, broker, fault: dict[str, str]
@@ -590,7 +583,7 @@ def test_on_the_socket_a_pass_that_cant_run_asks_for_nothing_but_its_ping_url(
     asked: list[str] = []
     values = {**_BROKERED, PING_URL_UUID: PING_URL}
     run = _brokered(tmp_path, broker(values, _recording(values, asked)), "--submit", **fault)
-    assert run.returncode in (1, 2)
+    assert run.returncode == 2
     assert asked == [PING_URL_UUID]
     assert run.nodes() == []
     assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
@@ -657,6 +650,18 @@ def test_the_launcher_reads_no_keychain_and_runs_no_gh_or_npm() -> None:
     )
     assert "/usr/bin/security" not in code
     assert re.search(r"\b(gh|npm|npx)\b", code) is None
+
+
+def test_the_launcher_runs_the_baked_bundle_and_clones_nothing() -> None:
+    """ADR-0059 Amendment 18: the bundle's path comes from the launcher's own location, never from
+    the environment, and no clone helper or `git` call is left to fetch infraops' `main`."""
+    code = "\n".join(
+        line for line in LAUNCHER.read_text().splitlines() if not line.lstrip().startswith("#")
+    )
+    assert re.findall(r"^BUNDLE=.*$", code, re.M) == [f'BUNDLE="$REPO_ROOT/{BUNDLE}"']
+    for clone in ("sds-cred-registries.sh", "sds_anonymous_clone", "infraops-mcp-server"):
+        assert clone not in code, clone
+    assert re.search(r"\bgit\b", code) is None
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------

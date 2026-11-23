@@ -6,6 +6,8 @@
 # Every tool is pinned by version. Each downloaded binary is checked against its sha256 digest by
 # `ADD --checksum`, which fails the build on a mismatch. The digests are the ones each project
 # publishes for the release asset (GitHub's asset digest, or Node's SHASUMS256.txt).
+# One file isn't a tool release: infraops-mcp-server's change-window bundle, pinned by commit and
+# checked against the digest of the file at that commit (ADR-0059 Amendment 18).
 # The Debian packages are pinned by version; apt checks them against the archive's signed index.
 ARG ORCHESTRATOR_IMAGE
 
@@ -17,6 +19,11 @@ ARG GH_VERSION=2.95.0
 ARG UV_VERSION=0.10.9
 ARG NODE_VERSION=v26.4.0
 ARG BWS_VERSION=2.0.0
+# The change-window lane's program (ADR-0059 Amendment 18): one esbuild file, every dependency
+# bundled, so no `npm ci`. The digest attests the bytes; that they are this commit's own build is
+# infraops' `Build` job, which a bump confirms (`docs/operations/deploy.md`, "Bump change-window's
+# infraops pin"). Bump both lines together, never to a branch.
+ARG INFRAOPS_COMMIT=8dc4d43e309499e7420848177e1adabc8479f418
 ADD --checksum=sha256:cc232108374e8e2b537045f2d5eaa1229f619db314c3ba6a14d38b35dc0aa123 \
     https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64 \
     supercronic
@@ -32,14 +39,18 @@ ADD --checksum=sha256:f221dab30d0e9d544332f06fbee2c62186c97d864d5cac8482dba34f1e
 ADD --checksum=sha256:a8340ce01da609200441f2eca0e591173e124f012c88a16afda574279c052013 \
     https://github.com/bitwarden/sdk-sm/releases/download/bws-v${BWS_VERSION}/bws-x86_64-unknown-linux-gnu-${BWS_VERSION}.zip \
     bws.zip
-RUN mkdir -p /out/bin /out/node \
+ADD --checksum=sha256:cb94a415ec9395bfb4ca4431fd126dc947ad5ef046aca1d3efb1bb5d91b1f228 \
+    https://raw.githubusercontent.com/AlobarQuest/infraops-mcp-server/${INFRAOPS_COMMIT}/dist/bundle/change-mgr-cli.js \
+    change-mgr-cli.js
+RUN mkdir -p /out/bin /out/node /out/infraops \
     && install -m 0755 supercronic /out/bin/supercronic \
     && tar -xzf gh.tar.gz --strip-components=2 -C /out/bin "gh_${GH_VERSION}_linux_amd64/bin/gh" \
     && tar -xzf uv.tar.gz --strip-components=1 -C /out/bin \
       uv-x86_64-unknown-linux-gnu/uv uv-x86_64-unknown-linux-gnu/uvx \
     && tar -xzf node.tar.gz --strip-components=1 -C /out/node \
     && /usr/local/bin/python -m zipfile -e bws.zip /out/bin \
-    && chmod 0755 /out/bin/*
+    && chmod 0755 /out/bin/* \
+    && install -m 0444 change-mgr-cli.js /out/infraops/change-mgr-cli.js
 
 FROM ${ORCHESTRATOR_IMAGE}
 USER root
@@ -55,6 +66,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=tools /out/bin/ /usr/local/bin/
 COPY --from=tools /out/node /usr/local/lib/node
+# The bundle keeps its name: it runs `main()` only when its path ends with `change-mgr-cli.js`, and
+# under any other name exits 0 having done nothing. Root-owned and read-only, so a lane process
+# can't rewrite it; `run-change-window.sh` runs it as `$REPO_ROOT/infraops/change-mgr-cli.js`.
+COPY --from=tools /out/infraops/ /app/infraops/
 RUN for tool in node npm npx; do ln -s "../lib/node/bin/$tool" "/usr/local/bin/$tool"; done
 
 # The launchers, the six helpers they source, the two programs they and the scheduler run, and the

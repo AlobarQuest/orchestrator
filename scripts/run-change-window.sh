@@ -3,13 +3,16 @@
 # change requests change-manager holds as approved, for production Coolify only, with infraops'
 # own executor, then send the window's digest.
 #
-# THE EXECUTOR IS infraops', NOT THIS PROGRAM'S. Each pass clones infraops-mcp-server at `main`
-# and runs its bundled CLI, `dist/bundle/change-mgr-cli.js run-window` (D-66 A; infraops #171): one
-# esbuild file with every dependency bundled and Node's built-ins external, so the clone needs no
-# `npm ci`. It lists change-manager's approved items, drops security and rotation items, keeps the
-# prod ones (`--instance prod`, D-67 C: the lane never reaches dev Coolify, and a person handles dev
-# items), caps them at `MAX_CHANGES_PER_WINDOW` (5), and claims, executes and posts an outcome for
-# each. Selection is infraops' `selectItems`, which its dry run and its real run share.
+# THE EXECUTOR IS infraops', NOT THIS PROGRAM'S. Each pass runs infraops-mcp-server's bundled CLI,
+# `dist/bundle/change-mgr-cli.js run-window` (infraops #171), from the copy the lane image bakes in
+# at a pinned commit, checked against its sha256 (`lanes/Dockerfile`, `INFRAOPS_COMMIT`; ADR-0059
+# Amendment 18, D-70 A and D-66 B): `$REPO_ROOT/infraops/change-mgr-cli.js`, read-only. It's one
+# esbuild file with every dependency bundled and Node's built-ins external, so nothing is installed,
+# and a pass clones nothing. It lists change-manager's approved items, drops security and rotation
+# items, keeps the prod ones (`--instance prod`, D-67 C: the lane never reaches dev Coolify, and a
+# person handles dev items), caps them at `MAX_CHANGES_PER_WINDOW` (5), and claims, executes and
+# posts an outcome for each. Selection is infraops' `selectItems`, which its dry run and its real
+# run share.
 #
 # BARE INVOCATION IS A DRY RUN; `--submit` ACTS, as in the other acting lanes:
 #   bare      `run-window --dry-run --instance prod`. It lists the approved items and prints the
@@ -22,10 +25,11 @@
 # EXIT CODES, the whole interface a scheduled run has:
 #   0  the pass ran: the window ran (or the dry run listed its ids), whatever each item's outcome.
 #   1  the tool itself failed: an argument this launcher doesn't take, no lane socket or token, a
-#      secret that couldn't be read or is empty, a failed clone, or `run-window` failing (change-manager refused or couldn't be reached, a bad flag, an
-#      unhandled error). Any other code `run-window` exits with is reported as 1.
-#   2  the tool ran but could not use its inputs: the infraops clone has no
-#      `dist/bundle/change-mgr-cli.js`, or there is no `node`.
+#      secret that couldn't be read or is empty, or `run-window` failing (change-manager refused or
+#      couldn't be reached, a bad flag, an unhandled error). Any other code `run-window` exits with
+#      is reported as 1.
+#   2  the tool ran but could not use its inputs: the image holds no baked
+#      `infraops/change-mgr-cli.js`, or there is no `node`.
 #
 # THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), and it is the window's existing check,
 # `Change Manager OPs Check` (slug `operations-check`; change-manager's `.cred-consumers.toml`): the
@@ -48,9 +52,8 @@
 # there is no Keychain branch and no activation: `lane-run` names the broker's mounted socket in
 # `SDS_SECRETS_SOCKET` (or passes a lane's own token as `BWS_ACCESS_TOKEN`). Outside the lane's
 # container (`sds_in_lane_container` false) the launcher refuses before it resolves a ping URL or
-# calls anything. `git` runs without either variable, and both are unset before `node` runs, which
-# needs neither. The socket itself stays reachable, as the design accepts: `node` runs as the same
-# user.
+# calls anything. Both are unset before `node` runs, which needs neither. The socket itself stays
+# reachable, as the design accepts: `node` runs as the same user.
 #
 # Usage (in the lane's container, through `lane-run`):
 #   lane-run change-window              # dry run: lists the ids it would claim
@@ -100,23 +103,18 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" change-window "$SUBMITTING"
 
-# THE PASS DIRECTORY holds the clone, the window's report and the digest's request body. It holds
-# no credential and is removed on exit, with the outcome report.
+# THE PASS DIRECTORY holds the window's report and the digest's request body. It holds no
+# credential and is removed on exit, with the outcome report.
 PASS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/change-window.XXXXXX")" \
   || sds_outcome_fail "FATAL: could not create the pass directory"
 trap 'rm -f "$SDS_OUTCOME_REPORT"; rm -rf -- "$PASS_DIR"' EXIT
 
-# THE INPUT, gathered before any secret is read: infraops-mcp-server, anonymous, shallow, at `main`.
-# `sds_anonymous_clone` runs git with no credential, and without the broker's socket marker or a
-# lane token.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-cred-registries.sh"
-INFRAOPS_CLONE="$PASS_DIR/infraops-mcp-server"
-BUNDLE="$INFRAOPS_CLONE/dist/bundle/change-mgr-cli.js"
-_clone_error="$(sds_anonymous_clone infraops-mcp-server "$INFRAOPS_CLONE" 2>&1)" \
-  || sds_outcome_fail "$_clone_error"
+# THE INPUT, checked before any secret is read: the bundle the image bakes at its pinned commit.
+# The path is derived from the launcher's own location, never from the environment, and it keeps
+# the bundle's name, which the bundle needs to run at all (`lanes/Dockerfile`).
+BUNDLE="$REPO_ROOT/infraops/change-mgr-cli.js"
 [ -f "$BUNDLE" ] || sds_outcome_fail \
-  "FATAL: infraops-mcp-server at main has no dist/bundle/change-mgr-cli.js: the window can't run" 2
+  "FATAL: the lane image has no infraops/change-mgr-cli.js (lanes/Dockerfile's pinned bundle): the window can't run" 2
 command -v node >/dev/null 2>&1 || sds_outcome_fail "FATAL: no node on PATH: the window can't run" 2
 
 # THE SECRETS this mode needs, each through `sds_bws_value`'s one-argument form: the broker's
