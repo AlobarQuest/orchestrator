@@ -155,12 +155,10 @@ def test_equal_fires_nothing(monkeypatch, orchestrator, hub: Hub) -> None:
     assert hub.sent == []
 
 
-@pytest.mark.parametrize("failure", ["dockerfile-status", "bundle-status", "unanswered", "parse"])
-def test_unread_holds_the_key_and_changes_no_exit_code(
-    monkeypatch, orchestrator, hub: Hub, raw: Raw, failure: str
-) -> None:
-    raw.bundle = b"a newer build"
-    _run(monkeypatch, _current(), orchestrator)
+UNREAD_FAILURES = ["dockerfile-status", "bundle-status", "unanswered", "parse"]
+
+
+def _fail_reading(raw: Raw, failure: str) -> None:
     raw.bundle = BUNDLE
     if failure == "dockerfile-status":
         raw.statuses[bundle.DOCKERFILE_PATH] = 500
@@ -171,12 +169,65 @@ def test_unread_holds_the_key_and_changes_no_exit_code(
     else:
         raw.dockerfile = "FROM scratch\n"
 
+
+@pytest.mark.parametrize("failure", UNREAD_FAILURES)
+def test_unread_holds_an_open_key_and_is_incomplete(
+    monkeypatch, orchestrator, hub: Hub, raw: Raw, failure: str
+) -> None:
+    raw.bundle = b"a newer build"
+    _run(monkeypatch, _current(), orchestrator)
+    _fail_reading(raw, failure)
+
     result = _run(monkeypatch, _current(), orchestrator)
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 3, result.output
     assert "UNREAD: change-window's infraops pin" in result.output
     assert hub.keys("resolved") == []
     assert _bundle_remembered(hub) == {bundle.KEY}
+
+
+@pytest.mark.parametrize("failure", UNREAD_FAILURES)
+def test_unread_with_no_open_key_is_incomplete_not_silent(
+    monkeypatch, orchestrator, hub: Hub, raw: Raw, failure: str
+) -> None:
+    """The case a dead-man check would otherwise never see: nothing to hold, nothing sent."""
+    _fail_reading(raw, failure)
+
+    result = _run(monkeypatch, _current(), orchestrator)
+
+    assert result.exit_code == 3, result.output
+    assert "UNREAD: change-window's infraops pin" in result.output
+    assert hub.sent == []
+    assert _bundle_remembered(hub) == set()
+
+
+def test_unread_outranks_a_caller_finding(monkeypatch, orchestrator, hub: Hub, raw: Raw) -> None:
+    _fail_reading(raw, "unanswered")
+    result = _run(monkeypatch, _drifted(), orchestrator)
+    assert result.exit_code == 3, result.output
+    assert hub.keys("firing") == [CALLER_KEY]
+
+
+def test_a_dry_run_with_an_unread_bundle_is_incomplete_and_sends_nothing(
+    monkeypatch, orchestrator, hub: Hub, raw: Raw
+) -> None:
+    """As a dry run with an unreadable caller is: exit 3, nothing sent, no state written."""
+    monkeypatch.delenv(alerts.TOKEN_ENV)
+    _fail_reading(raw, "unanswered")
+    result = _run(monkeypatch, _current(), orchestrator, "--dry-run")
+    assert result.exit_code == 3, result.output
+    assert "UNREAD: change-window's infraops pin" in result.output
+    assert hub.sent == []
+    assert not (hub.state / alerts.BUNDLE_ALERTS_FILE).exists()
+
+
+def test_a_stale_pin_keeps_the_callers_exit_code(
+    monkeypatch, orchestrator, hub: Hub, raw: Raw
+) -> None:
+    raw.bundle = b"a newer build"
+    assert _run(monkeypatch, _current(), orchestrator).exit_code == 0
+    assert _run(monkeypatch, _drifted(), orchestrator).exit_code == 2
+    assert bundle.KEY in hub.keys("firing")
 
 
 def test_a_caller_pass_never_resolves_the_bundle_key(

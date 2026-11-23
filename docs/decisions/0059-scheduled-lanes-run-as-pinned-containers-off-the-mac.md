@@ -5095,12 +5095,16 @@ amendment appends only.
 4. **Unread isn't equal.** A failed fetch, a non-200 answer, or a Dockerfile that doesn't parse
    as exactly one pin is logged with what failed (the URL and status, the transport error's type,
    or the parse reason) and passed to the sync as unread, so the key the last pass left stays as it
-   was.
-5. **Exit codes and the dead-man switch are unchanged.** The check runs before the member record
-   is read, so neither that read nor GitHub's failing skips it. A stale or unread bundle changes no
-   exit code. A failed send of its key is the incomplete code (3), as a failed send of a caller key
-   already is, and the caller keys are still synced. `sds_deadman_arm sds-pin-watcher --finding 2`
-   is untouched.
+   was, held and never resolved. An unread bundle makes the pass exit with the incomplete code
+   (3), a dry run included, as an unreadable caller does. Otherwise a bundle that moved or was
+   renamed while no key was open would send nothing and exit clean on every pass, and the dead-man
+   check would stay green.
+5. **The exit codes and the dead-man switch are otherwise unchanged.** The check runs before the
+   member record is read, so neither that read nor GitHub's failing skips it. A stale bundle
+   changes no exit code: its keyed alert is its signal. A failed send of its key is the incomplete
+   code (3), as a failed send of a caller key already is, and the caller keys are still synced.
+   `scripts/run-pin-watcher.sh` and `sds_deadman_arm sds-pin-watcher --finding 2` are untouched:
+   3 already means an incomplete pass there, which the dead-man check reports as failed.
 
 ### Verify items
 

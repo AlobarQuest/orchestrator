@@ -184,3 +184,97 @@ The exit codes and `sds_deadman_arm sds-pin-watcher --finding 2` are unchanged.
 - Do-not-touch list: `.cred-consumers.toml`, `rotation-executor.md`, `tests/rotation_worker/`,
   `lanes/Dockerfile`, `run-change-window.sh`, `lanes/change-window/`, `sds-cred-registries.sh`,
   `.bws-secrets.toml`, and compose are all unchanged.
+
+## Fix round 1
+
+Worker W-280, on PR #796's head `65961049`. Nothing later than that commit was on the branch.
+I reached the head with `git merge --ff-only`: `git reset --hard` was denied by the harness, and a
+fast-forward gives the same result because the worktree branch was at the PR's base, `a2c27ce7`.
+
+### Findings and fixes
+
+1. **`deploy.md` named the wrong lane's state file.** The revision-watcher paragraph is back to its
+   `a2c27ce7` text, line breaks included: `git diff a2c27ce7 -- docs/operations/deploy.md` no
+   longer touches it. The pin-watcher paragraph names `alerts.json` and
+   `infraops-pin-alerts.json`. The pin-bump paragraph says "a pass after the bump merges resolves
+   the alert" instead of "the first pass".
+2. **An unread bundle was silent when no key was open.** `_check_bundle` now returns whether the
+   check is complete: `False` when the reading is unread, and `False` when an acting pass's sync
+   failed. The pass ends with exit 3 in either case. An acting pass still syncs the unread key
+   first, so an open key stays held and is never resolved. A stale pin keeps the exit code the
+   callers give. `scripts/run-pin-watcher.sh` and `sds_deadman_arm` are unchanged. In both, 3
+   already means an incomplete pass: the launcher passes 0 to 3 through, and the dead-man helper
+   sends `/fail` for every non-zero exit except the declared finding code 2. So the stop point
+   doesn't apply.
+   - **Dry run:** a `--dry-run` pass with an unreadable caller exits 3. `result.unreadable` is
+     checked whatever the mode, as `test_a_listing_that_cannot_be_read_whole_exits_three_and_files_nothing[dry-run-…]`
+     shows. A dry run with an unread bundle matches it: exit 3, nothing sent, and no state file
+     written.
+3. **ADR-0059 Amendment 19:** decision item 4 now states the rule: unread exits 3, a dry run
+   included; the key is held and never resolved. It also gives the reason: a moved or renamed
+   bundle would otherwise stay green. Item 5 no longer says a stale or unread bundle changes no
+   exit code; it says only a stale one doesn't. Only Amendment 19 was edited.
+4. **`cli.py` module docstring:** describes the order (credential checks, bundle check, member
+   record) and the unread rule. `bundle.py`'s module docstring also says the pass exits
+   incomplete on unread.
+
+### New and changed tests (`tests/pin_watcher/test_bundle.py`)
+
+- `test_unread_holds_an_open_key_and_is_incomplete` (4 failure kinds): replaces the earlier
+  exit-0 test. With the key open, the pass exits 3, nothing is resolved, and the key stays
+  remembered.
+- `test_unread_with_no_open_key_is_incomplete_not_silent` (4 failure kinds): with the key never
+  opened, the pass exits 3, sends nothing, and writes no key.
+- `test_unread_outranks_a_caller_finding`: an unread bundle alongside a drifted caller exits 3,
+  and the caller's key still fires.
+- `test_a_dry_run_with_an_unread_bundle_is_incomplete_and_sends_nothing`: exits 3, sends nothing,
+  and writes no state file.
+- `test_a_stale_pin_keeps_the_callers_exit_code`: a stale pin exits 0 with current callers and 2
+  with a drifted one. The existing equal and stale pass tests still assert exit 0.
+
+### Mutation result
+
+Three mutants of `src/pin_watcher/cli.py`, run against `tests/pin_watcher`, with `__pycache__`
+cleared around each. The file was restored byte-for-byte afterward.
+
+| Mutant | Result |
+|---|---|
+| `return reading is not None` becomes `return True` (unread leaves the exit unchanged) | killed, 10 failed |
+| The exit test drops `bundle_complete` | killed, 11 failed |
+| A failed bundle sync no longer returns `False` | killed, 1 failed (`test_a_failed_bundle_send_alone_is_incomplete`) |
+
+### Checks
+
+- `uv run pytest tests/pin_watcher`: 132 passed.
+- `make check` (database `orchestrator_test_hq_w_280`, migrated to head, `PGTZ=UTC`): ruff
+  "All checks passed!", pyright 0 errors, and **14744 passed, 1 skipped**.
+- `uv run --project ~/Developer/code-standards code-standards risk --repo .`: **`normal`**.
+
+### Files changed in this round
+
+- `src/pin_watcher/cli.py`: the unread rule and the module docstring.
+- `src/pin_watcher/bundle.py`: the module docstring's unread bullet.
+- `tests/pin_watcher/test_bundle.py`: the tests listed earlier.
+- `docs/operations/deploy.md`: finding 1.
+- `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md`: Amendment 19
+  only.
+- This report.
+
+### Standards followed (fix round 1)
+
+- **Code Brain rule 3:** the unread case still logs one `UNREAD:` line to stderr through
+  `typer.echo`, and the summary line goes to stdout. No logging library and no file were added.
+- **Code Brain rule 4:** `BundleUnreadable` is still caught in one place and logged. The pass no
+  longer swallows it at the pass level either: it surfaces as exit 3, which the dead-man check
+  reports as a failure.
+- **Code Brain rule 5:** no credential was added. `test_the_alert_token_never_reaches_the_output`
+  still passes.
+- **Code Brain rule 7:** the unread messages are unchanged: URL and status, transport error type,
+  or parse reason.
+- **Road `notifications`:** unread syncs the key as unread through `KeyedAlerts`, so an open key
+  is never resolved. Equal still sends `status: resolved`.
+- **Infra Brain BLOCK 2, 591, 592, 593:** no secret, token, or BWS read is in the diff.
+- **Infra Brain BLOCK 1032:** I saw no exposed credential.
+- **Infra Brain BLOCK 3:** no image tag was touched.
+- Rules 1, 4, 5, 6, 211, and 212 don't apply. The do-not-touch list is unchanged, and so are
+  `scripts/run-pin-watcher.sh` and `sds_deadman_arm`.

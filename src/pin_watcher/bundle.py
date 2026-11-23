@@ -15,7 +15,8 @@ every one of them.
 * **No credential.** Both files are public; the client sends no `Authorization` header, and only
   GETs on the raw host.
 * **Unread is not equal.** A failed fetch, a non-200 or a Dockerfile that doesn't parse raises
-  `BundleUnreadable`, which the pass treats as unread: the key it had stays as it was.
+  `BundleUnreadable`, which the pass treats as unread: the key it had stays as it was, never
+  resolved, and the pass exits incomplete.
 """
 
 from __future__ import annotations

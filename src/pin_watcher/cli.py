@@ -31,13 +31,16 @@ unusable alert state file is the incomplete code, after the pass's own work.
 EVERY PASS ALSO ASKS WHETHER CHANGE-WINDOW'S INFRAOPS PIN IS BEHIND (`pin_watcher.bundle`,
 ADR-0059 Amendment 19) and logs both digests. The acting pass keeps that answer on its own key,
 `infraops-pin-behind:change-window`, in its own state file, so it and the caller keys never resolve
-each other. An unreadable side holds the key and changes no exit code; a failed send of that key is
-the incomplete code, as a caller key's is.
+each other. An unreadable side is the incomplete code, as an unreadable caller is, a dry run
+included; the acting pass holds the key as unread and never resolves it. A failed send of that key
+is the incomplete code too. A behind pin keeps the exit code the callers give: its keyed alert is
+its signal.
 
-EVERY PASS READS THE MEMBER RECORD FIRST, a dry run included: the listing starts from its
-`onboarding` and `member` repositories (ADR-0059 amendment 4), so the orchestrator credential is
-needed before anything is measured. An unreadable record is the incomplete code, never a sweep of
-less than the listing.
+EVERY PASS CHECKS ITS CREDENTIALS FIRST (GitHub, the alert token an acting pass needs, the
+orchestrator), then the bundle, then reads the member record, a dry run included: the listing
+starts from its `onboarding` and `member` repositories (ADR-0059 amendment 4). The bundle check
+runs before the record so an unreadable record doesn't skip it. An unreadable record is the
+incomplete code, never a sweep of less than the listing.
 """
 
 from __future__ import annotations
@@ -127,10 +130,11 @@ def _tell(result: Pass, token: str) -> bool:
 
 def _check_bundle(token: str, *, acting: bool) -> bool:
     """Is change-window's infraops pin behind infraops `main`? Logs both digests; an acting pass
-    syncs the bundle's own key. False when that key could not be synced.
+    syncs the bundle's own key. False when the pin was unread or its key could not be synced.
 
-    An unreadable side is unread, never equal: logged with what failed, and the key the last pass
-    left stays as it was. It changes no exit code; only a failed sync does, as `_tell`'s does.
+    An unreadable side is unread, never equal: logged with what failed, the key the last pass left
+    stays as it was, and the pass is incomplete, as it is for an unreadable caller. Without that,
+    an unread bundle with no open key would send nothing and exit clean on every pass.
     """
     try:
         reading: bundle.Reading | None = bundle.read()
@@ -139,10 +143,11 @@ def _check_bundle(token: str, *, acting: bool) -> bool:
         reading = None
     else:
         typer.echo(bundle.describe(reading))
-    if not acting:
-        return True
-    firing, unread = bundle.classify(reading)
-    return _sync(alerts.open_bundle_hub, token, firing, unread)
+    if acting:
+        firing, unread = bundle.classify(reading)
+        if not _sync(alerts.open_bundle_hub, token, firing, unread):
+            return False
+    return reading is not None
 
 
 def _orchestrator_credential() -> tuple[str, str, str]:
@@ -187,7 +192,7 @@ def main(
 
     base_url, key_id, bearer = _orchestrator_credential()
     # Before the member record and GitHub, so neither being unreadable skips it.
-    bundle_told = _check_bundle(alert_token, acting=not dry_run)
+    bundle_complete = _check_bundle(alert_token, acting=not dry_run)
     members = _members(base_url, key_id, bearer)
 
     try:
@@ -219,14 +224,13 @@ def main(
         typer.echo(f"!! {repository} measured, row not filed", err=True)
 
     callers_told = dry_run or _tell(result, alert_token)
-    unreported = not (callers_told and bundle_told)
 
     findings = result.findings
     typer.echo(
         f"{len(result.callers)} callers, {len(findings)} findings, "
         f"{len(result.unreadable)} unreadable, {len(unfiled)} unfiled"
     )
-    if result.unreadable or unfiled or unreported:
+    if result.unreadable or unfiled or not (callers_told and bundle_complete):
         raise typer.Exit(EXIT_INCOMPLETE)
     if findings:
         raise typer.Exit(EXIT_FOUND)

@@ -405,8 +405,7 @@ A deploy watcher pass takes about 6 to 7 minutes (118 changes at about 3 s each,
 the lane from the scheduled pass's `job succeeded` line in the container log.
 
 `revision-watcher`'s tracked files (`lanes/revision-watcher/compose.yaml` and `crontab`) don't
-register it either. Its state is the acting pass's `alerts.json` and `infraops-pin-alerts.json`, so its
-compose mounts the named
+register it either. Its state is the acting pass's `alerts.json`, so its compose mounts the named
 volume `sds-lanes-revision-watcher-state` at `REVISION_WATCHER_STATE_DIR`
 (`/var/lib/sds/revision-watcher`). Its crontab runs `lane-run revision-watcher` hourly at minute
 40, as the Mac job's `StartInterval` of 3600 does; the minute keeps it clear of every other lane's
@@ -439,8 +438,9 @@ lane") still needs the following, in this order, each in its own change or act:
    retirement.
 
 `pin-watcher`'s tracked files (`lanes/pin-watcher/compose.yaml` and `crontab`) don't register it
-either. Its state is the acting pass's `alerts.json`, so its compose mounts the named volume
-`sds-lanes-pin-watcher-state` at `PIN_WATCHER_STATE_DIR` (`/var/lib/sds/pin-watcher`). Its crontab
+either. Its state is the acting pass's `alerts.json` and `infraops-pin-alerts.json`, so its
+compose mounts the named volume `sds-lanes-pin-watcher-state` at `PIN_WATCHER_STATE_DIR`
+(`/var/lib/sds/pin-watcher`). Its crontab
 runs `lane-run pin-watcher` daily at 07:25 New York time. The Mac job runs at 07:20, but minute 20
 is the deploy watcher's hourly start, and 25 keeps it clear of every other lane's start; the
 watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer, the
@@ -1382,7 +1382,7 @@ differs from the pinned digest; a commit that leaves the bundle unchanged needs 
 The pin watcher's daily acting pass compares the two digests, logs both, and raises the keyed
 alert `infraops-pin-behind:change-window` when they differ (its state:
 `infraops-pin-alerts.json` in `PIN_WATCHER_STATE_DIR`). To resolve it, bump the pin with the
-following steps; the first pass after the bump merges resolves the alert, because it reads
+following steps; a pass after the bump merges resolves the alert, because it reads
 `lanes/Dockerfile` at `main`, not the deployed image (ADR-0059 Amendment 19).
 
 1. Pick the target commit on infraops' `main`, the full 40 characters:
