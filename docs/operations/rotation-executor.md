@@ -560,9 +560,9 @@ and no BWS identity, project, grant or scope is added or widened.
    non-zero status doesn't prove the file is unchanged: ssh can lose the connection after
    `set-root-token` wrote it. Read the messages, fix the cause, and run the pipe again; it writes
    the same value, so a second run is safe. Its output carries no value. Never run the `emit-secret`
-   half alone in a session: `orb` hands the VM process a pipe whatever its own stdout is, so the
-   refusal can't see a tool capturing it or a redirect on the Mac, and the value would enter the
-   transcript or a file.
+   half alone in a session: `orb` hands the VM process a pipe when its own stdout is a pipe, a
+   file, or a tool's capture, so the refusal can't see a redirect on the Mac or a tool capturing
+   it, and the value would enter a file or the transcript.
 4. Check the file without reading it, on the host:
    `stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`. This proves
    only the owner and mode. The value is proved by the cut-over's first pass on the host (step 4
