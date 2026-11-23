@@ -470,9 +470,10 @@ without the config and the root token's file. So you can install before the cut-
    They are two calls because the Mac's high-power gate denies a `vps_exec` command that holds
    `rm -f` or a pipe into `bash`. The script downloads to a file first: a pipe into `bash` would
    run an empty script and exit 0 if the download failed. The file is renamed into place only
-   when `curl` succeeds, so the second call finds the whole script at that commit or no file. The
-   file holds no value, so leaving it is harmless; to remove it, run `rm` without `-f` on its
-   path. `provision.sh` installs `git`, `curl` and `ssh` with `apt-get` when any
+   when `curl` succeeds, so the second call finds the whole script at that commit or no file. A
+   failed download leaves at most the `.part` file, which the next try overwrites. Neither file
+   holds a value, so leaving them is harmless; to remove one, run `rm` without `-f` on its path.
+   `provision.sh` installs `git`, `curl` and `ssh` with `apt-get` when any
    is missing (the host is Ubuntu 24.04), and it refuses an architecture other than `x86_64` or
    `aarch64`. If the second call times out, run it again: the script is safe to re-run. A timeout only
    closes `vps_exec`'s connection (infraops `src/services/ssh-client.ts`, lines 68-71), so the
@@ -619,7 +620,7 @@ instance may run at a time (item 4 step 6), and that includes a pass run by hand
 5. Check that no pass is running, the service's or step 4's:
 
    ```sh
-   systemctl is-active rotation-worker.service; pgrep -af '/opt/rotation-worker/venv/bin/[r]otation-worker '
+   systemctl is-active rotation-worker.service; pgrep -af '/opt/rotation-worker/venv/bin/[r]otation-worker'
    ```
 
    It must print `inactive` and nothing else. `is-active` alone misses step 4's pass, which
