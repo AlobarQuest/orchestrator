@@ -82,20 +82,25 @@ lane's row may get `helper_target`".
   - `scripts/sds-cred-registries.sh`, `run-rotation-proposer.sh` and `lane_run.py` only list the
     file's path.
 
-  No digest, fixture or pin covers a whole row. The existing per-lane row tests assert subsets
+  No digest, fixture or pin covers a whole row. The only hash in the executor's path,
+  `canonical.package_hash`, is over the package, not the row. `worker.py` 838-870 reads
+  `provider_identity` and `id` only. The existing per-lane row tests assert subsets
   (`{TOKEN, PING_URL} <= set(rows)`), not exact key sets.
 - **Compose service names:** each of the 12 compose files gives one service.
 - **Behavior before the reinstall:** this was checked by tracing `worker._take`. The rows are read
   from `origin/main`, so nothing changes until the PR merges. If the PR merged before the reinstall,
   the old helper's `bad_target` reaches `_loaded_waits` as a `ContractError`. That's a wait on the
-  48-hour clock, never a pass. `build_provider` raises before the claim only when the instance has
+  48-hour clock, never a pass. In `helper_client.py`, every failure path of `loaded` raises
+  `ContractError`: a refusal (`HelperRefused`, a subclass), a timeout, SSH failing to start, no
+  answer, a non-zero exit, and a malformed answer. `_loaded_waits` catches exactly `ContractError`
+  and `StoreError`. `build_provider` raises before the claim only when the instance has
   no `pg_helper`. The VM executor has one (`rotation-executor.md` line 494: `pg_helper_host`
   "stays"). The Mac `rotation-worker` never builds this adapter, because its store kind is
   `keychain` and `bws-lane-token` is `bws-secret`.
 - **infraops `loadCredConsumerFiles`** (`src/security-drift/cred-consumers.ts` at `origin/main`,
   read with `git show`): any `key = value` that matches `^[A-Za-z0-9_-]+$` is stored on the row.
-  There's no unknown-key refusal, and `postgres-role` rows in other repositories already carry
-  `helper_target`.
+  There's no unknown-key refusal. infraops' own `.cred-consumers.toml` at `origin/main` already
+  has a top-level `helper_target` line, which the 03:00 scan reads today.
 
 ## Tests and checks
 
@@ -140,7 +145,14 @@ Rule 7 was not mutation-tested.
 - **`code-standards risk`:** `high-risk`, matching the `auth` rule on the new test's path. The
   vendor review ran in `/tmp/vendor-review-g1m5z4ju`. Claude approved with 0 findings, and Codex
   approved with 0 findings. agy is off by configuration. 0 findings were kept and 0 dropped, so
-  nothing needed reproducing. The review is complete for the seats that ran.
+  nothing needed reproducing. The review is complete for the seats that ran. Both reviews covered
+  commit `1f25f979`. Test 8 (`5ae1d60d`, test-only) came after them and wasn't
+  reviewed by a vendor seat.
+- **Final tree:** `tests/architecture/test_layer_manifest.py` passes, and the remote branch head
+  equals the local head.
+- **PR CI on `f89f9006`:** all three checks pass (`Quality`, `Rollout transcription currency`,
+  `Runner consumer compatibility`). `Quality` (run 45114760823) collected tests: 14681 passed, 14
+  skipped.
 - **`/code-review` (medium):** three nits.
   - The doc table isn't checked against the registry. I fixed this with test 8.
   - The field takes effect at merge before the reinstall. That's by design: the PR is a draft, and
@@ -173,9 +185,15 @@ BWS, infraops or token access.
   settings. Without them, the pass logs the unit `unit_not_worked`, a stuck wait. The VM has them
   according to the docs. Confirm at the cut-over.
 - **Container names:** I didn't verify them live. Confirm each with `docker ps` at the cut-over.
-- **ADR text:** ADR-0055 amendment 29 at about line 4511 ("What isn't done … one helper target per
-  lane in `targets.toml`") will be stale once this merges. That's an ADR follow-up, not changed
-  here.
+- **Stale ADR text after merge:** two places in ADR-0055 amendment 29 become stale once this
+  merges. They're ADR follow-ups, not changed here:
+  - Lines 4511-4513 ("What isn't done": "No `bws-lane-token` row in `.cred-consumers.toml` names
+    `helper_target`, so every lane token keeps the `PATCH` proof").
+  - Line 4547's table row: "one target per lane and the row's `helper_target` … Stands, not yet
+    made (item 5)".
+
+  `docs/superpowers/reports/lanes-inc-7-t1-docs-report.md` 36 and 71 describe the earlier state,
+  and as reports they stay as written. No row's consumer `note` names the `PATCH` proof.
 
 ## Open questions
 
