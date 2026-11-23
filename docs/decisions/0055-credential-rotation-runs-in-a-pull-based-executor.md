@@ -4154,7 +4154,7 @@ phase, before the SDS goes into production.
    - **The read.** Before the old token's revoke, the executor reads the fingerprint of the
      `BWS_ACCESS_TOKEN` that the restarted lane container loaded. The fingerprint is the sha256
      prefix and length, never the value. The executor reads it through the helper's `loaded` verb
-     (`deploy/vps/sds-pg-rotate`, lines 1-15, 103-120 and 179-195). It proceeds only when that
+     (`deploy/vps/sds-pg-rotate`, lines 1-15, 103-119 and 179-195). It proceeds only when that
      fingerprint equals the new keeper's. Both use the same form: 16 hex characters and a length
      (`FINGERPRINT_PREFIX`, and `rotation_worker/values.py`'s `PREFIX_LENGTH`).
    - **The changes it needs, for increment 7's code step (not made here).**

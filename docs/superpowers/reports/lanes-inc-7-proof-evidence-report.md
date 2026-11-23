@@ -4,16 +4,17 @@ Outcome: done
 
 - **Branch:** `hq/lanes-inc-7-proof-evidence`, base `a3109318`.
 - **PR:** #791, opened ready for review. HQ reviews and merges.
-- **Commits:** `ce44514e` (the four docs fixes), `2507a474` (the proof in the note), and this
-  report.
+- **Commits:** `ce44514e` (the four docs fixes), `2507a474` (the proof in the note), the report,
+  and one commit with the `_target` cite fix and the review's test fix.
 
 ## What I built
 
 ### The consumer check names its proof (#789 follow-up 4, HQ's option A)
 
 The evidence is built in `_verify_consumers`, `src/rotation_worker/contract.py:790` at
-`2507a474` (`contract.py:771` at `a3109318`). The `StepEvidence` constructor is at line 813. The
-issue's deletion record, which repeats the note, is at line 823.
+`2507a474`. The `StepEvidence` constructor is at line 813, and the issue's deletion record, which
+repeats the note, is at line 823. At `a3109318` the function is at line 753 and the record at
+line 774.
 
 - `contract.py` gains `ConsumerProof` (`"patch"` or `"loaded"`), `PROOF_PHRASES` (one fixed
   phrase per proof), and an optional `runtime_checkable` protocol, `NamesConsumerProof`, with one
@@ -62,16 +63,16 @@ HQ chose option A: the proof goes in the note, with no new key. No schema, fixtu
 3. **The header list.** The ADR-0055 header's "Amended" list gains amendments 25 to 29, each
    "date, amendment N, proposed (summary)", with the date and status from its own heading.
 4. **The helper cites.** Amendment 29 item 3's helper cites now read `deploy/vps/sds-pg-rotate`,
-   lines 1-15 (docstring), 103-120 (`_target`), and 179-195 (`_loaded`), as at `a3109318`. They
+   lines 1-15 (docstring), 103-119 (`_target`), and 179-195 (`_loaded`), as at `a3109318`. They
    were 1-12, 100-106, and 166-182.
 
 ## Tests and checks
 
-- **`make check`:** green. 14,681 collected: 14,680 passed, 1 skipped.
+- **`make check`:** green. 14,681 collected: 14,680 passed, 1 skipped. It ran again after the review fix, with the same counts.
 - **Targeted:** `tests/rotation_worker/test_lane_token_loaded.py`,
   `tests/contract/test_consumer_proof_note.py`, and `tests/contract/test_rotation_step_contract.py`
   pass.
-- **Unmodified:** `git diff a3109318 -- tests/contract/test_rotation_step_contract.py
+- **Unmodified:** `/usr/bin/git diff a3109318 -- tests/contract/test_rotation_step_contract.py
   tests/fixtures/rotation_evidence_schema.json` is empty.
 
 ### New tests
@@ -116,32 +117,38 @@ In `tests/contract/test_consumer_proof_note.py` (registered in `layers.toml` bes
 
 The script is in `/private/tmp/w274-mutate/`. Each mutation is applied to the source, then
 `__pycache__` is cleared, the two proof test files run, and the file is restored from a backup
-copy. The tree was clean afterwards. All 14 mutations were killed, with no survivors.
+copy. The tree was clean afterwards. Each run was without `-x`, so the table lists every test
+that failed. All 15 mutations were killed, with no survivors, and every new test kills at least
+one.
 
-| # | Mutation | Killed by |
+| # | Mutation | Failing tests |
 |---|---|---|
-| M1 | The lane always names `patch` | `..._names_the_loaded_proof_and_only_fingerprints` |
-| M2 | The lane always names `loaded` | `..._without_a_helper_target_names_the_patch_proof` |
-| M3 | A proof named per consumer (no dedupe) | `..._named_once_however_many_consumers_it_proved` |
-| M4 | A missing consumer still names a proof | `..._named_once_however_many_consumers_it_proved` |
-| M5 | No proof named at all | `..._names_the_loaded_proof_and_only_fingerprints` |
-| M6 | The proof put before the coverage count | `..._names_the_loaded_proof_and_only_fingerprints` |
-| M6b | M6, with only the server-side file run | `..._judged_as_today_s_note`, all three cases |
-| M7 | The `patch` phrase contains " before the revoke" | `..._judged_as_today_s_note[issue-patch-and-deletion]` |
-| M8 | The note carries the new value after the phrase | `..._names_the_loaded_proof_and_only_fingerprints` |
-| M8b | The value before the phrase, so the ending still matches | The no-token assertion, in all three proof tests |
-| M9 | A phrase too long for the note | `test_a_reissue_s_verify_passes_...` (the claimed step raises) |
-| M10 | Another adapter (`fake`) gains `consumer_proof` | `test_only_the_lane_token_names_its_consumer_proof` |
-| M11 | A phrase forms a 32-character run | `..._judged_as_today_s_note[reissue-loaded]` (the secret scan) |
-| M12 | The mismatch error carries the new value | `test_a_context_built_without_issue_takes_the_loaded_read` |
+| M1 | The lane always names `patch` | `reissue_on_a_helper_target_names_the_loaded_proof`; `judged_as_today_s_note[reissue-loaded]` |
+| M2 | The lane always names `loaded` | `without_a_helper_target_names_the_patch_proof`; `issue_names_the_patch_proof`; `judged_as_today_s_note`, both patch cases |
+| M3 | A proof named per consumer (no dedupe) | `proof_is_named_once_however_many_consumers_it_proved` |
+| M4 | A missing consumer still names a proof | `proof_is_named_once_however_many_consumers_it_proved` |
+| M5 | No proof named at all | All three proof tests; `judged_as_today_s_note`, all three cases |
+| M6 | The proof put before the coverage count | All three proof tests; `judged_as_today_s_note`, all three cases |
+| M7 | The `patch` phrase contains " before the revoke" | `judged_as_today_s_note[issue-patch-and-deletion]`; `no_proof_phrase_could_turn_on_the_before_revoke_rule` |
+| M8 | The note carries the new value after the phrase | All three proof tests |
+| M8b | The value before the phrase, so the ending still matches | All three proof tests, by the no-token assertion |
+| M9 | A phrase too long for the note | `reissue_s_verify_passes_on_the_keeper_s_fingerprint`; `reissue_on_a_helper_target_names_the_loaded_proof`; `judged_as_today_s_note[reissue-loaded]`; `longest_proof_note_fits_both_length_limits` |
+| M10 | Another adapter (`fake`) gains `consumer_proof` | `only_the_lane_token_names_its_consumer_proof` |
+| M11 | A phrase forms a 32-character run | `judged_as_today_s_note[reissue-loaded]` (the secret scan); `no_proof_phrase_could_..._form_a_long_run` |
+| M12 | The mismatch error carries the new value | `context_built_without_issue_takes_the_loaded_read` |
+| M13 | A loaded mismatch no longer raises | `claimed_read_fails_the_unit_on_anything_but_a_match[mismatch]`; `failed_loaded_read_files_no_proof_and_no_token`; `context_built_without_issue_takes_the_loaded_read`; `no_log_line_or_failure_reason_holds_a_token` |
+| M14 | `_proofs` drops its `isinstance` guard | `provider_that_names_no_proof_adds_nothing_to_the_note` |
 
-Two of the kills need a note:
+"All three proof tests" means the reissue-`loaded`, reissue-`patch`, and issue tests in
+`test_lane_token_loaded.py`. Three of the kills need a note:
 
-- **M6b.** The first assertion to fail was the phrase-placement check, not the verifier. I also
-  checked the verifier directly: a note that starts with the phrase gets "the consumer count is
-  unreadable", and today's note and the suffixed note both get `None`.
+- **M6.** In the server-side file, the first assertion to fail was the phrase-placement check, not
+  the verifier. I checked the verifier directly: a note that starts with the phrase gets "the
+  consumer count is unreadable", and today's note and the suffixed note both get `None`.
 - **M12.** The worker scrubs a failure reason, so the new failed-read test didn't see the value.
   The existing exception-text test caught it.
+- **M13.** This shows naming the proof loosens nothing: a mismatch that stops raising fails the
+  new test and three existing ones (Infra Brain 1032).
 
 ### Code-standards risk and review
 
@@ -150,6 +157,18 @@ Two of the kills need a note:
 - `vendor-review` (`/tmp/vendor-review-vb1oot9x`, exit 0): the review is complete for the seats
   that ran. Claude and Codex each approved with no findings, and agy is off by configuration. No
   findings were kept or dropped, so there was nothing to reproduce.
+- `/code-review` (default level, `origin/main...HEAD`): five nits, all handled.
+  - Two said `_target` ends at line 120, so `103-119` was wrong. I checked the file: `def _target`
+    is at line 103, `return target` at 119, and line 120 is blank, so `103-119` stands. That also
+    makes amendment 31's existing `103-119` cite correct, so I dropped my earlier follow-up that
+    called it short.
+  - One asked that the loaded case set its row and helper explicitly instead of relying on the
+    harness default. Fixed, then `make check` reran.
+  - One said `_proofs` re-derives which consumers were proved, so the label could drift. This is
+    the known limit in the self-review.
+  - One said that on an issue, `consumer_loaded` can skip the `PATCH` when distribute already
+    wrote the value, yet the note says the `PATCH` answered 2xx. That's by design: `_written` is
+    set only by a 2xx write in the same unit, on the same provider instance, so the phrase holds.
 
 ## Files changed
 
@@ -184,10 +203,10 @@ Two of the kills need a note:
 - **Option B, a `proof` key.** It would change the `rotation-step/1` contract, the model, the
   pinned schema, and the verifier, and the orchestrator must deploy before any VM reinstall. Take
   it if a machine reader comes to need the proof as a field rather than a phrase.
-- **More stale cites in ADR-0055, not in this handoff's scope.**
-  - Amendment 29 item 2's "lines 133-149" and "line 338": decision 2's section and the root's
-    asset row are at lines 146-163 and 351 in the changed file (137 and 342 at `a3109318`).
-  - Amendment 31's `deploy/vps/sds-pg-rotate`, "lines 103-119": `_target` runs to line 120.
+- **More stale cites in ADR-0055, not in this handoff's scope.** Amendment 29 item 2 cites
+  decision 2 at "lines 133-149" and the root's asset row at "line 338". In the changed file,
+  decision 2's section starts at line 146 and the row is at line 351 (137 and 342 at `a3109318`).
+  I didn't read the passage to find its exact end.
 
 ## Standards followed
 

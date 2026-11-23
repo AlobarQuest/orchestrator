@@ -26,8 +26,8 @@ from rotation_worker import worker
 from rotation_worker.contract import EMPTY, PROOF_PHRASES, ConsumerProof
 from rotation_worker.evidence import MAX_NOTE, StepEvidence
 from rotation_worker.values import Value
-from tests.rotation_worker.test_lane_credentials import KEEPER, LANE_ISSUE, _row
-from tests.rotation_worker.test_lane_token_loaded import Helper, Unit
+from tests.rotation_worker.test_lane_credentials import KEEPER, LANE_ISSUE, NEW_TOKEN, _row
+from tests.rotation_worker.test_lane_token_loaded import PRINT_KEY, TARGET, Helper, Unit, printed
 
 CRITERION = (
     "external: the verify_consumers step's rotation-step/1 evidence, "
@@ -44,7 +44,8 @@ PHRASE = re.compile("|".join(re.escape(f"; {p}") for p in PROOF_PHRASES.values()
 
 
 def _reissue_loaded(unit: Unit) -> None:
-    """The harness's default: a reissue's verify unit on a row naming its helper target."""
+    unit.row = _row(helper_target=TARGET)
+    unit.helper = Helper({PRINT_KEY: printed(NEW_TOKEN)})
 
 
 def _reissue_patch(unit: Unit) -> None:
