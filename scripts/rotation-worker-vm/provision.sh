@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Install or update the credential-rotation executor in its isolated VM (ADR-0055 decision 2).
+# Install or update the credential-rotation executor on its host: the isolated VM (ADR-0055
+# decision 2), or the VPS host from increment 7's cut-over (amendment 29).
 #
 # Run as root inside the VM, from the Mac:
 #   orb -m rotation-executor -u root bash -s -- <40-char orchestrator commit> \
 #     < scripts/rotation-worker-vm/provision.sh
+# On the VPS host, docs/operations/rotation-executor.md, "Install or update it on the VPS host".
 #
 # It installs a pinned uv (checksum-verified), checks the orchestrator out at exactly that commit,
 # builds the executor's environment from the lockfile (`--no-dev --group rotation-worker`), and
@@ -46,6 +48,24 @@ fi
 if ! id -u "$service_user" >/dev/null 2>&1; then
   useradd --system --home-dir "$state" --shell /usr/sbin/nologin "$service_user"
 fi
+# BEGIN service-user
+# The service user may reach root only through the helper's forced command (ADR-0055 amendment 29
+# item 1). A user that already exists is checked as found and never changed: on a host that runs
+# Docker, membership of `docker` alone is root.
+if [[ "$(id -u "$service_user")" == 0 ]]; then
+  echo "provision: $service_user has uid 0" >&2
+  exit 2
+fi
+if [[ "$(id -Gn "$service_user")" != "$service_user" ]]; then
+  echo "provision: $service_user must be in its own group only, not: $(id -Gn "$service_user")" >&2
+  exit 2
+fi
+login_shell="$(getent passwd "$service_user" | cut -d: -f7)"
+if [[ "$login_shell" != /usr/sbin/nologin ]]; then
+  echo "provision: $service_user must have the shell /usr/sbin/nologin, not: $login_shell" >&2
+  exit 2
+fi
+# END service-user
 install -d -o "$service_user" -g "$service_user" -m 0700 "$state"
 install -d -o root -g "$service_user" -m 0750 "$etc"
 install -d -o root -g root -m 0755 "$opt"
