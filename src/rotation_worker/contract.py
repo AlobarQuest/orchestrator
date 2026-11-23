@@ -50,7 +50,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Final, Protocol, runtime_checkable
+from typing import Any, Final, Literal, Protocol, runtime_checkable
 
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.evidence import ProbeAnswer, State, StepEvidence, Subject, Which
@@ -211,6 +211,24 @@ class ShapeVerified(Protocol):
     def lookup_note(self, new: Value) -> str:
         """What verify_new files beside its probes to name what was looked up, never a value."""
         ...
+
+
+ConsumerProof = Literal["patch", "loaded"]
+# The one phrase per proof that verify_consumers' note names (#789 follow-up 4). Fixed text, with
+# no destination, container or id, so the note's length is bounded and no 32-character run forms.
+PROOF_PHRASES: Final[Mapping[ConsumerProof, str]] = {
+    "patch": "proof: patch (the variable's PATCH answered 2xx)",
+    "loaded": "proof: loaded (the loaded fingerprint equals the new value's)",
+}
+
+
+@runtime_checkable
+class NamesConsumerProof(Protocol):
+    """A provider whose hosted consumers are proved one of two ways, which names the proof that
+    passed: a lane token's 2xx `PATCH` (D-27) or the helper's loaded fingerprint (ADR-0055
+    amendment 29 item 3). It only labels: `consumer_loaded` still decides, and still raises."""
+
+    def consumer_proof(self, consumer: Mapping[str, Any]) -> ConsumerProof: ...
 
 
 class ActionsSecretWriter(Protocol):
@@ -750,6 +768,25 @@ def _distribute(run: UnitRun, step: Step) -> None:
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
 
+def _proofs(run: UnitRun, missing: Sequence[str]) -> list[ConsumerProof]:
+    """Each distinct proof that passed for a hosted consumer the provider verified, once, in
+    destination order. A provider that doesn't name its proofs names none, so its note is as it
+    was."""
+    provider = run.provider
+    if not isinstance(provider, NamesConsumerProof):
+        return []
+    proofs: list[ConsumerProof] = []
+    for destination in run.rotation.destinations:
+        consumer = parse(destination)
+        scheduled = run.scheduled is not None and run.scheduled.covers(destination)
+        if consumer["kind"] not in HOSTED_KINDS or scheduled or destination in missing:
+            continue
+        proof = provider.consumer_proof(consumer)
+        if proof not in proofs:
+            proofs.append(proof)
+    return proofs
+
+
 def _verify_consumers(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
     missing = run.unverified(new)
@@ -770,6 +807,8 @@ def _verify_consumers(run: UnitRun, step: Step) -> None:
         # "dead" would prove nothing about the revoke (ADR-0055 amendment 1).
         probes = run.probe(old, "old", "live", before_revoke=True)
         note += "; the old value is live before the revoke"
+    for proof in _proofs(run, missing):
+        note += f"; {PROOF_PHRASES[proof]}"
     prints = _fingerprints(new, old)
     run.record(step, StepEvidence(step.kind, fingerprints=prints, probes=tuple(probes), note=note))
     if run.issue:

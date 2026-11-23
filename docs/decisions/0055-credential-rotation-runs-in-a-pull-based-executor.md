@@ -36,6 +36,15 @@
     Healthchecks API; no paste).
   - 2026-11-13, amendment 24, proposed (the factory-events chain of record is a VPS database;
     approvers append, the carrier verifies there).
+  - 2026-11-13, amendment 25, proposed (only the work carrier reads the factory-events chain, and
+    its project and accounts are named).
+  - 2026-11-14, amendment 26, proposed (each factory-events secret holds only its role's
+    password).
+  - 2026-11-14, amendment 27, proposed (one owner act resets the factory-events chain before an
+    FE-5 import retry).
+  - 2026-11-14, amendment 28, proposed (no FE-5 import retry after a successful import).
+  - 2026-11-18, amendment 29, proposed (the rotation executor runs on the VPS host, and a lane
+    token's revoke waits on the loaded fingerprint).
   - 2026-11-20, amendment 30, proposed (the lane secrets broker: a lane reads its secrets over a
     socket and holds no BWS token).
   - 2026-11-23, amendment 31, proposed (the executor's root paths stay root for development:
@@ -4093,7 +4102,7 @@ phase, before the SDS goes into production.
      its own Coolify token in `Rotation / Coolify`, with the same abilities.
 2. **Decision 2 and T1, for the VPS host.** This item replaces decision 2's first bullet and
    accepted residual (lines 133-149), the root's row in the asset table (line 338) and T1 (line
-   350), from increment 7's cut-over on.
+   363), from increment 7's cut-over on.
    - **Decision 2, as amended.** The executor runs on the VPS host as a systemd service under its
      own user (item 1). The root token is in a file only the service's user reads, and decision
      9's rule stands: the host holds nothing of the executor's that can't be rebuilt.
@@ -4145,7 +4154,7 @@ phase, before the SDS goes into production.
    - **The read.** Before the old token's revoke, the executor reads the fingerprint of the
      `BWS_ACCESS_TOKEN` that the restarted lane container loaded. The fingerprint is the sha256
      prefix and length, never the value. The executor reads it through the helper's `loaded` verb
-     (`deploy/vps/sds-pg-rotate`, lines 1-12, 100-106 and 166-182). It proceeds only when that
+     (`deploy/vps/sds-pg-rotate`, lines 1-15, 103-119 and 179-195). It proceeds only when that
      fingerprint equals the new keeper's. Both use the same form: 16 hex characters and a length
      (`FINGERPRINT_PREFIX`, and `rotation_worker/values.py`'s `PREFIX_LENGTH`).
    - **The changes it needs, for increment 7's code step (not made here).**
@@ -4273,7 +4282,7 @@ Line numbers are at `ad721fc0`. This amendment edits none of them.
 | ADR-0055 decision 3, R10 (lines 160-161) | Stands, and is restored for lane tokens by item 3. |
 | ADR-0055 decision 9, a rebuilt VM (lines 298-300) and the lease ceiling (lines 301-302) | Stand. Read "VM" as the executor's host. The lease bounds item 3's one claimed read. |
 | ADR-0055 asset table, the root's row (line 338) | Amended by item 2: the file is on the VPS host, readable by the executor and anything with root on that host. |
-| ADR-0055 T1 (line 350) | Amended by item 2. |
+| ADR-0055 T1 (line 363) | Amended by item 2. |
 | Amendment 1, T1 widened to control of production Coolify (lines 627-629) | Stands, inside item 2's T1. |
 | Amendment 2, the destination-list residual, "an agent on the Mac, already T1's accepted residual" (line 721) | Stands: that agent stays inside item 2's T1, through `vps_exec`. |
 | Amendment 12 item 7, the Mac instance's identity (lines 1495-1500) | Stands. The Mac's Keychain instance doesn't move. "The VM exists so an agent session on the Mac can't act as the executor" no longer holds after the cut-over, because `vps_exec` reaches the VPS host; item 2's T1 states that. |
@@ -4539,4 +4548,4 @@ Line numbers are at `4d8ca873`. This amendment edits none of them.
 | Amendment 29 item 4, the cut-over | Stands, and isn't planned here. |
 | Amendment 29, "What it grants, and nothing more", "Each root-path narrowing in item 2 is a later decision of Devon's" (lines 4246-4247) | Answered by D-73 B and D-74 A. |
 | Amendment 29, Consequences, "VPS root becomes the executor's root" (lines 4252-4253) | Amended by item 3: the holders are named, and the narrowings are decided. |
-| ADR-0055 T1 (line 350) | Amended by amendment 29 item 2, as item 3 here reads it. |
+| ADR-0055 T1 (line 363) | Amended by amendment 29 item 2, as item 3 here reads it. |
