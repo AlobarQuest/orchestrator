@@ -50,8 +50,9 @@ additions in its answer).
      default `False` is the strict path. `build_provider`'s `pg_helper` and `issue` are required,
      so the context's default is the only default.
 
-`cli.py`'s second `AdapterContext` (about line 421) is `pg-restore`, which builds only the
-`postgres-role` adapter, so it needs no `issue`.
+`cli.py`'s two other `AdapterContext` constructions can't reach the lane-token adapter.
+`seed_canary` (about line 272) builds only the fake adapter, and `pg-restore` (about line 421)
+only `postgres-role`. Neither needs `issue` or the helper.
 
 ## Transition rule
 
@@ -69,15 +70,15 @@ install, which a merge doesn't change. The stop point 1 file has the line refere
 
 ## Tests and checks
 
-- **`make check`:** green. 14,666 passed and 1 skipped (14,667 collected), with ruff, pyright and
-  the whole-repo guards, against `orchestrator_test_hq_w_272`.
-- **New tests:** 46.
+- **`make check`:** green at the final commit. 14,668 passed and 1 skipped (14,669 collected),
+  with ruff, pyright and the whole-repo guards, against `orchestrator_test_hq_w_272`.
+- **New tests:** 48.
   - `tests/deploy/test_sds_pg_rotate.py`, 20 (41 before, 61 after): a consumers-only target
     answers `loaded` with the exact `docker exec ... printf` argv; `set` and `probe` refuse it; a
     partial target is refused for every verb (9 cases); six missing or malformed consumers are
     refused with no docker call; a Postgres target still serves all three verbs; and the parity
     test.
-  - `tests/rotation_worker/test_lane_token_loaded.py`, 26, through `worker._take` with the real
+  - `tests/rotation_worker/test_lane_token_loaded.py`, 28, through `worker._take` with the real
     adapter and contract:
     - A reissue's `verify` passes on an equal print, with two reads (before and after the claim)
       and no `PATCH`.
@@ -93,15 +94,20 @@ install, which a merge doesn't change. The stop point 1 file has the line refere
     - A context built without `issue` takes the `loaded` read (HQ's addition).
     - Build refuses a target with no helper; `check_row` refuses five malformed targets and passes
       a row with none.
-    - Captured logs, the failure reason and the raised text hold no token.
+    - A wait logs `unit_waiting` with its unit and a fingerprint-only reason.
+    - The `loaded` path answers only for the approved variable, and reads nothing otherwise.
+    - Captured logs, the failure reason and the raised text hold no token. The log tests
+      re-enable the executor's logger first: an earlier test's alembic `fileConfig` on the same
+      xdist worker disables it, which made the first version of the log test fail in the full
+      run (and would have let a log assertion pass with nothing to read).
     - Only the VM instance takes a lane-token unit (`_ours` is false on a Keychain store).
 - **Fingerprint parity (HQ's item 3):**
   `test_the_helper_s_print_and_the_lane_token_adapter_s_compare_equal` runs the real helper's
   `run` through the fake docker. It feeds the answer through a real `HelperClient` (its answer
   regex included) into the adapter's `LoadedRead.mismatch`. The same fake value matches, and a
   different value and a one-character-shorter value don't.
-- **Mutation proof:** 18 mutations, one per rule, each run against both test files with
-  `__pycache__` cleared before and after. All 18 were killed, and there are no survivors.
+- **Mutation proof:** 20 mutations, one per rule, each run against both test files with
+  `__pycache__` cleared before and after. All 20 were killed, and there are no survivors.
   - The first run left two survivors, which I fixed:
     - "`issue` defaults to the `PATCH` path" survived because `build_provider` had its own
       default. I made its `issue` and `pg_helper` required and mutated `AdapterContext`'s default
@@ -129,11 +135,15 @@ install, which a merge doesn't change. The stop point 1 file has the line refere
   | M16 | a row without a target gets one | killed |
   | M17 | the token value in the raised text | killed |
   | M18 | the worker doesn't pass `issue` | killed |
+  | M19 | the `loaded` path drops the approved-variable guard | killed |
+  | M20 | the wait isn't logged | killed |
 
 - **Risk command:**
   `uv run --project ~/Developer/code-standards code-standards risk --repo .` answered
   `high-risk` (auth: `bws_lane_token.py` and its test).
-- **Vendor review:** complete for the seats that ran. Claude approved with no findings, and Codex
+- **Vendor review:** complete for the seats that ran, on the diff through the second commit
+  (`f4bc8ee6` and the strict-default commit). The commits after it add tests, an inline comment
+  and this report, and change no logic. Claude approved with no findings, and Codex
   approved with no findings ("No material blocking issue is supported by the provided diff and
   repository context"). agy is off by configuration. Nothing was dropped, so there was nothing to
   reproduce.
@@ -231,7 +241,11 @@ install, which a merge doesn't change. The stop point 1 file has the line refere
    The wait is unclaimed, and the claimed read raises on a mismatch. An issue, and a row with no
    target, keep the `PATCH` proof. The handoff limits me to code, tests and docstrings, so I
    didn't edit `CLAUDE.md`.
-4. **ADR-0055:** record that Amendment 29 item 3's "refuses it for `set` and `probe`" is the
+4. **Evidence doesn't name the proof.** `verify_consumers` files the same "N of N consumers hold
+   or attest the new value" note for both proofs, so the evidence row doesn't show whether the
+   `PATCH` or the `loaded` read proved the variable. Naming it would change the contract's note,
+   which is outside this handoff.
+5. **ADR-0055:** record that Amendment 29 item 3's "refuses it for `set` and `probe`" is the
    `bad_target` code, and that the 16-hex comparison is exact.
 
 ## Standards followed
@@ -240,9 +254,10 @@ install, which a merge doesn't change. The stop point 1 file has the line refere
   new log line is `LOG.info("unit_waiting", extra={...})`, the executor's existing structured
   logger. It writes no file.
 - **Code Brain 4 (BLOCK, error-handling): never swallow silently.** `_loaded_waits` catches
-  `ContractError` and `StoreError` deliberately: the docstring says why (an unreadable answer
-  waits and is never a pass). It logs `unit_waiting` with the error's scrubbed text and records a
-  `Wait`, which raises `rotation-unit-waiting` at 48 hours. There's no `except ...: pass`.
+  `ContractError` and `StoreError` deliberately, with an inline justification at the `except`
+  (an unreadable answer is a wait, never a pass). It logs `unit_waiting` with the error's scrubbed
+  text and records a `Wait`, which raises `rotation-unit-waiting` at 48 hours. A test pins the log
+  line, and mutation M20 proves the test fails without it. There's no `except ...: pass`.
 - **Code Brain 5 (BLOCK, security): never log secrets.** Only fingerprints (prefix and length)
   appear in reasons, logs and exceptions. `test_no_log_line_or_failure_reason_holds_a_token`
   checks captured logs and the failure reason. The raised-text assertion covers the path no scrub
