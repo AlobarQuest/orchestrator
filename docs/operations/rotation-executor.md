@@ -1340,6 +1340,29 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    naming only some of the three database keys is refused for every verb. `loaded` answers each
    consumer's fingerprint, the sha256's first 16 hex characters, a colon and the length, or an
    empty string when the container loaded nothing; never the value.
+
+   Increment 7's cut-over installs one consumers-only target for each lane that loads its own
+   token, in the preceding shape, each with one `consumer` whose `env` is `BWS_ACCESS_TOKEN`. The
+   target name is the lane's name, which its registry row's `helper_target` names. A broker lane
+   gets none, since its container loads no `BWS_ACCESS_TOKEN`. Each container name is read from
+   this repository: a compose lane container is `<service>-<resource uuid>`, where the service is
+   the lane's one service in `lanes/<lane>/compose.yaml` and the uuid is the row's `coolify-env`
+   consumer `uuid`. Confirm each with `docker ps` on the VPS at the cut-over before writing it.
+
+   | Target | Container |
+   |---|---|
+   | `execution-watch` | `execution-watch-svkt4ux8o16dnl7n3k6qcd99` |
+   | `landing-ledger` | `landing-ledger-gs1z8orebdnq9ug574sia6fs` |
+   | `deploy-watcher` | `deploy-watcher-p12q9n6xcy5u8eib1m4gmvar` |
+   | `revision-watcher` | `revision-watcher-kmjkrhlmv6c7ee76g77a8491` |
+   | `unit-verifier` | `unit-verifier-y144dc0981smrtzl587hqa4f` |
+   | `pin-watcher` | `pin-watcher-athv39w06xtmvqtxnjs3m8d0` |
+   | `membership-check` | `membership-check-qb6f52pfvhcoh2w2sgrhii2z` |
+   | `change-proposer` | `change-proposer-w35r4jsmylloghoexdc18gfl` |
+   | `rotation-decomposer` | `rotation-decomposer-hcghb8xli5qqo6kl8enuu080` |
+   | `work-carrier` | `work-carrier-am99g0klcsa7u8dpb4t19xjr` |
+   | `bump-proposer` | `bump-proposer-dsmi1mj0xbjrsu8kamdxocp8` |
+   | `rotation-proposer` | `rotation-proposer-chyzh4utebg7ruouxxp42d0s` |
 3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
    run a short script as that user through `orb -m rotation-executor -u root runuser -u rotation --
    env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/python -`.
@@ -1624,8 +1647,23 @@ A reissue's `verify` proves that start one of two ways, chosen by the lane token
   --read`), outside the plan, which stands in for decision 3's machine check before the revoke
   (D-27).
 
-No `bws-lane-token` row in `.cred-consumers.toml` names `helper_target`, so every lane token keeps
-the `PATCH` proof (D-27). Increment 7's cut-over reinstalls the helper first, before any lane-token
-row names a target. Until then the installed helper refuses a consumers-only target, so a row
-naming one would wait on its 48-hour alert, never pass.
+Every `rotated_by_sds` `bws-lane-token` row whose lane loads its own token names `helper_target`,
+the lane's name, so a reissue of those twelve tokens takes the `loaded` proof. Two rows name none
+and keep the `PATCH` proof: `inert-landing-bws-token`, a broker lane's, and
+`secrets-broker-bws-token`, which the SDS doesn't rotate. `tests/rotation_worker/
+test_lane_token_helper_targets.py` holds that rule on the real file.
+
+The rows gained the field at increment 7's cut-over, and the change merges only once both of the
+following hold:
+
+1. The helper is reinstalled with the twelve targets in "Install the helper". A helper without a
+   row's target, or one from before `4d8ca873`, refuses a consumers-only target, so the row's
+   reissue would wait on its 48-hour alert and never pass.
+2. The live VM executor's install is at or after `c5300a2c`. The executor reads registry rows from
+   `origin/main` at run time but runs a pinned install. An install from before `4d8ca873` ignores
+   the field and keeps the `PATCH` proof without saying so, and one from before `c5300a2c` doesn't
+   name in the step's note which proof passed.
+
+A row's `helper_target` also needs the executor's `pg_helper_*` settings: with none, the provider
+isn't built, and the pass logs the unit as not worked.
 

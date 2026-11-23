@@ -745,6 +745,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "5a21575b-b25b-42b5-bf05-b4fc00cd30e0"
 rotated_by_sds = true
+helper_target = "execution-watch"
 rotate_requested = "2026-11-08"
 # What the lane's account sees, exactly: .bws-secrets.toml's execution-watch secrets
 # (orchestrator-observer, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE) and the ping URL's keeper.
@@ -796,6 +797,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "d7813bd9-0d9d-4781-ae86-b4fd017539ff"
 rotated_by_sds = true
+helper_target = "landing-ledger"
 rotate_requested = "2026-11-09"
 # What the lane's account sees, exactly: .bws-secrets.toml's landing-ledger secrets
 # (orchestrator-observer, lanes-read-app-private-key) and the ping URL's keeper.
@@ -845,6 +847,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "660539eb-97ac-422f-b776-b4ff0004b7c2"
 rotated_by_sds = true
+helper_target = "deploy-watcher"
 rotate_requested = "2026-11-10"
 # What the lane's account sees, exactly: .bws-secrets.toml's deploy-watcher secrets
 # (orchestrator-observer, change-manager/M2M_TOKEN_OBSERVE, lanes-read-app-private-key) and the
@@ -895,6 +898,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "e6c8d8cc-c64e-4e91-bb5b-b4ff00cba872"
 rotated_by_sds = true
+helper_target = "revision-watcher"
 rotate_requested = "2026-11-11"
 # What the lane's account sees, exactly: .bws-secrets.toml's revision-watcher secrets
 # (orchestrator-observer, prod-coolify-read-token, APP_BRAIN_READ_KEY,
@@ -947,6 +951,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "c8381bef-f8a0-4b73-8158-b4ff00e87766"
 rotated_by_sds = true
+helper_target = "unit-verifier"
 rotate_requested = "2026-11-11"
 # What the lane's account sees, exactly: .bws-secrets.toml's unit-verifier secrets
 # (orchestrator-verifier-bearer, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key)
@@ -997,6 +1002,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "824605ad-d05b-4bd0-b9b1-b50000e8886e"
 rotated_by_sds = true
+helper_target = "pin-watcher"
 rotate_requested = "2026-11-12"
 # What the lane's account sees, exactly: .bws-secrets.toml's pin-watcher secrets
 # (orchestrator-observer, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key) and the
@@ -1047,6 +1053,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "eb70b29d-faa2-4ff2-ba2e-b5000129d84f"
 rotated_by_sds = true
+helper_target = "membership-check"
 rotate_requested = "2026-11-12"
 # What the lane's account sees, exactly: .bws-secrets.toml's membership-check secrets
 # (orchestrator-observer, change-manager/M2M_TOKEN_READ, lanes-read-app-private-key) and the ping
@@ -1097,6 +1104,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "141260f5-bc4b-44d8-8ac8-b50100c0d40a"
 rotated_by_sds = true
+helper_target = "change-proposer"
 rotate_requested = "2026-11-13"
 # What the lane's account sees, exactly: .bws-secrets.toml's change-proposer secrets
 # (orchestrator-observer, change-manager/M2M_TOKEN_PROPOSE, lanes-read-app-private-key) and the
@@ -1147,6 +1155,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "623e61a6-d613-4e89-9626-b501013afbeb"
 rotated_by_sds = true
+helper_target = "rotation-decomposer"
 rotate_requested = "2026-11-13"
 # What the lane's account sees, exactly: .bws-secrets.toml's rotation-decomposer secrets
 # (ORCHESTRATOR_M2M_CREDENTIALS, change-manager/M2M_TOKEN_READ, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE)
@@ -1198,6 +1207,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "7667794c-5691-4385-8351-b5040164d2e2"
 rotated_by_sds = true
+helper_target = "work-carrier"
 rotate_requested = "2026-11-16"
 # What the lane's account sees, exactly: .bws-secrets.toml's work-carrier secrets
 # (ORCHESTRATOR_M2M_CREDENTIALS, work-carrier-observer-bearer, orchestrator-observer,
@@ -1252,6 +1262,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "3299bd70-04af-4626-8fb8-b506013129e6"
 rotated_by_sds = true
+helper_target = "bump-proposer"
 rotate_requested = "2026-11-18"
 # What the lane's account sees, exactly: .bws-secrets.toml's bump-proposer secrets
 # (orchestrator-observer, change-manager/M2M_TOKEN_READ, change-manager/M2M_TOKEN_PROPOSE,
@@ -1304,6 +1315,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "540f1cb7-2487-4b1a-8179-b50601312b40"
 rotated_by_sds = true
+helper_target = "rotation-proposer"
 rotate_requested = "2026-11-18"
 # What the lane's account sees, exactly: .bws-secrets.toml's rotation-proposer secrets
 # (orchestrator-observer, change-manager/M2M_TOKEN_PROPOSE, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE,
