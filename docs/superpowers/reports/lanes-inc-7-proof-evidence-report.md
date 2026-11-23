@@ -3,7 +3,7 @@ Outcome: done
 # Report: lanes-inc-7-proof-evidence (W-274)
 
 - **Branch:** `hq/lanes-inc-7-proof-evidence`, base `a3109318`.
-- **PR:** #PR_NUMBER, opened ready for review. HQ reviews and merges.
+- **PR:** #791, opened ready for review. HQ reviews and merges.
 - **Commits:** `ce44514e` (the four docs fixes), `2507a474` (the proof in the note), and this
   report.
 
