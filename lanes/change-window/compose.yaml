@@ -5,9 +5,9 @@
 # URLs, and production Coolify is the tailnet address `http://100.92.138.19:8000`, which a
 # container on its resource's default network reaches (HQ G-73), as estate landing reaches it.
 # It never reaches dev Coolify (D-67 C).
-# It keeps no state (decision 1, "Lane state"), so it mounts no volume: each pass clones
-# infraops-mcp-server into a directory it removes, and writes the window's report there. Its one
-# mount is the broker's socket directory.
+# It keeps no state (decision 1, "Lane state"), so it mounts no volume: each pass runs the infraops
+# bundle the image bakes at a pinned commit (ADR-0059 Amendment 18), and writes the window's report
+# to a pass directory it removes. Its one mount is the broker's socket directory.
 # It holds no token: it reads the secrets the pass needs (`scripts/run-change-window.sh`,
 # "CREDENTIALS") through the lane secrets broker (ADR-0055 amendment 30), whose socket directory
 # `/data/sds/broker/change-window` it mounts read-only at `/run/sds-broker`. `lane-run` names the

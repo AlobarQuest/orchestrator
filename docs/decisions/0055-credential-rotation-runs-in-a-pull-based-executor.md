@@ -4229,8 +4229,8 @@ phase, before the SDS goes into production.
         Devon revokes the VM's token and the BWS copy is deleted."
 
       The VM has no `bws` CLI, so the fetch is a new executor verb, `rotation-worker emit-secret
-      <secret id>`. It logs in with the VM's root token as every other verb does, reads the one
-      secret, and writes only its value and a newline to stdout, refusing a terminal. It runs as
+      <secret id>`. It logs in with the VM's root token as every verb that reads the store does
+      (`compare-destinations` reads only git and doesn't log in), reads the one secret, and writes only its value and a newline to stdout, refusing a terminal. It runs as
       `rotation`, started by root through `runuser`, because the root token file must belong to its
       reader. The pipe and its order in the cut-over are in `docs/operations/rotation-executor.md`,
       "Put the root token in its file" and "Cut over to the host".
