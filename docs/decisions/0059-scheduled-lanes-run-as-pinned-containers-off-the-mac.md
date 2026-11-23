@@ -5060,3 +5060,56 @@ Amendment 14's citations of the launcher (decision item 1's "lines 111-121" and 
 decision item 2's "lines 151-153") name lines at its own base. At `d96a6e44` the clone is lines
 109-119, `sds_outcome_begin` is line 101, and the `unset` is line 152. The behavior they describe
 was true at `d96a6e44`; only the line numbers had moved.
+
+## Amendment 19 (2026-11-23): the pin watcher owns change-window's stale-pin alert
+
+- **Status:** Accepted on merge. HQ merges it after review. The ADR's own status is unchanged.
+- **Decided by:** Amendment 18 decision item 5, which designs the signal and names the pin watcher
+  as its candidate owner, and its first verify item, which gives the build to step
+  `cw-infraops-pin-staleness` (sds-hq `state/goal.md`, plan amendment `cw-infraops-pin`). This
+  amendment records where it was built; it decides nothing item 5 left open.
+- **Relates to:** Amendment 18 decision item 5 (lines 5008-5016) and its verify item "The
+  stale-pin signal" (lines 5030-5035).
+
+Line numbers are this file's at orchestrator `a2c27ce7`, before the amendment was appended. The
+amendment appends only.
+
+### Decision
+
+1. **The pin watcher owns the check.** `src/pin_watcher/bundle.py` reads orchestrator `main`'s
+   `lanes/Dockerfile` from the public raw host, parses `ARG INFRAOPS_COMMIT` and the
+   `ADD --checksum=sha256:` digest of the instruction that fetches the bundle at
+   `${INFRAOPS_COMMIT}`, swaps that placeholder for `main`, and hashes the file that URL serves.
+   The bundle's owner, repository and path are written once, in the Dockerfile. The orchestrator's
+   own repository is the one name the check writes, as one constant, as the rotation worker's
+   `BEHIND_REPOSITORY` does. No credential is sent: both files are public.
+2. **Every pass logs both digests; only the acting pass alerts.** A dry run prints them and sends
+   nothing. The acting pass syncs `infraops-pin-behind:change-window` with the `sds-bridge`
+   sender token it already reads: fired when the digests differ, resolved when a later read finds
+   them equal.
+3. **Its own key set.** The key lives in its own `KeyedAlerts`, with its own state file,
+   `infraops-pin-alerts.json` in `PIN_WATCHER_STATE_DIR`, beside the caller keys' `alerts.json`.
+   A sync resolves every remembered key it isn't told about, under one resolved title, so the two
+   sets never share a sync: a caller pass can't resolve the bundle's key, and the bundle's
+   resolution can't resolve or re-title a caller key.
+4. **Unread isn't equal.** A failed fetch, a non-200 answer, or a Dockerfile that doesn't parse
+   as exactly one pin is logged with what failed (the URL and status, the transport error's type,
+   or the parse reason) and passed to the sync as unread, so the key the last pass left stays as it
+   was, held and never resolved. An unread bundle makes the pass exit with the incomplete code
+   (3), a dry run included, as an unreadable caller does, and it outranks a caller finding (2)
+   for the same reason: an incomplete pass can't claim it found everything. Otherwise a bundle that moved or was
+   renamed while no key was open would send nothing and exit clean on every pass, and the dead-man
+   check would stay green.
+5. **The exit codes and the dead-man switch are otherwise unchanged.** The check runs before the
+   member record is read, so neither that read nor GitHub's failing skips it. A stale bundle
+   changes no exit code: its keyed alert is its signal. A failed send of its key is the incomplete
+   code (3), as a failed send of a caller key already is, and the caller keys are still synced.
+   `scripts/run-pin-watcher.sh` and `sds_deadman_arm sds-pin-watcher --finding 2` are untouched:
+   3 already means an incomplete pass there, which the dead-man check reports as failed.
+
+### Verify items
+
+- **Amendment 18's verify item "The stale-pin signal" closes** when this amendment merges and one
+  live acting pass of `sds-lane-pin-watcher` logs both digests (`infraops pin current: pinned …
+  (commit …), main …`, or `behind`). Until the lane image holding it is released and redeployed,
+  the scheduled pass doesn't run it: merged isn't deployed.

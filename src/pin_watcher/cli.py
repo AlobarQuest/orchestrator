@@ -11,8 +11,8 @@ already paid for.
   0  every caller was measured and every one is at the recommendation.
   1  the tool itself failed -- a missing credential, an unusable URL, an unhandled error.
   2  a caller is not at the recommendation. The pass worked; the estate did not.
-  3  some caller could not be read, or its row could not be filed, so the answer is missing
-     rather than clean.
+  3  some caller could not be read, or its row could not be filed, or change-window's infraops
+     pin could not be read, so the answer is missing rather than clean.
 
 3 OUTRANKS 2, and the reason is the same one every sibling lane states: an incomplete pass cannot
 claim it found everything there was to find.
@@ -28,22 +28,32 @@ clean reading resolves it, and a repository the pass could not read keeps whatev
 pass needs `SDS_BRIDGE_ALERT_TOKEN` (exit 1 without it, before any work). A failed send or an
 unusable alert state file is the incomplete code, after the pass's own work.
 
-EVERY PASS READS THE MEMBER RECORD FIRST, a dry run included: the listing starts from its
-`onboarding` and `member` repositories (ADR-0059 amendment 4), so the orchestrator credential is
-needed before anything is measured. An unreadable record is the incomplete code, never a sweep of
-less than the listing.
+EVERY PASS ALSO ASKS WHETHER CHANGE-WINDOW'S INFRAOPS PIN IS BEHIND (`pin_watcher.bundle`,
+ADR-0059 Amendment 19) and logs both digests. The acting pass keeps that answer on its own key,
+`infraops-pin-behind:change-window`, in its own state file, so it and the caller keys never resolve
+each other. An unreadable side is the incomplete code, as an unreadable caller is, a dry run
+included; the acting pass holds the key as unread and never resolves it. A failed send of that key
+is the incomplete code too. A behind pin keeps the exit code the callers give: its keyed alert is
+its signal.
+
+EVERY PASS CHECKS ITS CREDENTIALS FIRST (GitHub, the alert token an acting pass needs, the
+orchestrator), then the bundle, then reads the member record, a dry run included: the listing
+starts from its `onboarding` and `member` repositories (ADR-0059 amendment 4). The bundle check
+runs before the record so an unreadable record doesn't skip it. An unreadable record is the
+incomplete code, never a sweep of less than the listing.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from alert_hub_client import AlertHubError
-from pin_watcher import alerts
+from alert_hub_client import Alert, AlertHubError, KeyedAlerts
+from pin_watcher import alerts, bundle
 from pin_watcher.github import GitHubReader, PinWatcherError
 from pin_watcher.measure import Pass, as_lines, sweep
 from pin_watcher.orchestrator_client import (
@@ -92,13 +102,17 @@ def _alert_token(*, acting: bool) -> str:
     return token
 
 
-def _tell(result: Pass, token: str) -> bool:
-    """Sync this pass's alerts. False when alert-hub or the state file could not be used."""
+def _sync(
+    open_hub: Callable[[str, Path], KeyedAlerts],
+    token: str,
+    firing: dict[str, Alert],
+    unread: set[str],
+) -> bool:
+    """Sync one set of keys. False when alert-hub or the state file could not be used."""
     directory = alerts.state_dir(Path.home(), os.environ.get(alerts.STATE_DIR_ENV))
-    firing, unread = alerts.classify(result)
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        alerts.open_hub(token, directory).sync(firing, unread)
+        open_hub(token, directory).sync(firing, unread)
     except OSError as error:
         typer.echo(f"UNUSABLE: the alert state directory: {type(error).__name__}", err=True)
         return False
@@ -106,6 +120,34 @@ def _tell(result: Pass, token: str) -> bool:
         typer.echo(f"UNUSABLE: alert-hub was not told: {error}", err=True)
         return False
     return True
+
+
+def _tell(result: Pass, token: str) -> bool:
+    """Sync this pass's caller alerts. False when alert-hub or the state file could not be used."""
+    firing, unread = alerts.classify(result)
+    return _sync(alerts.open_hub, token, firing, unread)
+
+
+def _check_bundle(token: str, *, acting: bool) -> bool:
+    """Is change-window's infraops pin behind infraops `main`? Logs both digests; an acting pass
+    syncs the bundle's own key. False when the pin was unread or its key could not be synced.
+
+    An unreadable side is unread, never equal: logged with what failed, the key the last pass left
+    stays as it was, and the pass is incomplete, as it is for an unreadable caller. Without that,
+    an unread bundle with no open key would send nothing and exit clean on every pass.
+    """
+    try:
+        reading: bundle.Reading | None = bundle.read()
+    except bundle.BundleUnreadable as error:
+        typer.echo(f"UNREAD: change-window's infraops pin: {error}", err=True)
+        reading = None
+    else:
+        typer.echo(bundle.describe(reading))
+    if acting:
+        firing, unread = bundle.classify(reading)
+        if not _sync(alerts.open_bundle_hub, token, firing, unread):
+            return False
+    return reading is not None
 
 
 def _orchestrator_credential() -> tuple[str, str, str]:
@@ -149,6 +191,8 @@ def main(
     alert_token = _alert_token(acting=not dry_run)
 
     base_url, key_id, bearer = _orchestrator_credential()
+    # Before the member record and GitHub, so neither being unreadable skips it.
+    bundle_complete = _check_bundle(alert_token, acting=not dry_run)
     members = _members(base_url, key_id, bearer)
 
     try:
@@ -179,14 +223,14 @@ def main(
     for repository in sorted(unfiled):
         typer.echo(f"!! {repository} measured, row not filed", err=True)
 
-    unreported = not dry_run and not _tell(result, alert_token)
+    callers_told = dry_run or _tell(result, alert_token)
 
     findings = result.findings
     typer.echo(
         f"{len(result.callers)} callers, {len(findings)} findings, "
         f"{len(result.unreadable)} unreadable, {len(unfiled)} unfiled"
     )
-    if result.unreadable or unfiled or unreported:
+    if result.unreadable or unfiled or not (callers_told and bundle_complete):
         raise typer.Exit(EXIT_INCOMPLETE)
     if findings:
         raise typer.Exit(EXIT_FOUND)

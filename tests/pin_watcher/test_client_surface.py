@@ -45,12 +45,13 @@ def test_the_write_surface_is_the_observer_roles_whole_write_surface_and_no_more
     assert not is_allowed_write(f"{unit}/pr-merge")
 
 
-def test_only_the_two_client_modules_can_speak_http() -> None:
-    """The lane's whole entry in the repository's outbound allowlist is two files.
+def test_only_the_three_client_modules_can_speak_http() -> None:
+    """The lane's whole entry in the repository's outbound allowlist is three files.
 
     The split is the property rather than an exception to it: one module READS GitHub with a
     credential that must never write, the other WRITES to the orchestrator with a credential that
-    must never read. A single module serving both would hold both reaches behind one guard.
+    must never read. A single module serving both would hold both reaches behind one guard. The
+    third, `bundle.py`, reads two public files with no credential at all, so it holds neither.
     """
     speaks = {
         str(path.relative_to(WATCHER))
@@ -58,7 +59,7 @@ def test_only_the_two_client_modules_can_speak_http() -> None:
         if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"}
         & file_import_names(path)
     }
-    assert speaks == {"github.py", "orchestrator_client.py"}
+    assert speaks == {"bundle.py", "github.py", "orchestrator_client.py"}
 
 
 def test_the_github_reader_never_issues_anything_but_a_get() -> None:

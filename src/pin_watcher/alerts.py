@@ -22,6 +22,10 @@ USER_AGENT: Final = "pin-watcher/1 (+AlobarQuest/orchestrator)"
 TOKEN_ENV: Final = "SDS_BRIDGE_ALERT_TOKEN"
 STATE_DIR_ENV: Final = "PIN_WATCHER_STATE_DIR"
 ALERTS_FILE: Final = "alerts.json"
+# The infraops bundle check's own state (`pin_watcher.bundle`): a separate file and a separate
+# `KeyedAlerts`, because `sync` resolves every remembered key it isn't told about, under one
+# resolved title. Sharing either would let a caller pass resolve the bundle's key, or re-title it.
+BUNDLE_ALERTS_FILE: Final = "infraops-pin-alerts.json"
 
 
 def state_dir(home: Path, configured: str | None) -> Path:
@@ -58,4 +62,13 @@ def open_hub(token: str, directory: Path) -> KeyedAlerts:
         directory / ALERTS_FILE,
         user_agent=USER_AGENT,
         resolved_title="Caller pin is at the recommendation",
+    )
+
+
+def open_bundle_hub(token: str, directory: Path) -> KeyedAlerts:
+    return KeyedAlerts(
+        lambda: token,
+        directory / BUNDLE_ALERTS_FILE,
+        user_agent=USER_AGENT,
+        resolved_title="change-window's infraops pin matches infraops main",
     )

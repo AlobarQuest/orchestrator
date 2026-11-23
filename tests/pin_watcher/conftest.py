@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ import pytest
 
 from alert_hub_client import KeyedAlerts
 from pin_watcher import alerts as alerts_module
+from pin_watcher import bundle as bundle_module
 
 RUNNER = "AlobarQuest/factory-runner"
 SERVICES = (
@@ -264,3 +266,60 @@ def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Hub:
     monkeypatch.setenv(alerts_module.STATE_DIR_ENV, str(recorder.state))
     monkeypatch.setenv(alerts_module.TOKEN_ENV, "alert-token")
     return recorder
+
+
+BUNDLE = b"// change-mgr-cli.js, as infraops main holds it\n"
+BUNDLE_DIGEST = hashlib.sha256(BUNDLE).hexdigest()
+BUNDLE_COMMIT = "c" * 40
+BUNDLE_MAIN_PATH = "/owner/infraops/main/dist/bundle/change-mgr-cli.js"
+
+
+def dockerfile(digest: str = BUNDLE_DIGEST, commit: str = BUNDLE_COMMIT) -> str:
+    """The two pin lines as `lanes/Dockerfile` writes them, among a sibling download."""
+    return (
+        f"ARG INFRAOPS_COMMIT={commit}\n"
+        f"ADD --checksum=sha256:{'d' * 64} \\\n"
+        "    https://example.net/tool.tar.gz \\\n"
+        "    tool.tar.gz\n"
+        f"ADD --checksum=sha256:{digest} \\\n"
+        "    https://raw.githubusercontent.com/owner/infraops/${INFRAOPS_COMMIT}"
+        "/dist/bundle/change-mgr-cli.js \\\n"
+        "    change-mgr-cli.js\n"
+    )
+
+
+class Raw:
+    """What raw.githubusercontent.com would serve: orchestrator main's Dockerfile and the bundle."""
+
+    def __init__(self) -> None:
+        self.dockerfile: str | bytes = dockerfile()
+        self.bundle = BUNDLE
+        self.statuses: dict[str, int] = {}
+        self.unanswered = False
+        self.requests: list[httpx.Request] = []
+
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self._handle)
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = request.url.path
+        if self.unanswered:
+            raise httpx.ConnectError("no route", request=request)
+        if path in self.statuses:
+            return httpx.Response(self.statuses[path])
+        if request.method == "GET" and path == bundle_module.DOCKERFILE_PATH:
+            body = self.dockerfile
+            return httpx.Response(200, content=body.encode() if isinstance(body, str) else body)
+        if request.method == "GET" and path == BUNDLE_MAIN_PATH:
+            return httpx.Response(200, content=self.bundle)
+        return httpx.Response(404)
+
+
+@pytest.fixture(autouse=True)
+def raw(monkeypatch: pytest.MonkeyPatch) -> Raw:
+    """Every test reads the bundle pin from a recording raw host, never GitHub; equal by default."""
+    served = Raw()
+    real_read = bundle_module.read
+    monkeypatch.setattr(bundle_module, "read", lambda: real_read(served.transport()))
+    return served
