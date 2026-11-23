@@ -65,7 +65,7 @@ The change is docs-only, but I ran the full gate anyway, against my own database
 
 ## PR
 
-PR_URL_PLACEHOLDER
+https://github.com/AlobarQuest/orchestrator/pull/800 (open, not merged)
 
 ## Self-review
 
