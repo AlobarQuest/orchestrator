@@ -20,6 +20,9 @@ empty marker and prints its secret id (ADR-0055 amendment 19 item 3); it reads n
 before the registry row exists, since the row names the id it prints.
 `grants` is read-only: it reads the member record with the instance's own bearer and prints whether
 each registry repository holds the `credential_rotation` grant. Exit 0, or 2 when it can't be read.
+`emit-secret <secret-id>` writes one BWS secret's value, read with the root, to a pipe and nothing
+else to stdout: the one verb that prints a value (increment 7, D-75 B). It refuses a terminal, and
+exits 2 on any failure, naming only the secret's id and the error's class.
 """
 
 from __future__ import annotations
@@ -39,7 +42,14 @@ from typing import Final, TextIO
 
 from rotation_worker.adapters import ADAPTERS, AdapterContext, fake, postgres_role
 from rotation_worker.compare import Comparison, report
-from rotation_worker.config import DEFAULT_PATH, Config, ConfigError, load, read_root_token
+from rotation_worker.config import (
+    DEFAULT_PATH,
+    UUID_PATTERN,
+    Config,
+    ConfigError,
+    load,
+    read_root_token,
+)
 from rotation_worker.contract import EMPTY, ContractError, Rotation
 from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
@@ -66,7 +76,7 @@ from rotation_worker.registry import (
     latest_package_destinations,
 )
 from rotation_worker.secret_store import BwsStore, KeychainStore, SecretStore, StoreError
-from rotation_worker.values import Value
+from rotation_worker.values import Value, scrub
 from rotation_worker.worker import SOURCE_PREFIX, Setup, consumer_reads, run_pass
 
 EXIT_EQUAL: Final = 0
@@ -402,6 +412,40 @@ def create_keeper(config: Config, credential_id: str) -> int:
     return 0
 
 
+def emit_secret(config: Config, secret_id: str, out: TextIO) -> int:
+    """Write one secret's value and a newline to `out`, a pipe, for the host's `set-root-token
+    --stdin` (increment 7, D-75 B). Any secret the root reads: the config names no project to
+    limit it to. Nothing but the value goes to `out`, and no message carries it."""
+    if out.isatty():
+        print("emit-secret: writes only to a pipe, not a terminal", file=sys.stderr)
+        return EXIT_UNREADABLE
+    if config.store != "bws":
+        print("emit-secret: only the BWS executor reads with the root", file=sys.stderr)
+        return EXIT_UNREADABLE
+    if not UUID_PATTERN.fullmatch(secret_id):
+        print("emit-secret: the secret id must be a lowercase UUID", file=sys.stderr)
+        return EXIT_UNREADABLE
+    try:
+        value = open_store(config).read(secret_id)
+    except ConfigError as error:
+        # A config error names ids and paths, never a value; scrubbed all the same.
+        print(f"emit-secret: {scrub(str(error))}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    except Exception as error:
+        # Every failure, foreseen (StoreError, ValueError) or not, is exit 2 with only its class:
+        # a value read in this process might stand in its message, and a traceback would show it.
+        print(f"emit-secret: {secret_id} unreadable: {type(error).__name__}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    try:
+        out.write(f"{value.reveal()}\n")
+        out.flush()
+    except OSError as error:
+        # The reader went away (for example, ssh failed): the value reached no one.
+        print(f"emit-secret: {secret_id} not written: {type(error).__name__}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    return 0
+
+
 def pg_restore(setup: Setup, credential_id: str) -> int:
     """Put the keeper's value back everywhere a host step writes it. For a host whose undo
     failed too: it needs no `/review`, no requeue and no value in an argument."""
@@ -479,6 +523,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     reading_grants = commands.add_parser(
         "grants", help="print whether each registry repository holds the credential_rotation grant"
     )
+    emitting = commands.add_parser(
+        "emit-secret", help="write one BWS secret's value to a pipe, read with the root"
+    )
+    emitting.add_argument("secret_id")
     for command in (
         running,
         seeding,
@@ -489,6 +537,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         creating,
         restoring,
         reading_grants,
+        emitting,
     ):
         command.add_argument("--config", type=Path, default=DEFAULT_PATH)
     arguments = parser.parse_args(argv)
@@ -519,6 +568,8 @@ def _command(arguments: argparse.Namespace, config: Config) -> int:
         return create_keeper(config, arguments.credential_id)
     if arguments.command == "grants":
         return grants(config)
+    if arguments.command == "emit-secret":
+        return emit_secret(config, arguments.secret_id, sys.stdout)
     if arguments.command == "pg-restore":
         return pg_restore(build_setup(config), arguments.credential_id)
     if arguments.command == "stage":
