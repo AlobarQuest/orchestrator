@@ -108,6 +108,7 @@ merge, and the security phase doesn't start while it's open. The amendment names
   - The launcher outside `lane-run` refuses with its one `FATAL:` line and exit 1.
   - I removed the image afterward.
 - **`make check`:** green (exit 0): ruff, formatting and pyright clean; pytest 14,707 passed and 1 skipped, out of 14,708 collected. It ran on the first commit; the second changes only `deploy.md`.
+- **CI on PR #795** (head `ad24bd4d`): `Quality` passed with 14,694 passed and 14 skipped (14,708, the same total as local); `Rollout transcription currency` and `Runner consumer compatibility` passed.
 - **Risk:** `code-standards risk --repo .` printed `normal`, so vendor-review doesn't apply.
 - **`/code-review` (medium):** no correctness bug, and four nits:
   - Fixed: the bump's digest step piped `curl` into `shasum`, which hashes an error body. It now
