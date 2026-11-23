@@ -1,8 +1,26 @@
-Outcome: failed
-
-(In progress. This file holds the inventory, stop point 1, and is completed when the work ends.)
+Outcome: done
 
 # Report: the rotation executor's install procedure for the VPS host (increment 7, item c1)
+
+PR: #PRNUM, branch `hq/lanes-inc-7-host-install`, base `a3109318`. Ready for review; HQ reviews and
+merges. Nothing ran on any host, VM, Coolify, BWS or infraops in this task.
+
+## What I built
+
+- **The procedure.** `docs/operations/rotation-executor.md` has a section, "Install or update it on
+  the VPS host", after the VM's section. The VM's section stays and opens by saying when it applies:
+  until the cut-over, and then only as the rollback while the VM's root token is unrevoked. The
+  host section covers the route (`vps_exec` as root, an interactive session's step), installing at
+  a commit, the config, the root token's file (its end state only), the helper's key and host pin,
+  the cut-over order, the one-pass command under `env -i`, reading passes in `journalctl`, enabling
+  the timer only after the VM's is stopped and disabled, and rollback as far as item 4 step 6 and
+  item 5 support it. It says it's unproven until the cut-over.
+- **One code change the inventory proved needed** (inventory item 2). `provision.sh` used an existing
+  `rotation` user as found. A marked block, `# BEGIN service-user` to `# END service-user`, after the
+  user's creation and before the first `install`, refuses with exit 2 and the reason when the user
+  has uid 0, is in any group but its own, or has a login shell other than `/usr/sbin/nologin`. It
+  never changes the user. The header names the host procedure. `set-root-token.sh`, the unit and
+  the timer are unchanged.
 
 ## Inventory: the VM install against a VPS-host install
 
@@ -114,3 +132,135 @@ Sources are read at `a3109318`. "ADR" means
 Conclusion: the procedure can be written without a design choice outside Amendment 29 and Devon's
 answers. Two points stay open for the report: the root token's handover (item 4) and rollback
 past the VM token's revoke.
+
+## Files changed
+
+- `docs/operations/rotation-executor.md`: the VM section's opening paragraph, and the section
+  "Install or update it on the VPS host" (lines 432-580).
+- `scripts/rotation-worker-vm/provision.sh`: the `service-user` block and two header lines. The
+  `source-revision` markers are unchanged.
+- `tests/scripts/test_provision_source_revision.py`: six tests for the block, and the docstring.
+  The file is listed in `layers.toml` by name, so no row is needed.
+- `docs/superpowers/reports/lanes-inc-7-host-install-report.md`: this report (`docs/superpowers/**`
+  in `layers.toml`).
+
+## Tests and checks
+
+- `make check` on a clean tree, with database `orchestrator_test_hq_w_275`: exit 0, lint and
+  pyright clean, **14,674 passed and 1 skipped (14,675 collected)** in 316 seconds.
+- The provision tests: 8 passed. The six new ones failed before the block existed (6 failed,
+  2 passed).
+- **Mutation proof.** Each mutant was applied to `provision.sh`, the test file run, and the script
+  restored (checked equal to the original with `diff`). All six were caught:
+
+  | Mutant | Result |
+  |---|---|
+  | uid check removed | 1 failed |
+  | group check removed | 2 failed |
+  | shell check removed | 1 failed |
+  | uid refusal exits 0 | 1 failed |
+  | block moved after the installs, before `daemon-reload` | 1 failed |
+  | only a `docker` membership refused | 3 failed |
+
+- `uv run --project ~/Developer/code-standards code-standards risk --repo .`: `normal`, so
+  `vendor-review` wasn't required.
+- `/code-review` (medium) on `origin/main...HEAD`: four nits and no bugs. I fixed one: the
+  state-file copy had no command, and now it has a heredoc like the config's. I kept three as they
+  are. The header's "Nothing here depends on OrbStack" line predates this change and stays true. A
+  sudoers rule is a read in the procedure, not code (see the self-review). The tests stub `id` and
+  `getent`: they prove the block's decisions, not the real tools' output format, which is
+  coreutils' and glibc's.
+- The x86_64 uv pin: I downloaded the 0.10.9 tarball and hashed it locally. It equals the pin. The
+  VM is aarch64, so that pin has never run.
+
+### How the VM install's behavior stays unchanged
+
+The diff adds the block and comment lines only. Every existing line is byte-for-byte the same. On
+the VM, `useradd --system --shell /usr/sbin/nologin rotation` with no `-G` gives a nonzero system
+uid, the group `rotation` alone (Ubuntu's `USERGROUPS_ENAB`, which the existing
+`install -g rotation` lines already depend on), and that shell, so the block passes:
+`test_the_user_it_creates_passes` holds that shape. That's argued from the script, not observed on
+the VM, which this task doesn't touch. If the VM's user were found otherwise, the next VM update
+would refuse before installing anything, and that user would already break amendment 29 item 1.
+
+## Self-review
+
+- **The sudoers rule isn't checked in code.** `sudo -l -U` output is text meant for people, and
+  parsing it is fragile. The procedure's step 2 reads it, and amendment 29 item 1 is the rule.
+  Groups, uid and shell are the parts a stable command answers.
+- **The install fetches `provision.sh` from `raw.githubusercontent.com` at the commit**, because
+  `vps_exec` has no stdin. A commit-addressed URL serves fixed bytes. The command downloads to a
+  file and checks curl's exit code before running anything, so a failed download can't run as an
+  empty script that exits 0.
+- **The hand pass's output comes back through `vps_exec`.** The executor logs one JSON line per
+  event with no value (Code Brain 5), so the transcript gets what the journal would.
+- **A hand pass longer than 300 seconds** outlives the `vps_exec` call. After a drain it's short,
+  but this is unproven. See follow-up 3.
+
+## Concerns
+
+- No standard covers host-user isolation or where a root credential rests on a host (amendment 29
+  item 2 says so). This change rests on the ADR, as the handoff says.
+- Infra Brain has no systemd lesson. The unit is unchanged.
+
+## Open questions
+
+1. **The root token's handover to the host.** No existing path meets the handoff's rules (inventory
+   item 4): `set-root-token` needs a terminal and `vps_exec` has none; a prompt over SSH is a
+   terminal step of Devon's; a BWS copy that something on the host reads needs an identity there
+   first, or a widened grant; and no sourced route moves the VM's file without the session's
+   stdout. The page states the file's end state and leaves the route to the mint gate (amendment 29
+   item 4 step 2). Someone has to decide a route before the cut-over.
+2. **Rollback after the VM's root token is revoked.** Item 5 makes that revoke the last check, and
+   nothing in item 4 or 5 says how the VM would run again after it: it would need a new token, and
+   that's question 1's handover again, in reverse. The page says it has no rollback past that
+   point.
+
+## Follow-ups
+
+1. ADR-0055 amendment 29's Consequences list `rotation-executor.md`'s VM procedures as stale. The
+   install is now covered. These still name only `orb -m rotation-executor` and aren't changed
+   here: "Create them" step 2 (`set-root-token`) and step 3 (`mint-bearer`), "Move a keeper"
+   step 3, "Rotate them by hand" (the root token), "Install the helper" steps 3 and 5 (key creation
+   and the pin from the VM), the proofs after it, and "Adopt the keeper". After the cut-over each
+   needs its host form, or a note that it's the VM's.
+2. No ADR-0055 line cite into the page moved: every cite (lines 114 to 174) comes before the
+   insertion. Amendment 29 item 3's helper citations (line 4146) are still stale, as amendment 31's
+   Consequences say. That's W-274's file, and I didn't edit it.
+3. At the cut-over, record how long the `env -i` hand pass took. If one exceeds `vps_exec`'s
+   300 seconds, the page needs another form for it, for example `systemctl start` with the
+   journal read (that form proves the unit's environment, not `env -i`).
+4. The canary's fake-adapter state file lives in the VM's state directory. Item 4 step 4 names three
+   files, and the canary's isn't one of them. Check at the cut-over whether it must move too.
+5. Verify item "No vps-backup recipe copies the executor's root token or `/etc`" stays the
+   cut-over's, as amendment 29 assigns it.
+
+## Standards followed
+
+- **Code Brain 3 (structured JSON logs to stdout, no file logs):** nothing changes how the executor
+  logs. The page reads passes with `journalctl -u rotation-worker -o cat` (one JSON line per event),
+  and the hand pass prints the same lines to stdout.
+- **Code Brain 4 (never swallow an error):** `provision.sh` keeps `set -euo pipefail`. Each refusal
+  prints its reason to stderr and exits 2, which the tests check (`returncode == 2`, reason in
+  stderr). The install command returns the script's exit code, and a failed download stops
+  before anything runs.
+- **Code Brain 5 (never log secrets):** no step prints a value. The token's file is checked with
+  `stat` (owner, group, mode), never read. The config and state files hold ids and times only.
+- **Infra Brain 2, 591, 592, 593 (no secrets, env files or BWS tokens in tracked files; no inline
+  `BWS_ACCESS_TOKEN`):** none is added. The page describes the token's file and never shows a
+  token.
+- **Infra Brain 1032 (no revoke without attested consumers):** cut-over step 6 puts the VM token's
+  revoke after every other amendment 29 item 5 check, and rollback is offered only before it.
+- **Infra Brain 598, as the ADR states it (the root keeps exactly its scope):** nothing adds or
+  widens a BWS identity, project, grant or scope. The open question names the widening a BWS-copy
+  route would need, and doesn't take it.
+- **Infra Brain 212 (HTTPS for public FQDNs):** doesn't apply. No domain changes.
+- **Repo rules:** `make check` green with the collected count read from a file. The test sits in a
+  file `layers.toml` already lists, and the report under `docs/superpowers/**`. No W-274 file,
+  `.cred-consumers.toml`, `targets.toml` or `deploy/vps/sds-pg-rotate` is touched.
+  `scripts/rotation-worker-vm/` isn't moved, and the `source-revision` markers stay.
+  `~/Developer/code-standards/STANDARDS.md`: the risk verdict is `normal`, and the `/code-review`
+  result is listed in the preceding sections.
+- **Devon's procedure-page rules:** every root step is a session's. Devon's only part is minting
+  into BWS and granting read, and he runs no terminal step. No BWS grant step is added, so the
+  grant-step wording rule has nothing to apply to.

@@ -539,8 +539,18 @@ instance may run at a time (item 4 step 6), and that includes a pass run by hand
    don't remove it. It's the rollback.
 3. Copy the state, or accept its loss (item 4 step 4). The three files are
    `announced-acts.json`, `wait-since.json` and `revokes-observed.json` in
-   `/var/lib/rotation-worker`. They hold ids and times, no value. Write each on the host owned by
-   `rotation`, mode `0600`. Losing `wait-since.json` or `revokes-observed.json` restarts a wait
+   `/var/lib/rotation-worker`. They hold ids and times, no value. Read each on the VM with
+   `orb -m rotation-executor -u root cat /var/lib/rotation-worker/<file>`, and write it on the
+   host owned by `rotation`, mode `0600`:
+
+   ```sh
+   umask 077 && cat > /var/lib/rotation-worker/<file> <<'EOF'
+   <the VM's file>
+   EOF
+   chown rotation:rotation /var/lib/rotation-worker/<file>
+   ```
+
+   Losing `wait-since.json` or `revokes-observed.json` restarts a wait
    and never shortens it. Losing `announced-acts.json` leaves an alert open until a person closes
    it.
 4. Run one pass by hand with only `PATH` and `HOME`:
