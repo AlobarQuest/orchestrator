@@ -147,7 +147,9 @@ past the VM token's revoke.
 ## Tests and checks
 
 - `make check` on a clean tree, with database `orchestrator_test_hq_w_275`: exit 0, lint and
-  pyright clean, **14,674 passed and 1 skipped (14,675 collected)** in 316 seconds.
+  pyright clean, **14,674 passed and 1 skipped (14,675 collected)** in 316 seconds. It ran at
+  `HEAD`, after the code change was committed; see "Final run" for the run after the last docs
+  edits.
 - The provision tests: 8 passed. The six new ones failed before the block existed (6 failed,
   2 passed).
 - **Mutation proof.** Each mutant was applied to `provision.sh`, the test file run, and the script
@@ -160,7 +162,7 @@ past the VM token's revoke.
   | shell check removed | 1 failed |
   | uid refusal exits 0 | 1 failed |
   | block moved after the installs, before `daemon-reload` | 1 failed |
-  | only a `docker` membership refused | 3 failed |
+  | only a `docker` membership refused (`== *docker*`) | 1 failed (the `sudo`-group test) |
 
 - `uv run --project ~/Developer/code-standards code-standards risk --repo .`: `normal`, so
   `vendor-review` wasn't required.
@@ -175,7 +177,10 @@ past the VM token's revoke.
 
 ### How the VM install's behavior stays unchanged
 
-The diff adds the block and comment lines only. Every existing line is byte-for-byte the same. On
+No executable line changed. The diff adds the block and two header lines, and removes one line,
+the header comment `# Install or update the credential-rotation executor in its isolated VM
+(ADR-0055 decision 2).` (`git diff origin/main -- scripts/rotation-worker-vm/provision.sh | grep
+'^-'` shows only it). On
 the VM, `useradd --system --shell /usr/sbin/nologin rotation` with no `-G` gives a nonzero system
 uid, the group `rotation` alone (Ubuntu's `USERGROUPS_ENAB`, which the existing
 `install -g rotation` lines already depend on), and that shell, so the block passes:
@@ -194,8 +199,14 @@ would refuse before installing anything, and that user would already break amend
   empty script that exits 0.
 - **The hand pass's output comes back through `vps_exec`.** The executor logs one JSON line per
   event with no value (Code Brain 5), so the transcript gets what the journal would.
-- **A hand pass longer than 300 seconds** outlives the `vps_exec` call. After a drain it's short,
-  but this is unproven. See follow-up 3.
+- **A `vps_exec` timeout only closes the connection** (infraops `src/services/ssh-client.ts`,
+  lines 68-71), so the remote command may keep running. The install runs under `flock -n`, so a
+  re-run can't overlap a live one. Before enabling the timer, `pgrep -u rotation` must print
+  nothing, so a timed-out hand pass can't overlap the first timer pass (item 4 step 6).
+- **The state files hold no value.** I read their writers: `announced-acts.json` is a list of alert
+  keys (`alert_hub_client` `KeyedAlerts`), `wait-since.json` maps keys to times (`FirstSightings`),
+  and `revokes-observed.json` maps rotation ids to times (`revokes.py`, lines 98-106). Copying them
+  through the transcript exposes nothing.
 
 ## Concerns
 
@@ -211,10 +222,12 @@ would refuse before installing anything, and that user would already break amend
    first, or a widened grant; and no sourced route moves the VM's file without the session's
    stdout. The page states the file's end state and leaves the route to the mint gate (amendment 29
    item 4 step 2). Someone has to decide a route before the cut-over.
-2. **Rollback after the VM's root token is revoked.** Item 5 makes that revoke the last check, and
-   nothing in item 4 or 5 says how the VM would run again after it: it would need a new token, and
-   that's question 1's handover again, in reverse. The page says it has no rollback past that
-   point.
+2. **Rollback after the VM's root token is revoked, or after a move.** Item 5 makes that revoke the
+   last check, and nothing in item 4 or 5 says how the VM would run again after it. It would need a
+   new token: question 1's handover again, in reverse. Under the "move the file" choice there's no
+   second token, so there's nothing to revoke and the VM is left with no token. Item 5's check "after
+   its revoke its root token is refused" then doesn't apply as written. The page says it has no
+   rollback past either point and that a move has nothing to revoke.
 
 ## Follow-ups
 
@@ -230,8 +243,10 @@ would refuse before installing anything, and that user would already break amend
 3. At the cut-over, record how long the `env -i` hand pass took. If one exceeds `vps_exec`'s
    300 seconds, the page needs another form for it, for example `systemctl start` with the
    journal read (that form proves the unit's environment, not `env -i`).
-4. The canary's fake-adapter state file lives in the VM's state directory. Item 4 step 4 names three
-   files, and the canary's isn't one of them. Check at the cut-over whether it must move too.
+4. Item 4 step 4 names three state files. The VM's state directory also holds the inbox's
+   `inbox-refused.json` (a fingerprint prefix; losing it delays one alert by a pass,
+   `inbox.py`, lines 192-193) and the canary's fake-adapter state ("The canary": "a state file in
+   the VM"). Check at the cut-over whether either needs to move.
 5. Verify item "No vps-backup recipe copies the executor's root token or `/etc`" stays the
    cut-over's, as amendment 29 assigns it.
 

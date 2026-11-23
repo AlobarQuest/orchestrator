@@ -454,13 +454,17 @@ without the config and the root token's file. So you can install before the cut-
    ```sh
    f=$(mktemp) && curl -sSfL -o "$f" \
      https://raw.githubusercontent.com/AlobarQuest/orchestrator/<40-character commit>/scripts/rotation-worker-vm/provision.sh \
-     && bash "$f" <40-character commit>; rc=$?; rm -f "$f"; exit $rc
+     && flock -n /run/rotation-worker-provision.lock bash "$f" <40-character commit>
+   rc=$?; rm -f "$f"; exit $rc
    ```
 
    The script downloads to a file first. A pipe into `bash` would run an empty script and exit 0
    if the download failed. `provision.sh` installs `git`, `curl` and `ssh` with `apt-get` when any
    is missing (the host is Ubuntu 24.04), and it refuses an architecture other than `x86_64` or
-   `aarch64`. If the call times out, run it again: the script is safe to re-run. To update, run
+   `aarch64`. If the call times out, run it again: the script is safe to re-run. A timeout only
+   closes `vps_exec`'s connection (infraops `src/services/ssh-client.ts`, lines 68-71), so the
+   first run may still be going; `flock -n` then refuses the second with exit 1, and you wait
+   and try again. To update, run
    the same step at the new commit. It rewrites the config's `source_revision` line and nothing
    else.
 2. Read the result. `provision.sh` exits 2 with the reason when the `rotation` user has uid 0, is
@@ -500,11 +504,13 @@ The file is `/etc/rotation-worker/root-token`, owned by `rotation`, mode `0400`,
 `rotation-executor` machine account's access token and nothing else. The account and its grants
 don't change.
 
-How the token reaches the file is decided at the cut-over's mint gate (amendment 29 item 4 step 2):
-move the VM's token, or mint a second token on the same machine account. `set-root-token` needs a
-terminal, and `vps_exec` has none, so no step on this page writes the file. Devon's only part is
-minting the value into BWS and granting read; he runs no terminal step, and the value never enters
-a transcript. Once the file exists, check it without reading it:
+How the token reaches the file isn't decided on this page. Devon chooses at the cut-over's mint
+gate (amendment 29 item 4 step 2) between moving the VM's token and minting a second token on the
+same machine account. No route to the file is written yet: `set-root-token` needs a terminal, and
+`vps_exec` has none. Whatever route is chosen must meet these rules: Devon's only part is
+generating the value into BWS and granting read, he runs no terminal step, the value never enters
+a transcript, and no BWS identity, project, grant or scope is added or widened. Once the file
+exists, check it without reading it:
 `stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`.
 
 ### Check the helper's key and host pin
@@ -539,7 +545,8 @@ instance may run at a time (item 4 step 6), and that includes a pass run by hand
    don't remove it. It's the rollback.
 3. Copy the state, or accept its loss (item 4 step 4). The three files are
    `announced-acts.json`, `wait-since.json` and `revokes-observed.json` in
-   `/var/lib/rotation-worker`. They hold ids and times, no value. Read each on the VM with
+   `/var/lib/rotation-worker`. They hold alert keys, rotation ids and times, never a value. Read
+   each on the VM with
    `orb -m rotation-executor -u root cat /var/lib/rotation-worker/<file>`, and write it on the
    host owned by `rotation`, mode `0600`:
 
@@ -561,11 +568,14 @@ instance may run at a time (item 4 step 6), and that includes a pass run by hand
    ```
 
    Its log lines, one JSON line per event, come back in the call's output and carry no value.
-5. Enable the host's timer: `systemctl enable --now rotation-worker.timer`. Read its passes with
+   If the call times out, the pass may still be running: a timeout only closes the connection.
+5. Check that no pass is running: `pgrep -u rotation` prints nothing. Then enable the host's
+   timer: `systemctl enable --now rotation-worker.timer`. Read its passes with
    `journalctl -u rotation-worker -o cat`, one JSON line per event.
-6. Run amendment 29 item 5's checks. The VM's root token is revoked only after every other
-   check passes: no revoke without attested consumers (Infra Brain 1032). Its last check then
-   proves the revoked token is refused on a fresh login with an empty `HOME`.
+6. Run amendment 29 item 5's checks. If the host got a second token, the VM's root token is
+   revoked only after every other check passes: no revoke without attested consumers (Infra Brain
+   1032). Its last check then proves the revoked token is refused on a fresh login with an empty
+   `HOME`. If the VM's token was moved instead, there's no second token and nothing to revoke.
 
 ### Roll back to the VM
 
@@ -576,7 +586,8 @@ While the VM's root token is unrevoked, the VM is the rollback. Keep one instanc
 2. On the VM, run `orb -m rotation-executor -u root systemctl enable --now rotation-worker.timer`.
 
 The host's state files don't carry back unless you copy them, with the same loss rule as step 3 of
-"Cut over to the host". After the VM's root token is revoked, this page has no rollback.
+"Cut over to the host". This needs the VM to still hold a working root token. After its token is
+revoked, or if the token was moved off the VM, this page has no rollback.
 
 ## Its credentials
 
