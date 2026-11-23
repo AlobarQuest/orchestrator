@@ -662,6 +662,8 @@ def _loaded_waits(
             approved.unit, lambda: setup.store.read(keeper_id).fingerprint
         )
     except (ContractError, StoreError) as error:
+        # Deliberately not raised: an unreadable answer (a refusal, no answer, a key the store
+        # won't give) is a wait, logged below and alerted on the 48-hour clock, never a pass.
         reason = f"what the consumer loaded can't be read: {scrub(str(error))}"
     if reason is not None:
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})

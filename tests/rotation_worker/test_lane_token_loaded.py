@@ -233,6 +233,17 @@ def test_a_reissue_s_verify_waits_unclaimed_on_anything_but_the_keeper_s_fingerp
     assert unit.requests == []
 
 
+def test_a_wait_is_logged_with_its_unit_and_reason(
+    unit: Unit, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    unit.helper = Helper({PRINT_KEY: printed(OLD_TOKEN)})
+    unit.take()
+    (record,) = [r for r in caplog.records if r.getMessage() == "unit_waiting"]
+    assert getattr(record, "unit") == "u1"
+    assert printed(OLD_TOKEN) in getattr(record, "reason")
+
+
 def test_an_unreadable_keeper_waits_unclaimed_and_asks_no_helper(unit: Unit) -> None:
     del unit.store.secrets[KEEPER]
     found = unit.take()
@@ -343,6 +354,14 @@ def test_a_context_built_without_issue_takes_the_loaded_read(unit: Unit) -> None
     assert printed(OLD_TOKEN) in str(raised.value)
     for token in (NEW_TOKEN, OLD_TOKEN):
         assert token.reveal() not in str(raised.value)
+
+
+def test_the_loaded_read_answers_only_for_the_approved_variable(unit: Unit) -> None:
+    provider = ADAPTERS["bws-lane-token"].build(_context(unit))
+    variable = lane.lane_variable(LANE_DESTINATIONS, f'bws-secret uuid="{KEEPER}"')
+    with pytest.raises(ContractError, match="only variable"):
+        provider.consumer_loaded({**variable, "key": "OTHER_BWS_ACCESS_TOKEN"}, NEW_TOKEN)
+    assert unit.loaded_reads() == 0 and unit.requests == []
 
 
 def test_a_helper_target_with_no_helper_configured_is_refused_at_build(unit: Unit) -> None:
