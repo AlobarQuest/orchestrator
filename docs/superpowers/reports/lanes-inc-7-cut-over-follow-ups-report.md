@@ -173,6 +173,9 @@ the alert enforces that.
 - `make check` with my own database `orchestrator_test_hq_w_282` and the worktree's own venv:
   **rc 0, 14768 passed, 1 skipped** (5 min 57 s). Lint, format, type check and the whole-repo
   scans passed. A rerun at `fbf9bd4a`, after the ADR and wording edits, also gave rc 0, 14768 passed, 1 skipped (6 min 20 s).
+- CI on PR #798 at `ca477b2e` (the commit before this line was added): all three jobs pass.
+  `Quality` collected and ran 14755 passed, 14 skipped (run 45204677270). CI skips 13 more
+  than the local run, which I didn't investigate.
 - `uv run pytest tests/rotation_worker/test_emit_secret.py`: 16 passed before the mutants.
 - The four mutants in the preceding "Item 6" table.
 - `code-standards risk --repo .`: **high-risk**, rule `secrets`, matching
