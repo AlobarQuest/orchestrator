@@ -10,7 +10,11 @@ registry read and the helper are replaced.
 
 from __future__ import annotations
 
+import importlib
+import inspect
+import json
 import logging
+import pkgutil
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,12 +23,21 @@ from typing import Any, cast
 import httpx
 import pytest
 
+import rotation_worker.adapters as adapters_package
 import rotation_worker.worker as worker
 from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.adapters import bws_lane_token as lane
 from rotation_worker.adapters import bws_machine_token as bws
 from rotation_worker.checks import Approved
-from rotation_worker.contract import EMPTY, ContractError, Plan, Rotation
+from rotation_worker.contract import (
+    EMPTY,
+    PROOF_PHRASES,
+    ContractError,
+    NamesConsumerProof,
+    Plan,
+    Rotation,
+    _proofs,
+)
 from rotation_worker.coolify import CoolifyClient
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.helper_client import HelperClient, HelperRefused
@@ -44,6 +57,7 @@ from tests.rotation_worker.test_lane_credentials import (
     NEW_TOKEN,
     OLD_TOKEN,
     SERVICE,
+    VARIABLE,
     WORK,
     _row,
 )
@@ -336,6 +350,118 @@ def test_a_row_without_a_helper_target_never_waits_on_a_load(unit: Unit) -> None
         raise AssertionError("a row without helper_target reads no keeper before the claim")
 
     assert provider.loaded_wait(LANE_REISSUE.unit("verify"), unread) is None
+
+
+# ---- the evidence names the proof that passed (#789 follow-up 4) ----------------------------
+
+
+def _verify_payloads(unit: Unit) -> list[dict[str, Any]]:
+    return [
+        b["payload"]
+        for b in unit.client.evidence_bodies
+        if b["payload"]["step"] == "verify_consumers"
+    ]
+
+
+def _assert_no_token(unit: Unit, logs: pytest.LogCaptureFixture) -> None:
+    text = json.dumps(unit.client.evidence_bodies) + " ".join(unit.client.failures.values())
+    text += " ".join(f"{r.getMessage()} {vars(r)}" for r in logs.records)
+    for token in (NEW_TOKEN, OLD_TOKEN):
+        assert token.reveal() not in text
+
+
+def test_a_reissue_on_a_helper_target_names_the_loaded_proof_and_only_fingerprints(
+    unit: Unit, logs: pytest.LogCaptureFixture
+) -> None:
+    unit.take()
+    (payload,) = _verify_payloads(unit)
+    note = payload["note"]
+    assert note.endswith(f"; {PROOF_PHRASES['loaded']}")
+    assert PROOF_PHRASES["patch"] not in note and note.count("proof:") == 1
+    assert "the old value is live before the revoke; proof: loaded" in note
+    # The match is equality, so the loaded fingerprint is the filed `new` one: prefix and length.
+    (filed,) = [p for p in payload["fingerprints"] if p["which"] == "new"]
+    assert filed == {
+        "which": "new",
+        "sha256_prefix": NEW_TOKEN.fingerprint.sha256_prefix,
+        "length": NEW_TOKEN.fingerprint.length,
+    }
+    _assert_no_token(unit, logs)
+
+
+def test_a_row_without_a_helper_target_names_the_patch_proof(
+    unit: Unit, logs: pytest.LogCaptureFixture
+) -> None:
+    unit.row = _row()
+    unit.helper = None
+    unit.take()
+    (payload,) = _verify_payloads(unit)
+    assert payload["note"].endswith(f"; {PROOF_PHRASES['patch']}")
+    assert PROOF_PHRASES["loaded"] not in payload["note"]
+    _assert_no_token(unit, logs)
+
+
+def test_an_issue_names_the_patch_proof_in_both_its_verify_records(
+    unit: Unit, logs: pytest.LogCaptureFixture
+) -> None:
+    unit.plan, unit.name = LANE_ISSUE, "store"
+    unit.store.secrets[KEEPER] = ("keepers", "keeper", Value(EMPTY))
+    unit.drop_quarantine()
+    unit.helper = Helper(AssertionError("an issue never reads loaded"))
+    unit.take()
+    filed, deleted = (p["note"] for p in _verify_payloads(unit))
+    assert filed.endswith(f"; {PROOF_PHRASES['patch']}")
+    assert deleted.startswith(f"{filed}; deleted staging ")
+    assert PROOF_PHRASES["loaded"] not in filed + deleted
+    _assert_no_token(unit, logs)
+
+
+def test_a_failed_loaded_read_files_no_proof_and_no_token(
+    unit: Unit, logs: pytest.LogCaptureFixture
+) -> None:
+    unit.helper = Helper({PRINT_KEY: printed(NEW_TOKEN)}, {PRINT_KEY: printed(OLD_TOKEN)})
+    unit.take()
+    assert unit.calls()[-1] == "fail" and _verify_payloads(unit) == []
+    _assert_no_token(unit, logs)
+
+
+class _Namer:
+    def __init__(self, proof: str) -> None:
+        self.proof = proof
+
+    def consumer_proof(self, consumer: Any) -> str:
+        return self.proof
+
+
+def _run(provider: object, *destinations: str) -> Any:
+    return SimpleNamespace(
+        provider=provider, rotation=SimpleNamespace(destinations=destinations), scheduled=None
+    )
+
+
+def test_a_proof_is_named_once_however_many_consumers_it_proved() -> None:
+    other = VARIABLE.replace("EXECUTION_WATCH", "OTHER_LANE")
+    run = _run(_Namer("loaded"), f'bws-secret uuid="{KEEPER}"', VARIABLE, other)
+    assert _proofs(run, []) == ["loaded"]
+    # A consumer still missing the new value is proved by nothing, so names nothing.
+    assert _proofs(run, [VARIABLE, other]) == []
+
+
+def test_a_provider_that_names_no_proof_adds_nothing_to_the_note() -> None:
+    assert not isinstance(object(), NamesConsumerProof)
+    assert _proofs(_run(object(), VARIABLE), []) == []
+
+
+def test_only_the_lane_token_names_its_consumer_proof() -> None:
+    """Every other adapter's verify_consumers note stays byte-identical: none implements the
+    hook, so `_proofs` adds nothing to its note."""
+    namers: set[type] = set()
+    for info in pkgutil.iter_modules(adapters_package.__path__):
+        module = importlib.import_module(f"{adapters_package.__name__}.{info.name}")
+        for _, cls in inspect.getmembers(module, inspect.isclass):
+            if cls.__module__ == module.__name__ and hasattr(cls, "consumer_proof"):
+                namers.add(cls)
+    assert namers == {lane.BwsLaneTokenProvider}
 
 
 # ---- building the provider -------------------------------------------------------------------

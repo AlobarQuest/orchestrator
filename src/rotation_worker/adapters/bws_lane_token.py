@@ -29,6 +29,7 @@ lane's `<LANE>_BWS_ACCESS_TOKEN` variable.
     keeper's (ADR-0055 amendment 29 item 3, D-63 C). The `verify` unit waits unclaimed until it
     does (`loaded_wait`), and the claimed step reads once more and fails the unit on anything
     else. A mismatch or an unreadable answer never lets `verify` pass.
+  The step's note names which of the two passed (`contract.PROOF_PHRASES`), never a value.
 * **Revoke** is a person's, after `verify` passes, or first, after a leak (item 10, D-26), so the
   probe before it accepts the old token live or refused. Confirm-dead waits out a session's
   lifetime after the revoke, as a machine token's does.
@@ -41,7 +42,15 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 from rotation_worker.adapters.bws_machine_token import BwsMachineTokenProvider, reach_digest
-from rotation_worker.contract import ENV_KIND, ContractError, Rotation, StepKind, UnitPlan, accepts
+from rotation_worker.contract import (
+    ENV_KIND,
+    ConsumerProof,
+    ContractError,
+    Rotation,
+    StepKind,
+    UnitPlan,
+    accepts,
+)
 from rotation_worker.coolify import CoolifyClient
 from rotation_worker.destinations import (
     DestinationError,
@@ -318,6 +327,11 @@ class BwsLaneTokenProvider:
         if mismatch is not None:
             raise ContractError(mismatch)
         return True
+
+    def consumer_proof(self, consumer: Mapping[str, Any]) -> ConsumerProof:
+        """Which proof `consumer_loaded` used for the variable, for verify_consumers' note: the
+        loaded fingerprint on a reissue whose row names its helper target, else the `PATCH`."""
+        return "patch" if self._loaded is None else "loaded"
 
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("a lane token has no hosted service to host it")
