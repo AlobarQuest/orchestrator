@@ -2,7 +2,7 @@ Outcome: done
 
 # Report: the change-window lane runs infraops at a pinned commit (W-278)
 
-Handoff: sds-hq `state/handoffs/change-window-infraops-pin.md`. Branch
+Handoff: sds-hq `state/handoffs/change-window-infraops-pin.md`. PR #795. Branch
 `hq/change-window-infraops-pin`, base `origin/main` `d96a6e44`. Nothing was released or deployed.
 
 ## What I built
