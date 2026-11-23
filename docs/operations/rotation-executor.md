@@ -338,6 +338,10 @@ resolving it at `/review` with the new value's fingerprint (`sha256_prefix` and 
 
 ## Install or update it
 
+This section is the VM's. It applies until increment 7's cut-over moves the executor to the VPS
+host (ADR-0055 amendment 29), and after it only as the rollback while the VM's root token is
+unrevoked. The host's procedure is the following section, "Install or update it on the VPS host".
+
 The VM is `rotation-executor`, created with `orb create --isolated --isolate-network
 ubuntu:noble rotation-executor`. It reaches the internet (BWS, `sds.alobar.net`, GitHub), other
 OrbStack machines and the tailnet (production Coolify at `100.92.138.19:8000`), but not the Mac.
@@ -424,6 +428,145 @@ orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bi
   HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker run \
   --config /etc/rotation-worker/config.toml
 ```
+
+## Install or update it on the VPS host
+
+ADR-0055 amendment 29 moves the executor to the VPS host (`prod-vps`) at increment 7's cut-over: a
+systemd service and timer under the host user `rotation`, outside Docker and Coolify, with the same
+paths, unit, timer and `provision.sh` as the VM. Until the cut-over, the VM is the live instance,
+and the preceding section applies. **This procedure is unproven until the cut-over runs it**: no
+step here has run on the host.
+
+Every step is a session's, as root on the host through infraops `vps_exec` with `instance` set to
+`prod`. It logs in as root (ADR-0055 amendment 31 item 2). None of these commands is among the
+deploy gate's admitted forms (sds-hq `docs/operations/deploy-gate.md`), so they run in an
+interactive session, where the gate asks a person on each call. `vps_exec` takes one command
+string, with no stdin and no terminal, and waits at most 300000 ms. Its output enters the
+transcript, so no step here prints a value.
+
+### Install the code
+
+Installing starts nothing: `provision.sh` doesn't enable the timer, and the service doesn't start
+without the config and the root token's file. So you can install before the cut-over.
+
+1. Install the code at a commit that is on GitHub. Run this with a `timeout` of 300000:
+
+   ```sh
+   f=$(mktemp) && curl -sSfL -o "$f" \
+     https://raw.githubusercontent.com/AlobarQuest/orchestrator/<40-character commit>/scripts/rotation-worker-vm/provision.sh \
+     && bash "$f" <40-character commit>; rc=$?; rm -f "$f"; exit $rc
+   ```
+
+   The script downloads to a file first. A pipe into `bash` would run an empty script and exit 0
+   if the download failed. `provision.sh` installs `git`, `curl` and `ssh` with `apt-get` when any
+   is missing (the host is Ubuntu 24.04), and it refuses an architecture other than `x86_64` or
+   `aarch64`. If the call times out, run it again: the script is safe to re-run. To update, run
+   the same step at the new commit. It rewrites the config's `source_revision` line and nothing
+   else.
+2. Read the result. `provision.sh` exits 2 with the reason when the `rotation` user has uid 0, is
+   in any group but its own (on this host, `docker` alone is root), or has a login shell other
+   than `/usr/sbin/nologin`. It checks a user that already exists as found and never changes it,
+   so fix the user and run step 1 again. Then read `sudo -l -U rotation`: it must say the user is
+   not allowed to run sudo, or `sudo` must be absent. The user has no sudoers rule (amendment 29
+   item 1).
+
+### Write the config
+
+The config holds ids and paths, no value. Copy the VM's file unchanged except for
+`source_revision`, which you set to the first 12 characters of the installed commit. Read it with
+`orb -m rotation-executor -u root cat /etc/rotation-worker/config.toml`, then write it on the host,
+owned by root, group `rotation`, mode `0640`:
+
+```sh
+umask 077 && cat > /etc/rotation-worker/config.toml <<'EOF'
+<the VM's config.toml>
+EOF
+chown root:rotation /etc/rotation-worker/config.toml && chmod 0640 /etc/rotation-worker/config.toml
+```
+
+No key changes for the host:
+
+- `coolify_url` stays `http://100.92.138.19:8000`, the tailnet address (amendment 29 item 1).
+- `pg_helper_host` stays `root@<tailnet address>`, and `pg_helper_known_host` stays the VM's line
+  once the following "Check the helper's key and host pin" section confirms it.
+- `root_token_file` and `state_dir` are the same paths.
+- `store` stays `bws`, so the heartbeat key is still `rotation-heartbeat:bws`.
+- Every id names something that doesn't move: the WORKER bearer and its key id, the projects, the
+  admin secrets, the inbox, and the Healthchecks and GitHub App ids.
+
+### Put the root token in its file
+
+The file is `/etc/rotation-worker/root-token`, owned by `rotation`, mode `0400`, holding the
+`rotation-executor` machine account's access token and nothing else. The account and its grants
+don't change.
+
+How the token reaches the file is decided at the cut-over's mint gate (amendment 29 item 4 step 2):
+move the VM's token, or mint a second token on the same machine account. `set-root-token` needs a
+terminal, and `vps_exec` has none, so no step on this page writes the file. Devon's only part is
+minting the value into BWS and granting read; he runs no terminal step, and the value never enters
+a transcript. Once the file exists, check it without reading it:
+`stat -c '%U %G %a' /etc/rotation-worker/root-token` prints `rotation rotation 400`.
+
+### Check the helper's key and host pin
+
+The executor reaches the helper as it did from the VM (amendment 29 item 1). Nothing is created
+on the host:
+
+- The key stays the secret `pg_helper_key_id` names in `Rotation / Keepers`, read at each use.
+- The `authorized_keys` line on the host stays as it is. It carries `restrict` and the forced
+  command, and no `from=`, so a connection from the host itself matches it.
+
+Re-read the pin from the host (amendment 29 item 4 step 5):
+
+```sh
+ssh-keyscan -t ed25519 100.92.138.19 2>/dev/null | ssh-keygen -lf -
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+The two fingerprints must be equal, and the scanned line (`ssh-keyscan -t ed25519 100.92.138.19`)
+must equal the config's `pg_helper_known_host`. If either differs, stop the cut-over.
+
+### Cut over to the host
+
+Amendment 29 item 4 is the outline. The steps on this page run in this order, because only one
+instance may run at a time (item 4 step 6), and that includes a pass run by hand:
+
+1. Drain (item 4 step 1), install the code, write the config, check the pin, and put the root
+   token in its file.
+2. Stop and disable the VM's timer: `orb -m rotation-executor -u root systemctl disable --now
+   rotation-worker.timer`. Then wait until `orb -m rotation-executor -u root systemctl is-active
+   rotation-worker.service` prints `inactive`, so no VM pass is still running. Disable the timer;
+   don't remove it. It's the rollback.
+3. Copy the state, or accept its loss (item 4 step 4). The three files are
+   `announced-acts.json`, `wait-since.json` and `revokes-observed.json` in
+   `/var/lib/rotation-worker`. They hold ids and times, no value. Write each on the host owned by
+   `rotation`, mode `0600`. Losing `wait-since.json` or `revokes-observed.json` restarts a wait
+   and never shortens it. Losing `announced-acts.json` leaves an alert open until a person closes
+   it.
+4. Run one pass by hand with only `PATH` and `HOME`:
+
+   ```sh
+   runuser -u rotation -- env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker \
+     /opt/rotation-worker/venv/bin/rotation-worker run --config /etc/rotation-worker/config.toml
+   ```
+
+   Its log lines, one JSON line per event, come back in the call's output and carry no value.
+5. Enable the host's timer: `systemctl enable --now rotation-worker.timer`. Read its passes with
+   `journalctl -u rotation-worker -o cat`, one JSON line per event.
+6. Run amendment 29 item 5's checks. The VM's root token is revoked only after every other
+   check passes: no revoke without attested consumers (Infra Brain 1032). Its last check then
+   proves the revoked token is refused on a fresh login with an empty `HOME`.
+
+### Roll back to the VM
+
+While the VM's root token is unrevoked, the VM is the rollback. Keep one instance at a time:
+
+1. On the host, run `systemctl disable --now rotation-worker.timer`, and wait until
+   `systemctl is-active rotation-worker.service` prints `inactive`.
+2. On the VM, run `orb -m rotation-executor -u root systemctl enable --now rotation-worker.timer`.
+
+The host's state files don't carry back unless you copy them, with the same loss rule as step 3 of
+"Cut over to the host". After the VM's root token is revoked, this page has no rollback.
 
 ## Its credentials
 
