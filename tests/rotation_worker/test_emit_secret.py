@@ -125,7 +125,12 @@ def test_an_unknown_secret_exits_2_with_nothing_on_the_pipe(
 
 @pytest.mark.parametrize(
     "secret_id",
-    ["", "not-a-uuid", "44444444-4444-4444-8444-44444444444", "44444444-4444-4444-8444-44444444444A"],
+    [
+        "",
+        "not-a-uuid",
+        "44444444-4444-4444-8444-44444444444",
+        "44444444-4444-4444-8444-44444444444A",
+    ],
 )
 def test_a_malformed_id_is_refused_before_the_store_is_opened(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, secret_id: str
