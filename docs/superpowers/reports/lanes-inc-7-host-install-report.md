@@ -150,6 +150,8 @@ past the VM token's revoke.
   pyright clean, **14,674 passed and 1 skipped (14,675 collected)** in 316 seconds. It ran at
   `HEAD`, after the code change was committed; see "Final run" for the run after the last docs
   edits.
+- **Final run:** `make check` again at `c8164b75`, after every page and report edit before this
+  line, on a clean tree: exit 0, 14,674 passed and 1 skipped (14,675 collected).
 - The provision tests: 8 passed. The six new ones failed before the block existed (6 failed,
   2 passed).
 - **Mutation proof.** Each mutant was applied to `provision.sh`, the test file run, and the script
