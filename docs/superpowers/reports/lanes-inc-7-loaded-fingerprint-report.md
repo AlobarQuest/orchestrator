@@ -72,6 +72,8 @@ install, which a merge doesn't change. The stop point 1 file has the line refere
 
 - **`make check`:** green at the final commit. 14,668 passed and 1 skipped (14,669 collected),
   with ruff, pyright and the whole-repo guards, against `orchestrator_test_hq_w_272`.
+- **CI on #789:** every check passes. The `Quality` job collected 14,669 tests: 14,655 passed and
+  14 skipped.
 - **New tests:** 48.
   - `tests/deploy/test_sds_pg_rotate.py`, 20 (41 before, 61 after): a consumers-only target
     answers `loaded` with the exact `docker exec ... printf` argv; `set` and `probe` refuse it; a
