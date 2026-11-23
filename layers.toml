@@ -675,6 +675,7 @@ paths = [
   "tests/scripts/test_run_rotation_proposer.py",
   "tests/scripts/test_run_rotation_proposer_lane.py",
   "tests/scripts/test_provision_source_revision.py",
+  "tests/scripts/test_set_root_token.py",
   "docs/operations/rotation-executor.md",
   "docs/operations/rotation-proposer.md",
   "docs/decisions/0054-*.md",
