@@ -68,8 +68,18 @@ def store(monkeypatch: pytest.MonkeyPatch) -> CountingStore:
     return memory
 
 
-def _never_opened(config: Config) -> MemoryStore:
-    raise AssertionError("the store was opened")
+@pytest.fixture
+def opened(monkeypatch: pytest.MonkeyPatch) -> list[Config]:
+    """Each config the verb opened a store with. It returns a working store, so a refusal whose
+    guard is gone shows as an open here, not as an exception the verb's `except` turns into 2."""
+    calls: list[Config] = []
+
+    def record(config: Config) -> MemoryStore:
+        calls.append(config)
+        return MemoryStore()
+
+    monkeypatch.setattr(cli, "open_store", record)
+    return calls
 
 
 def test_the_value_reaches_the_pipe_once_with_one_newline_through_the_entry_point(
@@ -90,14 +100,14 @@ def test_the_value_reaches_the_pipe_once_with_one_newline_through_the_entry_poin
 
 
 def test_a_terminal_is_refused_before_the_store_is_opened(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, opened: list[Config], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli, "open_store", _never_opened)
     terminal = Terminal()
     secret_id = "44444444-4444-4444-8444-444444444444"
     assert cli.emit_secret(_config(tmp_path), secret_id, terminal) == cli.EXIT_UNREADABLE
     assert terminal.getvalue() == ""
-    assert "pipe" in capsys.readouterr().err
+    assert opened == []
+    assert capsys.readouterr().err == "emit-secret: writes only to a pipe, not a terminal\n"
 
 
 def test_a_store_failure_exits_2_and_carries_no_value(
@@ -135,19 +145,25 @@ def test_an_unknown_secret_exits_2_with_nothing_on_the_pipe(
     ],
 )
 def test_a_malformed_id_is_refused_before_the_store_is_opened(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, secret_id: str
+    tmp_path: Path, opened: list[Config], capsys: pytest.CaptureFixture[str], secret_id: str
 ) -> None:
-    monkeypatch.setattr(cli, "open_store", _never_opened)
     pipe = Pipe()
     assert cli.emit_secret(_config(tmp_path), secret_id, pipe) == cli.EXIT_UNREADABLE
     assert pipe.getvalue() == ""
+    assert opened == []
+    assert capsys.readouterr().err == "emit-secret: the secret id must be a lowercase UUID\n"
 
 
-def test_the_keychain_instance_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "open_store", _never_opened)
+def test_the_keychain_instance_is_refused(
+    tmp_path: Path, opened: list[Config], capsys: pytest.CaptureFixture[str]
+) -> None:
     keychain = replace(_config(tmp_path), store="keychain")
     secret_id = "44444444-4444-4444-8444-444444444444"
-    assert cli.emit_secret(keychain, secret_id, Pipe()) == cli.EXIT_UNREADABLE
+    pipe = Pipe()
+    assert cli.emit_secret(keychain, secret_id, pipe) == cli.EXIT_UNREADABLE
+    assert pipe.getvalue() == ""
+    assert opened == []
+    assert capsys.readouterr().err == "emit-secret: only the BWS executor reads with the root\n"
 
 
 def test_a_closed_pipe_exits_2_naming_only_the_class(

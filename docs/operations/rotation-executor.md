@@ -449,19 +449,32 @@ transcript, so no step here prints a value.
 Installing starts nothing: `provision.sh` doesn't enable the timer, and the service doesn't start
 without the config and the root token's file. So you can install before the cut-over.
 
-1. Install the code at a commit that is on GitHub. Run this with a `timeout` of 300000:
+1. Install the code at a commit that is on GitHub, in two calls. The first downloads the script
+   at that commit to a root-only file named by the commit:
 
    ```sh
-   f=$(mktemp) && curl -sSfL -o "$f" \
+   install -d -m 0700 /root/rotation-worker-provision && curl -sSfL \
+     -o /root/rotation-worker-provision/provision-<40-character commit>.sh.part \
      https://raw.githubusercontent.com/AlobarQuest/orchestrator/<40-character commit>/scripts/rotation-worker-vm/provision.sh \
-     && flock -n /run/rotation-worker-provision.lock bash "$f" <40-character commit>
-   rc=$?; rm -f "$f"; exit $rc
+     && mv /root/rotation-worker-provision/provision-<40-character commit>.sh.part \
+       /root/rotation-worker-provision/provision-<40-character commit>.sh
    ```
 
-   The script downloads to a file first. A pipe into `bash` would run an empty script and exit 0
-   if the download failed. `provision.sh` installs `git`, `curl` and `ssh` with `apt-get` when any
+   The second runs it, with a `timeout` of 300000:
+
+   ```sh
+   flock -n /run/rotation-worker-provision.lock \
+     bash /root/rotation-worker-provision/provision-<40-character commit>.sh <40-character commit>
+   ```
+
+   They are two calls because the Mac's high-power gate denies a `vps_exec` command that holds
+   `rm -f` or a pipe into `bash`. The script downloads to a file first: a pipe into `bash` would
+   run an empty script and exit 0 if the download failed. The file is renamed into place only
+   when `curl` succeeds, so the second call finds the whole script at that commit or no file. The
+   file holds no value, so leaving it is harmless; to remove it, run `rm` without `-f` on its
+   path. `provision.sh` installs `git`, `curl` and `ssh` with `apt-get` when any
    is missing (the host is Ubuntu 24.04), and it refuses an architecture other than `x86_64` or
-   `aarch64`. If the call times out, run it again: the script is safe to re-run. A timeout only
+   `aarch64`. If the second call times out, run it again: the script is safe to re-run. A timeout only
    closes `vps_exec`'s connection (infraops `src/services/ssh-client.ts`, lines 68-71), so the
    first run may still be going; `flock -n` then refuses the second with exit 1, and you wait
    and try again. To update, run
@@ -494,7 +507,8 @@ No key changes for the host:
 - `pg_helper_host` stays `root@<tailnet address>`, and `pg_helper_known_host` stays the VM's line
   once the following "Check the helper's key and host pin" section confirms it.
 - `root_token_file` and `state_dir` are the same paths.
-- `store` stays `bws`, so the heartbeat key is still `rotation-heartbeat:bws`.
+- `store` stays `bws`, so the heartbeat key is still `rotation-heartbeat:bws-secret`: the key
+  ends in the store's read-back kind (`bws-secret`), not the config's `store` value.
 - Every id names something that doesn't move: the WORKER bearer and its key id, the projects, the
   admin secrets, the inbox, and the Healthchecks and GitHub App ids.
 
@@ -602,7 +616,16 @@ instance may run at a time (item 4 step 6), and that includes a pass run by hand
 
    Its log lines, one JSON line per event, come back in the call's output and carry no value.
    If the call times out, the pass may still be running: a timeout only closes the connection.
-5. Check that no pass is running: `pgrep -u rotation` prints nothing. Then enable the host's
+5. Check that no pass is running, the service's or step 4's:
+
+   ```sh
+   systemctl is-active rotation-worker.service; pgrep -af '/opt/rotation-worker/venv/bin/[r]otation-worker '
+   ```
+
+   It must print `inactive` and nothing else. `is-active` alone misses step 4's pass, which
+   `runuser` starts outside the unit. The bracket stops `pgrep` matching the shell that carries
+   the command. Don't use `pgrep -u rotation`: on the host the `rotation` user's uid, 999, is also
+   the uid of lane and Postgres container processes, so it lists them. Then enable the host's
    timer: `systemctl enable --now rotation-worker.timer`. Read its passes with
    `journalctl -u rotation-worker -o cat`, one JSON line per event.
 6. Run amendment 29 item 5's checks. Only after every other check passes, Devon revokes the VM's
@@ -823,7 +846,11 @@ orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bi
 ```
 
 It prints `switched`, `not yet` or `unreadable` for each reader, with the start of the latest run
-it found. It exits 2 when any reader is unreadable.
+it found. It exits 2 when any reader is unreadable. When it prints nothing and exits 0, the
+credential's row names no scheduled reader: no `runtime-fetch` consumer with a read and no
+Actions-secret copy. A `bws-lane-token` row with `helper_target`, such as
+`execution-watch-bws-token`, is one: its lane is proved by the helper's `loaded` fingerprint
+("Lane tokens and ping URLs"), which this command doesn't read.
 
 ### If a rotation stalls after host
 
