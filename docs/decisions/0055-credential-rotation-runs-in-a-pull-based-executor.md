@@ -4391,3 +4391,148 @@ and no rotation age changes.
   starts during it fails one read and runs again on its next schedule. The lane's dead-man check
   and alerts cover a refusing or absent broker the way they cover a failed `bws` read.
 - **ADR-0059's "Cut-over for one lane"** takes the broker-lane variation that section states.
+
+## Amendment 31 — The executor's root paths stay root for development (2026-11-23)
+
+**Status: Proposed (2026-11-23).** Accepted on merge, as amendment 30 is. **Relates to:** amendment
+29 item 2 (T1, as amended, and its cut-over prerequisites), item 3 (the consumers-only helper
+target and the `loaded` proof) and item 4 (the cut-over), with D-64 and D-65.
+
+This amendment answers amendment 29 item 2's bullet "Cut-over prerequisites: the root paths narrow
+first (D-65)" (lines 4128-4133; every line number here is at `4d8ca873`). It records how
+orchestrator #789 (`4d8ca873`) built item 3's helper change. It changes no resource, identity,
+token or grant. Devon answered two questions on 2026-11-23. They are quoted from sds-hq
+`state/decisions.md` at commit `effa6ea`, which records both. Each question carried its own
+findings, and this amendment cites them there rather than restating them. Neither answer was made
+standing, so neither is a general rule.
+
+- **D-73** (question): "Rotation executor's move to the VPS host (increment 7), cut-over
+  prerequisite 1 of 2 from your D-65 option 2 ('narrow the root paths first'): Coolify off the
+  root user. New finding: on this host it doesn't narrow T1 (who can reach Rotation / Admin and the
+  lane token keepers). Coolify's non-root mode is experimental and needs passwordless sudo for
+  every command (its docs: 'cooluser ALL=(ALL) NOPASSWD: ALL'). And any Coolify admin or
+  write-token holder can deploy a resource that binds a host path (the lane composes already bind
+  /data/sds/broker), which reaches the executor's token file. The web terminal, on today for the
+  localhost server, is one more such path. Which? (A) Accept for development: Coolify stays root,
+  and T1 names Coolify admins and write-token holders; the security phase reopens it with D-64. (B)
+  As A, plus turn off Coolify's web terminal on the localhost server (reversible hygiene; the API
+  path stays). (C) Reopen D-64 now and choose a dedicated host or VM for the executor."
+  **Answer (2026-11-23T00:49:54Z):** "B. Accept for development: Coolify stays root, and the
+  ADR-0055 T1 text names Coolify admins and write-token holders; also turn off Coolify's web
+  terminal on the localhost server (its own act). The security phase reopens it with D-64."
+- **D-74** (question): "Rotation executor's move to the VPS host (increment 7), cut-over
+  prerequisite 2 of 2 from D-65 option 2: infraops' vps_exec off the root user (VPS_USER defaults
+  to root, infraops src/services/ssh-client.ts:32). New finding: changing the SSH user removes no
+  infraops holder from T1 by itself, because the same infraops connection holds Coolify write tools
+  that can create or reconfigure a compose resource with a host bind. A docker-group user is
+  root-equivalent, and a sudoers allowlist isn't a boundary either: sudoers wildcards match spaces,
+  so 'docker exec * lane-run *' matches far more. The sound shape is a root-owned fixed helper (a
+  verb and a lane, like sds-pg-rotate) behind a non-root user, and it narrows T1 only if the
+  Coolify path is also closed (prerequisite 1, option C). Which? (A) Accept for development:
+  infraops stays root, and T1 names every infraops session; the security phase reopens it. (B)
+  Build the helper path now: infraops code (the prod docker prefix and the file tools), the deploy
+  script's printed commands, the gate hook and deploy-gate.md (an interactive session), and an
+  interactive root path for root-only steps such as the broker directory install. (C) Something
+  else." **Answer (2026-11-23T00:49:54Z):** "A. Accept for development: infraops stays root, and
+  T1 names every infraops session; the security phase reopens it. Devon, interactive session
+  2026-11-22."
+
+Both answers hold for the development phase. The security phase reopens both with D-64, as D-64
+itself is to be stress-tested before the SDS goes into production (amendment 29, "D-64 B is the
+choice for the development phase").
+
+### Decision
+
+1. **Coolify stays root (D-73 B).** Production Coolify's `localhost` server keeps logging in to its
+   own host as `root`. T1 names every Coolify admin and every holder of a Coolify API token with
+   write abilities as a root-equivalent holder: any of them can deploy a resource that binds a host
+   path, which reaches the executor's token file (D-73's finding; the lane composes bind
+   `/data/sds/broker`, amendment 30 item 2). That replaces item 2's "can probably run a container
+   that mounts a host path ... that path isn't tested" (lines 4106-4108) with D-73's finding.
+   - **The terminal is off.** Coolify's web terminal on the `localhost` server
+     (`kgo8kgsk40kssk4g4s4ocw40`) was turned off as its own act, `coolify-terminal-off`, on
+     2026-11-23 at 00:55:38 UTC: `server_settings.is_terminal_enabled` is `false`. HQ read `false`
+     through `coolify_get_server` at about 01:10 UTC. Item 2's "its web terminal is enabled"
+     (lines 4103-4104) no longer holds.
+   - **The API path stays.** Turning the terminal off closes one path and leaves the Coolify API,
+     and the SSH private key Coolify keeps for the server (lines 4104-4106), as they were.
+2. **infraops stays root (D-74 A).** `vps_exec` keeps logging in as `VPS_USER`, which defaults to
+   `root` (infraops-mcp-server `src/services/ssh-client.ts`, line 32). T1 names every session with
+   infraops connected. Changing that SSH user alone would remove no such session from T1, because
+   the same connection holds Coolify write tools (D-74's finding), so every infraops session is
+   also a Coolify write-token holder under item 1.
+3. **T1, as amended, names its holders.** In amendment 29 item 2's "T1, as amended" (lines
+   4116-4127), the sentence "Holders of Coolify's terminal and SSH key and every infraops
+   `vps_exec` holder are among those root holders" reads, from this amendment on: "Root on that
+   host is held by at least every Coolify admin, every holder of a Coolify API write token, anyone
+   who can read the SSH private key Coolify keeps for its `localhost` server, every session with
+   infraops connected (through `vps_exec` and through its Coolify write tools), and any other root
+   login. Coolify's web terminal on that server is off (amendment 31 item 1); turning it on again
+   adds whoever can open it." Devon accepts this residual for development (D-64 B, D-65 option 2,
+   D-73 B, D-74 A). The rest of that bullet stands.
+4. **Amendment 29's cut-over prerequisite is met.** Item 2 required that each root-path decision
+   has a recorded answer, and that a narrowing Devon chooses is done and verified, before the
+   cut-over starts (lines 4128-4133). Each now has a recorded answer (D-73 and D-74). The one
+   narrowing chosen, the terminal off, is done and verified (item 1). This amendment doesn't plan
+   the cut-over: amendment 29 item 4 stays its outline, and no cut-over plan is written.
+5. **Amendment 29 item 3's helper change, as built (#789, `4d8ca873`).**
+   - **A consumers-only target refuses `set` and `probe` as `bad_target`.** `_target`
+     (`deploy/vps/sds-pg-rotate`, lines 103-119) returns a target for `loaded` when it names none
+     of `container`, `role` and `database` (lines 114-116). For every other case it checks each
+     of the three with `_ident`, which refuses a missing or malformed key as `bad_target` (lines
+     97-100 and 117-118). So `set` or `probe` on a consumers-only target is refused as
+     `bad_target`, and a target naming only some of the three is refused for every verb. A
+     request without a valid password is refused as `bad_password` first, before the target is
+     read (lines 214-216). Item 3's "Today `_target` requires all three keys for every verb"
+     (lines 4151-4152) no longer holds.
+   - **The fingerprint comparison is exact.** The helper prints each consumer's fingerprint as
+     the sha256's first 16 hex characters, a colon and the length, or an empty string when the
+     container loaded nothing (lines 37 and 191-194). `LoadedRead.mismatch`
+     (`src/rotation_worker/adapters/bws_lane_token.py`, lines 205-218) compares each consumer's
+     string with the keeper's, printed in the same form (`printed`, lines 193-195), by string
+     equality. Any consumer that differs, or a target that lists no consumer, is a mismatch. A
+     malformed answer raises (`src/rotation_worker/helper_client.py`, lines 86-98).
+   - **Neither a mismatch nor an unreadable answer passes.** Before the claim, either one keeps
+     the `verify` unit waiting on the 48-hour clock (`src/rotation_worker/worker.py`, lines
+     650-671). The claimed step reads once more and raises on a mismatch, failing the unit
+     (`bws_lane_token.py`, lines 297-320).
+   - **What isn't done.** Item 3's other changes, one helper target per lane in `targets.toml` and
+     a lane-token row naming it as its `helper_target`, aren't made. No `.cred-consumers.toml` row
+     names `helper_target`, so every lane token keeps the `PATCH` proof and D-27's departure
+     (amendment 19 item 7) until a row names its target. The cut-over reinstalls the helper first.
+
+### What it grants, and nothing more
+
+Nothing. No BWS identity, project, grant, scope or Coolify ability is added or widened. D-73 B and
+D-74 A accept paths that amendment 29 item 2 already found and Devon already accepted (D-65 option
+2); this amendment names their holders in T1. Turning off the terminal removes a path and grants
+none. Nothing here declares a credential exposed (Infra Brain 1032), and rotation ages are
+unchanged (Infra Brain 1031).
+
+### Consequences
+
+- **T1 names Coolify admins, Coolify API write-token holders and every infraops session** as root
+  holders on the VPS host, until the security phase reopens D-73 and D-74 with D-64.
+- **Increment 7's cut-over has no open root-path prerequisite.** What remains is its plan and its
+  checks (amendment 29 items 4 and 5).
+- **The terminal stays off by its own act.** Turning it on again returns its users to T1 (item 3).
+- **Stale until updated, outside this amendment:** this ADR's header list, which stops at
+  amendment 24, and amendment 29 item 3's helper line citations (line 4146), which predate #789.
+
+### Passages it governs
+
+Line numbers are at `4d8ca873`. This amendment edits none of them.
+
+| Passage | Disposition |
+|---|---|
+| Amendment 29 item 2, "Who reaches the root token's file", Coolify (lines 4102-4108) | Amended by item 1: the web terminal is off; Coolify admins and API write-token holders are root-equivalent by D-73's finding, no longer an untested path. The SSH key path stands. |
+| Amendment 29 item 2, infraops `vps_exec` (lines 4109-4114) | Stands. Item 2 adds that the same connection holds Coolify write tools (D-74's finding). |
+| Amendment 29 item 2, "T1, as amended" (lines 4116-4127) | Amended by item 3: its list of root holders. The rest stands. |
+| Amendment 29 item 2, "Cut-over prerequisites: the root paths narrow first (D-65)" (lines 4128-4133) | Answered by items 1 and 2, and met (item 4). |
+| Amendment 29 item 3, "The read" (lines 4143-4148) | Stands. Item 5 records that the comparison is exact. |
+| Amendment 29 item 3, the consumers-only helper target (lines 4150-4152) | Built at `4d8ca873` (item 5). "Today `_target` requires all three keys for every verb" no longer holds. |
+| Amendment 29 item 3, one target per lane and the row's `helper_target` (lines 4153-4156) | Stands, not yet made (item 5). |
+| Amendment 29 item 4, the cut-over | Stands, and isn't planned here. |
+| Amendment 29, "What it grants, and nothing more", "Each root-path narrowing in item 2 is a later decision of Devon's" (lines 4247-4248) | Answered by D-73 B and D-74 A. |
+| Amendment 29, Consequences, "VPS root becomes the executor's root" (lines 4252-4253) | Amended by item 3: the holders are named, and the narrowings are decided. |
+| ADR-0055 T1 (line 350) | Amended by amendment 29 item 2, as item 3 here reads it. |

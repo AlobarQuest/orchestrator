@@ -111,3 +111,10 @@
   orchestrator's scan refuses a 32-character run. A machine-minted issue (a ping URL, amendment
   23) is one unit, still named `store`, the one unit name the factory policy's ping-URL row
   recognises. Detail: `docs/operations/rotation-executor.md`, "Lane tokens and ping URLs".
+- A `bws-lane-token` row naming `helper_target` proves a reissue's variable only by the helper's
+  `loaded` fingerprint: every consumer of that target must equal the keeper's exactly
+  (`LoadedRead.mismatch`). A mismatch, no consumer, or an unreadable answer waits before the claim
+  and fails the claimed step, never passes (Infra Brain 1032). A row without `helper_target`, and
+  every issue, keeps the `PATCH` proof (D-27). A broker lane has no token, so no broker lane's row
+  may get `helper_target`. Detail: `docs/operations/rotation-executor.md`, "Lane tokens and ping
+  URLs"; ADR-0055 amendments 29 and 31.
