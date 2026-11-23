@@ -1383,8 +1383,11 @@ differs from the pinned digest; a commit that leaves the bundle unchanged needs 
 2. Confirm that commit's `Build` push run concluded `success`:
    `gh run list -R AlobarQuest/infraops-mcp-server --commit <commit> --workflow Build --event push --json conclusion`.
    Any other answer stops the bump.
-3. Compute the digest from the commit URL, with no credential:
-   `curl -fsS https://raw.githubusercontent.com/AlobarQuest/infraops-mcp-server/<commit>/dist/bundle/change-mgr-cli.js | shasum -a 256`.
+3. Fetch the file from the commit URL into a scratch directory, with no credential, and hash the
+   file only if the fetch succeeded. A pipe into `shasum` would print a digest of an error body or
+   of nothing:
+   `curl -fsS -o change-mgr-cli.js https://raw.githubusercontent.com/AlobarQuest/infraops-mcp-server/<commit>/dist/bundle/change-mgr-cli.js && shasum -a 256 change-mgr-cli.js`.
+   It must be the same digest as `git -C <infraops checkout> show <commit>:dist/bundle/change-mgr-cli.js | shasum -a 256`.
 4. In one pull request to this repository, change `INFRAOPS_COMMIT` and the digest together. Say
    in its body which infraops pull requests the bump brings in and that step 2 passed.
 5. After it merges, the pin reaches the lane only through a release of the lane image and a
