@@ -2,7 +2,7 @@ Outcome: done
 
 # Report: the rotation executor's install procedure for the VPS host (increment 7, item c1)
 
-PR: #PRNUM, branch `hq/lanes-inc-7-host-install`, base `a3109318`. Ready for review; HQ reviews and
+PR: #792, branch `hq/lanes-inc-7-host-install`, base `a3109318`. Ready for review; HQ reviews and
 merges. Nothing ran on any host, VM, Coolify, BWS or infraops in this task.
 
 ## What I built
