@@ -4605,9 +4605,10 @@ finishes the credential-rotation redesign", sds-hq `state/goal.md` line 84).
 
 ### Context
 
-Four lanes moved onto the broker in Phase B, each from a compose that had never mapped a token:
-estate landing (#761), the bump driver (#762), follow-up minting (#769) and the change window
-(#784). Inert landing moved in Phase A and keeps its G-79 token as a fallback. Twelve lanes still
+Four lanes moved onto the broker in Phase B: estate landing (#761), the bump driver (#762),
+follow-up minting (#769) and the change window (#784). Each pull request removed the compose's
+`BWS_ACCESS_TOKEN` mapping before the lane's first `--add`, so each lane's `--add` ran on a broker
+compose. Inert landing moved in Phase A and keeps its G-79 token as a fallback. Twelve lanes still
 read with their own BWS token: execution-watch, landing-ledger, deploy-watcher, revision-watcher,
 unit-verifier, pin-watcher, membership-check, change-proposer, rotation-decomposer, work-carrier,
 bump-proposer and rotation-proposer. Each has a `<lane>-bws-token` row in `.cred-consumers.toml`
@@ -4655,7 +4656,7 @@ Three facts read from the code at `5ae929a9` shape the plan:
      `docs/superpowers/specs/2026-11-20-lane-secrets-broker-design.md`, lines 198-200) counts six.
      No record this session could read names them, so this amendment doesn't list them (item 11).
    - **Per-lane fetch fairness**, which sds-hq's own list names (sds-hq `state/goal.md`, line 58),
-     not amendment 30. The broker's behaviour is as the context states; what to change is item 10.
+     not amendment 30. The broker's behaviour is as the context states; what to change is item 15.
    - **Out of scope:** the Mac Keychain token `bws-bump-proposer-token`, which has no reader in this
      repository; the D-48 B rotation pass, which follows Phase C (sds-hq `state/goal.md`, line 84)
      and owns the rotation-decomposer token D-48 found; and the factory-events passwords, which the
@@ -4667,7 +4668,7 @@ Three facts read from the code at `5ae929a9` shape the plan:
    reach is the `secrets-broker-bws-token` row in `.cred-consumers.toml` (lines 1462-1503): the
    projects `SDS Operator` and `SDS / Lane Apps`, plus 13 single-secret grants. The 12 lanes read 26
    distinct secrets. The broker already reads 8 of them: 6 through its project grants and 2
-   through single-secret grants it holds. The other 18 each need a new single-secret grant (item 3).
+   through single-secret grants it holds. The other 18 each need a new grant (item 3).
 
    | Secret | Registry name | Project | Broker reads it | Lanes |
    |---|---|---|---|---|
@@ -4727,14 +4728,19 @@ Three facts read from the code at `5ae929a9` shape the plan:
      `.cred-consumers.toml` lines 1480-1481).
    - **In `Factory Events`, 1:** `factory-events-append-password` (`2ce0dbc7-…`). ADR-0059 Amendment
      17 decided the single-secret form for the read password; the append password is the write role,
-     a different role (amendment 26), so its grant is Devon's decision (Open item 9).
+     a different role (amendment 26), so its grant is Devon's decision (Open item 9). Amendment 25
+     item 3 lists the only accounts that read either factory-events secret (lines 3643-3656). The
+     grant makes `lane-secrets-broker` the append holder that serves the bump proposer, in place of
+     the bump-proposer lane account, and work-carrier's move makes it the read holder that serves
+     the carrier, in place of the work-carrier lane account. The holders' count and the roles they
+     serve stay the same.
    - **In `Ops / Platform` and `brains`, 2:** `coolify-revision-watcher-read-token` (`0bf066e9-…`)
      and `APP_BRAIN_READ_KEY` (`726a18ba-…`). The broker reaches neither project. "Project by
      project" (amendment 30) would grant both projects whole; the form is Devon's decision (Open
      item 9).
 
-   After each grant, the broker row's `reach_secrets` takes the UUID in the same change that adds
-   the lane's allowlist table, as the Phase B lanes' rows did.
+   The broker row's `reach_secrets` records each grant once Devon has given it, in a registry
+   change after his gate.
 4. **Each lane's route.** Each step is its own change or act, in this order. The templates are
    `docs/operations/secrets-broker.md`, "Add a lane" (lines 57-91), and the Phase B pull requests
    #761, #762, #769 and #784.
@@ -4750,20 +4756,26 @@ Three facts read from the code at `5ae929a9` shape the plan:
       - the lane's compose: no `BWS_ACCESS_TOKEN` mapping, and the mount
         `/data/sds/broker/<lane>:/run/sds-broker:ro` and nothing else at, under or above
         `/data/sds/broker`;
-      - the launcher's host and empty-token checks through `sds_in_lane_container`;
+      - the launcher's host and empty-token checks through `sds_in_lane_container`, and
+        `env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET` (or `unset`) before each child process that
+        must not read, as #761 and #762 did;
       - the broker row's `reach_secrets`, and the comments in `.bws-secrets.toml` and
         `.cred-consumers.toml` that say which identity reads each secret in the lane's container.
    4. **The release.** The deploy command builds and serves it.
    5. **The broker's move** to that release ("Move the broker to a new release"), and its
       `listening` line for the lane.
-   6. **The lane's conversion**, a `--tag` run to the release, then `lanes-finish`.
+   6. **The lane's conversion**, a `--tag` run to the release, then `lanes-finish`. For a
+      registered lane this is the follow-up run that `finish` prints after the release
+      (deploy.md, lines 154-157), so the pull request's merge is the commit point: steps 1, 2 and 5
+      close before the lane's follow-up run. Until they do, the lane stays on its earlier tag, and in
+      production mode `prepare`'s lag check refuses the next release.
    7. **The read proof.** In the lane's container, `lane-run --read` over every UUID in the lane's
       table prints `ok` for each, and over one UUID outside it prints `refused`. The run's report
       also records that the container's environment holds no `BWS_ACCESS_TOKEN`, read by name
       without printing a value.
-   8. **The token's variable.** The resource variable `<LANE>_BWS_ACCESS_TOKEN` is deleted through
-      infraops, after step 7. The compose no longer maps it, so the container doesn't change.
-   9. **The token's retirement** waits for the revoke sitting (item 5).
+   8. **The token's retirement** waits for the revoke sitting (item 5). Until then the resource
+      keeps `<LANE>_BWS_ACCESS_TOKEN`, mapped to nothing, so a `--tag` back to a release before the
+      conversion still finds the lane's token.
 
    Two code changes come before the first lane's step 6, each in its own reviewed pull request:
    - **A broker lane stays registered without a token row.** Registration must not depend on a
@@ -4776,11 +4788,16 @@ Three facts read from the code at `5ae929a9` shape the plan:
       A broker lane's `--token` run is refused at plan time (amendment 30 item 10), so the
       precondition for a retirement is the following, for each of the 13 lanes: its conversion's
       `lanes-finish` passed on the redeployed container, step 7's read proof printed `ok` for every
-      listed UUID on that container, the container holds no `BWS_ACCESS_TOKEN`, and step 8 deleted
-      the variable. No `--token` run is made on a broker lane. Amendment 29's `loaded` match proves
+      listed UUID on that container, and the container holds no `BWS_ACCESS_TOKEN`. Inert
+      landing's conversion is its Phase A move. No `--token` run is made on a broker lane. Amendment 29's `loaded` match proves
       a reissue's new value and has no new value to prove here, so it doesn't apply.
    2. **The sitting.** Devon revokes the 13 lane tokens (the 12 and inert landing's) in one BWS web
-      app sitting. Whether he also deletes each lane's machine account is Open item 14.
+      app sitting. Whether he also deletes each lane's machine account is Open item 14. After the
+      sitting, a session deletes each resource's `<LANE>_BWS_ACCESS_TOKEN` variable through
+      infraops, the 13 and any that the Phase B lanes' resources still hold mapped to nothing (#761
+      and #762 kept theirs). The composes don't map them, so no container changes. From the
+      sitting on, a lane can't roll back past its conversion release: the token it would map is
+      revoked.
    3. **The registry.** One pull request removes the 13 `<lane>-bws-token` rows and updates the
       tests that read them (`tests/rotation_worker/test_*_rows.py` and the others that name the
       row ids). The keeper secrets in `Rotation / Keepers` stay: deleting a BWS secret is Devon's act
@@ -4867,5 +4884,6 @@ Line numbers are at `5ae929a9`. This amendment edits none of them.
 | Amendment 29, a lane token's revoke waits on the loaded fingerprint | Stands for a reissue. A retirement has no new value, so item 5 states its own precondition. |
 | deploy.md, "Before a lane token's revoke" (lines 334-343) | Restated for a broker cut-over by item 5. The page changes with the first lane's pull request. |
 | deploy.md, "Registered lanes and the lane-token matcher" (lines 345-353) | Changes with Open item 13's answer. |
+| Amendment 25 item 3, the accounts that read the factory-events secrets (lines 3643-3656) | Governed by item 3 once Devon gives the grant: the bump-proposer lane account's row (append) and the work-carrier lane account's row (read) name `lane-secrets-broker`, serving that lane alone, as ADR-0059 Amendment 17 did for the bump driver. |
 | `docs/operations/secrets-broker.md`, "Add a lane" (lines 57-91) | Stands as each lane's template (item 4). |
 | `docs/operations/secrets-broker.md`, "What the broker doesn't change" (lines 138-142) | Each batch's pull request narrows it to the lanes still on a token. |

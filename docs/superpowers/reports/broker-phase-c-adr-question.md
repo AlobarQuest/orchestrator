@@ -36,9 +36,17 @@ token.
   the `loaded` match (amendment 29).
 - **C. Not rotated on a schedule.** It rotates only on an exposure (Infra Brain 1032).
 
-**Recommendation: B.** The adapter, gate and proof already exist for lane tokens, and amendment 30's
-Phase C text expects `rotated_by_sds` to become true for this row. The broker's restart makes each
-lane fail at most one read, which amendment 30's Consequences already accept.
+**Recommendation: B**, with two gaps closed first. The adapter and its mint gate exist for lane
+tokens, and amendment 30's Phase C text expects `rotated_by_sds` to become true for this row. The
+gaps:
+
+- No `bws-lane-token` row names a `helper_target` yet, so the `loaded` proof isn't wired for any
+  token (amendment 31 item 5, "What isn't done").
+- The deploy command has no `--lane secrets-broker`, so the broker's redeploy is the two infraops
+  calls in "Move the broker to a new release".
+
+The broker's restart makes each lane fail at most one read, which amendment 30's Consequences
+already accept.
 
 ## 3. A `--token` run on a broker lane (Open item 10; amendment 30 item 10)
 

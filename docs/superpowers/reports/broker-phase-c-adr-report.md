@@ -2,7 +2,8 @@ Outcome: done
 
 # Report: ADR-0055 Amendment 32, the lane secrets broker's Phase C (Proposed, docs only)
 
-Worker W-306, branch `hq/broker-phase-c-adr`, base `5ae929a9`.
+Worker W-306, branch `hq/broker-phase-c-adr`, base `5ae929a9`. Pull request:
+[#810](https://github.com/AlobarQuest/orchestrator/pull/810), open against `main`.
 
 ## What I built
 
@@ -49,6 +50,9 @@ the handoff didn't list, because the code read made them necessary:
   `.bws-secrets.toml`, and reach from the broker row's `reach_secrets`. I checked the totals by
   hand: 8 reached plus 18 new is 26, and 28 reached plus 30 new is 58.
 - `layers.toml` covers both report files (`docs/superpowers/**`) and ADR-0055.
+- **The registry cross-check:** each lane's `<lane>-bws-token` `reach_secrets` equals its launcher
+  UUIDs plus its ping URL, with no extra and no missing UUID in any of the 12.
+- `code-standards risk --repo .`: verdict `normal`, so no vendor review was needed.
 
 ## Files changed
 
@@ -65,7 +69,23 @@ the handoff didn't list, because the code read made them necessary:
 - The projects come from `.bws-secrets.toml`, not from a BWS read, and the amendment says so. If
   the manifest is stale for a secret, that secret's grant row is wrong. Devon's grant sitting would
   show it.
-- I didn't run `/code-review`: the change is documentation only.
+- I didn't run `/code-review`: the change is documentation only. An advisor review of the first
+  draft found eight things, and I fixed each one in a second commit:
+  - The Phase B context was wrong. The four lanes' pull requests did remove a token mapping, but
+    before each lane's first `--add`.
+  - The conversion's `--tag` is the follow-up run `finish` prints for a registered lane, so steps
+    1, 2 and 5 must close before it.
+  - The variable deletion moved from each lane's route to after the revoke sitting. Before the
+    sitting, a rollback past the conversion still finds the token.
+  - "As the Phase B lanes' rows did" was wrong for #761 and #762. It now says the broker row
+    records each grant after Devon's gate.
+  - The launcher step now names the child-process `env -u` from #761 and #762.
+  - Amendment 25 item 3's account table is now in "Passages it governs" for the append and read
+    passwords.
+  - A wrong cross-reference (item 10 for item 15) and the "single-secret" wording in item 2 are
+    fixed.
+  - Question 2's option B now names its two gaps: no row names a `helper_target` yet, and the
+    deploy command has no broker lane.
 
 ## Concerns
 
