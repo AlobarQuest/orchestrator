@@ -14,8 +14,8 @@ Both go through `mint`, so one mint and one echo check exist.
 * **The key's two forms.** In-process, `mint` takes the PEM text. The stored form, in BWS and on
   the console script's stdin, is base64 of the PEM: one line as macOS `base64` writes it, or
   wrapped as `openssl base64` and GNU `base64` write it, the same form the dispatch App
-  (`orchestrator.services.github_app`) stores. Raw PEM on stdin is refused,
-  because it means the keeper holds something other than the stored form.
+  (`orchestrator.services.github_app`) and localops' fork-sync App store. Raw PEM on stdin is
+  refused, because it means the keeper holds something other than the stored form.
 * **Nothing carries the key, the JWT or the token.** A failure names its cause and, for a request
   that got no answer, the exception's type; an error body is never kept, because it may echo the
   request. The token leaves only as the return value, and the console script prints it alone.

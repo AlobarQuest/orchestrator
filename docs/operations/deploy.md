@@ -1486,15 +1486,14 @@ The membership check mints the same way in its container (`scripts/run-membershi
 Its repositories are the member record's observed ones, printed by `scripts.sds_scope ledger` with
 the observer bearer: the population its declaration and registry-file reads cover
 (`src/membership_check/cli.py`). Its auto-merge read also covers retired members, which the mint
-doesn't name, so in the container a retired member's auto-merge state is a gap. intent-packages and
-factory-runner are members, so the fork list's read is covered too. An unreadable record or an empty population exits 3 before any mint, with the
-program not run; any other `sds_scope` code passes through. It mints `metadata=read` (the listings
-and each repository), `contents=read` (`factory-target.toml`, the registry files, the workflow
-files and the fork list's file) and `administration=read`, which no read is known to need: the
-auto-merge setting is GraphQL's `autoMergeAllowed` (`src/membership_check/auto_merge.py`), because
-GitHub serves REST's merge-related settings only to a token with `contents:write`. It
-exports the token as both `SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN`, for the fork list's `gh api`
-read. A failed or empty mint exits 1. Its one other GitHub read, the standing packages, is an anonymous shallow
+doesn't name, so in the container a retired member's auto-merge state is a gap. An unreadable
+record or an empty population exits 3 before any mint, with the program not run; any other
+`sds_scope` code passes through. It mints `metadata=read` (the listings and each repository),
+`contents=read` (`factory-target.toml`, the registry files and the workflow files) and
+`administration=read`, which no read is known to need: the auto-merge setting is GraphQL's
+`autoMergeAllowed` (`src/membership_check/auto_merge.py`), because GitHub serves REST's
+merge-related settings only to a token with `contents:write`. It exports the token as both
+`SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN`. A failed or empty mint exits 1. Its one other GitHub read, the standing packages, is an anonymous shallow
 clone of `https://github.com/AlobarQuest/intent-packages.git` at `main`, run as git with
 `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0` and no token in its
 environment (ADR-0059 amendment 5): the repository is public, so the clone carries no credential.
