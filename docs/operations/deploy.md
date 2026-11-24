@@ -351,9 +351,9 @@ table registers it; a lane with both is registered once. The matcher (`lanes_in_
 any `[[credential.consumer]]` with `kind = "coolify-env"`, `resource_type = "service"` and
 `key = "<LANE>_BWS_ACCESS_TOKEN"`, and reads the lane as `<LANE>` lower-cased with `_` as `-`
 (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is `execution-watch`). It refuses a key that names no lane the
-command knows, and two entries for one lane. `lanes_in_allowlist` reads the allowlist with the
-broker's own parser: an unreadable allowlist, or a table for a lane the command doesn't know, is
-refused, and a missing file registers no broker lane.
+command knows, and two entries for one lane. `_allowlist_at` reads the allowlist with the
+broker's own parser, as the lane phases do: an unreadable allowlist is refused, and a missing file
+registers no broker lane. `allowlisted_lanes` refuses a table for a lane the command doesn't know.
 
 Removing a token lane's entry, the last step of "Rollback for one lane", drops the lane from
 `prepare`'s check; its run files remain. Removing a broker lane's table drops it the same way, and

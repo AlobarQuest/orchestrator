@@ -29,6 +29,7 @@ from scripts.deploy_orchestrator import (
     EXIT_USAGE,
     World,
 )
+from scripts.secrets_broker import load_allowlist
 
 ROOT = Path(__file__).resolve().parents[2]
 WATCH_COMPOSE = """services:
@@ -907,7 +908,7 @@ def test_an_unreadable_allowlist_at_main_is_refused(lanes: Lanes) -> None:
 
 def test_an_allowlist_table_for_an_unknown_lane_is_refused() -> None:
     with pytest.raises(deploy.Refused, match=r"names unknown lanes \['no-such-lane'\]"):
-        deploy.lanes_in_allowlist("[lanes]\n" + _table("no-such-lane") + _table("bump-driver"))
+        deploy.allowlisted_lanes({"no-such-lane": frozenset(), "bump-driver": frozenset()})
 
 
 def test_a_lane_with_a_token_entry_and_a_table_is_registered_once(lanes: Lanes) -> None:
@@ -920,7 +921,7 @@ def test_the_repositorys_registry_and_allowlist_register_seventeen_lanes() -> No
     """The thirteen token lanes and the four lanes moved to the secrets broker in its Phase B
     (ADR-0055 a32), which have no token entry; the inert lander has both."""
     token = deploy.lanes_in_registry((ROOT / ".cred-consumers.toml").read_text())
-    broker = deploy.lanes_in_allowlist((ROOT / deploy.BROKER_ALLOWLIST).read_text())
+    broker = deploy.allowlisted_lanes(load_allowlist(ROOT / deploy.BROKER_ALLOWLIST))
     assert broker - token == {"bump-driver", "change-window", "estate-landing", "follow-up-mint"}
     assert len(token | broker) == 17
 
@@ -929,7 +930,7 @@ def test_the_allowlists_tables_are_exactly_the_broker_lanes_composes() -> None:
     """A table can't register a lane whose tracked compose still maps a token, and a broker
     compose can't exist without a table: the compose side of `broker_lane` is asked with an
     allowlist that names every lane, so only the compose decides."""
-    allowlist = deploy.lanes_in_allowlist((ROOT / deploy.BROKER_ALLOWLIST).read_text())
+    allowlist = deploy.allowlisted_lanes(load_allowlist(ROOT / deploy.BROKER_ALLOWLIST))
     every = {lane: frozenset[str]() for lane in deploy.LANES}
     by_compose = set()
     for lane in sorted(deploy.LANES):
