@@ -4852,14 +4852,17 @@ Three facts read from the code at `5ae929a9` shape the plan:
 6. **Open, for Devon: the unlock tier's mechanism** (amendment 30 item 8; the design's Touch ID
    idea, lines 198-200). This amendment doesn't settle it. **Blocks:** Phase C's close ("Phase C is
    done when").
+   **Answered:** see Answers (2026-11-24).
 7. **Open, for Devon: how the broker's own token rotates** (amendment 30 item 8). Bitwarden has no
    API to create or revoke an access token (amendment 30, Context), so every rotation has a mint by
    Devon. This amendment doesn't settle it, and `secrets-broker-bws-token` stays
    `rotated_by_sds = false` until it does. Amendment 30's Phase C expects the row to become
    `rotated_by_sds = true`. **Blocks:** Phase C's close.
+   **Answered:** see Answers (2026-11-24).
 8. **Open, for Devon: whether lanes may move before the broker's token can rotate.** Each batch
    widens what the broker's token reaches. This amendment doesn't settle it. **Blocks:** batch 1.
    If Devon answers no, batch 1 also waits for item 7's answer to be in place.
+   **Answered:** see Answers (2026-11-24).
 9. **Open, for Devon: the factory-events holders.** Whether the broker may hold the append password
    (`factory-events-append-password`) at all, and whether he accepts the broker as the carrier's
    read holder in place of the work-carrier lane account (item 3). **Blocks:** the append-password
@@ -4869,19 +4872,24 @@ Three facts read from the code at `5ae929a9` shape the plan:
    as the others do. If he refuses either, the lane it concerns stays on its token, and its token
    leaves the revoke sitting (item 5): refusing the append grant keeps bump-proposer's, and the
    sitting revokes 12. Every other grant in item 3 is a gate step for Devon, listed and not given.
+   **Answered:** see Answers (2026-11-24).
 10. **Open, for Devon: a `--token` run on a broker lane** (amendment 30 item 10, which Phase B
     didn't settle). Until it's answered, the run stays refused at plan time. **Blocks:** the revoke
     sitting (item 5), whose precondition depends on the answer.
+    **HQ's to settle:** see Answers (2026-11-24); not settled yet.
 11. **Open, for Devon: HQ's unregistered secrets.** Which secrets they are, and which repository's
     registry takes each row. **Blocks:** Phase C's close.
+    **Answered:** see Answers (2026-11-24).
 12. **Open, for Devon: the factory-events passwords.** The design places "the factory-events
     passwords turned on" in Phase C; amendment 30's Phases list and this plan's scope don't. Both
     rows stay `rotated_by_sds = false` (amendment 24's open item FE-4). They are out of Phase C
     pending Devon's answer. If he puts them in, they join "Phase C is done when". **Blocks:** Phase
     C's close, which waits for his answer either way.
+    **Answered:** see Answers (2026-11-24).
 13. **Open, for Devon: how a broker lane stays registered** (item 4). It decides whether
     `prepare`'s lag check and `lanes_to_follow` cover broker lanes. **Blocks:** batch 1, through the
     registration code change in item 4.
+    **Answered:** see Answers (2026-11-24).
 14. **Open, for Devon: the lane machine accounts at the revoke.** Whether the sitting deletes each
     lane's machine account and its grants, or revokes the tokens only. bump-proposer's lane token is
     a second token of the `bump-proposer` machine account, which also holds the Mac Keychain token
@@ -4890,9 +4898,45 @@ Three facts read from the code at `5ae929a9` shape the plan:
     token and its read of the append password, which removes one of amendment 25 item 3's named
     append holders. If Open item 9's answer keeps bump-proposer on its lane token, deleting the
     account ends that token too. **Blocks:** the revoke sitting (item 5).
+    **Answered:** see Answers (2026-11-24).
 15. **Per-lane fetch fairness.** No change is decided here. The broker's limits are as the context
     states, the shared `MAX_FETCHES = 8` cap included; a change to them is a code pull request that
     cites a measured wait in the broker's log.
+
+### Answers (2026-11-24)
+
+Devon answered Open items 6 to 9, 12 and 14 as decision D-81 in an interactive session on
+2026-11-24 (recorded 23:32 UTC): "Please write up the D18 answer, as well as exactly HQ's
+recommendation for D-81." HQ's recommendation, and so the answer, was "A, B, A, A, A, B (A for
+bump-proposer's account), B", over seven parts. The options are in
+`docs/superpowers/reports/broker-phase-c-adr-question-answered.md`.
+
+| D-81 part | Open item | Answer |
+|---|---|---|
+| (1) | 6, the unlock tier's mechanism | A: a named tier, no mechanism; each use stays Devon's browser act. |
+| (2) | 7, how the broker's token rotates | B: through the rotation executor's `bws-lane-token` adapter with the loaded-fingerprint proof (amendment 29); Devon still mints and revokes. |
+| (3) | 8, lanes before the broker's token can rotate | A: yes, batches may start before (2) is built; the hand route exists. |
+| (4) | 9, the append password | A: the broker may hold `factory-events-append-password`, for the bump proposer only. |
+| (5) | 9, the carrier's read holder | A: the broker is the work carrier's chain read holder in place of its lane account. |
+| (6) | 14, the accounts at the revoke | B with A for bump-proposer: the sitting revokes the tokens and deletes each lane machine account, except `bump-proposer`, whose lane token alone is revoked (the account keeps the Mac Keychain token `bws-bump-proposer-token`). |
+| (7) | 12, the factory-events passwords | B: out of Phase C; FE-4 stays with the factory-events work. |
+
+For (4), codebase-review D18, 2026-11-24, keeps session-relayed approvals and lets an approval
+naming `devon` verify only when its event's actor is an interactive session. The broker serves
+lanes, so it can't approve as Devon.
+
+With (4) A and (5) A, all 12 lanes move, and the revoke sitting retires 13 tokens. The append
+password's grant joins the other 17 as a gate step for Devon (item 3), named and not given.
+
+HQ settled three items itself under build-mode rule 2 (mechanism, not what is built). These are
+HQ's, not Devon's (construction-mode ruling,
+`~/docs/software-delivery-system/2026-07-30-construction-mode-ruling.md`):
+
+- **Open item 13:** A. A broker lane is registered through its allowlist table, in an orchestrator
+  pull request in review as `hq/broker-registration-allowlist`.
+- **Open item 11:** HQ lists its unregistered secrets and registers each in its owning repository's
+  `.cred-consumers.toml` (the question file's recommendation 8).
+- **Open item 10:** open, and HQ's to settle with a recorded read-proof run. It isn't settled yet.
 
 ### Phase C is done when
 
@@ -4900,18 +4944,21 @@ Phase C closes only when each of the following holds, and none can close without
 answered:
 
 - **The lanes:** every lane that Open item 9's answer moves runs on the broker: all 12 if Devon
-  allows the append grant and accepts the read holder, and 11 if he refuses the append grant. Each
-  passed step 7's read proof, and its token was revoked in the sitting (item 5). A lane his answer
-  keeps on its token stays on it.
+  allows the append grant and accepts the read holder, and 11 if he refuses the append grant;
+  D-81 (4) A and (5) A: all 12. Each passed step 7's read proof, and its token was revoked in the
+  sitting (item 5). A lane his answer keeps on its token stays on it.
 - **The revoke:** the sitting's tokens are revoked, their rows removed and their variables deleted
-  (item 5): 13 if every lane moves, and 12 if Devon refuses the append grant.
-- **The unlock tier** has a mechanism Devon chose (Open item 6).
-- **The broker's token** rotates by the route Devon chose (Open item 7), and its row says so.
+  (item 5): 13 if every lane moves, and 12 if Devon refuses the append grant; D-81 (4) A: 13.
+- **The unlock tier** has a mechanism Devon chose (Open item 6). D-81 (1) A: the tier is named,
+  with no mechanism, and each use stays Devon's browser act.
+- **The broker's token** rotates by the route Devon chose (Open item 7), and its row says so. D-81
+  (2) B: the row becomes `rotated_by_sds = true` when the `bws-lane-token` adapter route is built.
 - **HQ's unregistered secrets** are named and registered (Open item 11).
 - **The design's six adapters** (item 1) are each built or decided by their own amendment.
 - **Fetch fairness** (item 15) is closed with no change, unless a wait is measured in the broker's
   log; then the code pull request that cites it has merged.
-- **The factory-events passwords**, only if Devon puts them in Phase C (Open item 12).
+- **The factory-events passwords**, only if Devon puts them in Phase C (Open item 12). D-81 (7) B
+  removes them from Phase C's close.
 
 ### Proposed batches and order
 
@@ -4933,7 +4980,7 @@ waits for Open item 9's answer. Within a batch the
 lanes share one release and one broker move, and each lane takes its own steps 6 to 8. The two code
 changes in item 4 land before batch 1. The revoke sitting (item 5) comes once, after batch 4, and
 retires the moved lanes' tokens and inert landing's together: 13, or 12 if Devon refuses the append
-grant (Open item 9).
+grant (Open item 9); D-81 (4) A: 13.
 
 ### What it grants, and nothing more
 
@@ -4948,10 +4995,11 @@ doesn't apply. Nothing here declares a credential exposed, and no rotation age c
 - **When Phase C finishes, no scheduled lane holds a BWS token**, unless Open item 9's answer keeps
   one on its token: refusing the append grant keeps bump-proposer's. Otherwise the broker's token is
   the one BWS token the lanes depend on, which makes Open items 6 to 8 the remaining work on it.
+  D-81 (4) A and (5) A: no lane keeps its token.
 - **The broker's reach grows by up to 18 single-secret grants**: 17 gate steps, and the append
-  password if Devon allows it under Open item 9.
+  password if Devon allows it under Open item 9; D-81 (4) A: 18.
 - **The revoke is one sitting** for 13 tokens, or 12 if Devon refuses the append grant, after the
-  last batch.
+  last batch; D-81 (4) A: 13.
 - **Registration changes** before any token row is removed (Open item 13).
 
 ### Passages it governs
