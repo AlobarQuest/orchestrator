@@ -322,11 +322,11 @@ sds_deadman_finish() {
 #
 # THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Some armed lanes spell their reporting mode as
 # the BARE invocation and their scheduled mode as a flag (`--submit` for `run-estate-landing.sh`,
-# `run-inert-landing.sh` and `run-rotation-proposer.sh`; `--install` for `run-tool-installer.sh`),
-# so a bare operator run of those still pings. `run-execution-watch.sh` closes it for itself by
-# handing this helper `--dry-run` on any run without `--submit`. Keying on a flag here instead would
-# need per-launcher knowledge, and getting that wrong disables a lane's switch silently -- the
-# quiet failure this whole file exists to end.
+# `run-inert-landing.sh` and `run-rotation-proposer.sh`), so a bare operator run of those still
+# pings. `run-execution-watch.sh` closes it for itself by handing this helper `--dry-run` on any
+# run without `--submit`. Keying on a flag here instead would need per-launcher knowledge, and
+# getting that wrong disables a lane's switch silently -- the quiet failure this whole file exists
+# to end.
 sds_deadman_is_dry_run() {
     for argument in "$@"; do
         [ "$argument" = "--dry-run" ] && return 0

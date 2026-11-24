@@ -150,9 +150,9 @@
       "consumer": {
         "kind": "runtime-fetch",
         "repo": "orchestrator",
-        "ref": "scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py"
+        "ref": "scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-work-carrier.sh, exit_probe.py"
       },
-      "destination": "runtime-fetch repo=\"orchestrator\" ref=\"scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py\""
+      "destination": "runtime-fetch repo=\"orchestrator\" ref=\"scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-work-carrier.sh, exit_probe.py\""
     },
     {
       "consumer": {

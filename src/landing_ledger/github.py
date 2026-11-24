@@ -211,8 +211,8 @@ def factory_claim(message: str) -> FactoryClaim | None:
     carries the branch's messages through. **That premise stopped being unconditional on 2026-09-14
     (orchestrator #264): the inert lane now decides its method per pull request, and a wholesale
     upstream sync lands as a merge commit.** It remains true of every repository THIS module reads
-    -- the ledger's eight name `dependabot[bot]` as their only permitted author, and neither fork is
-    among them -- so nothing here changes. Widening the ledger's population to a repository whose
+    -- the ledger's eight name `dependabot[bot]` as their only permitted author -- so nothing here
+    changes. Widening the ledger's population to a repository whose
     policy names a `non_ecosystem_authors` account is what would make the sentence false in
     practice, and the fall-back below is already what absorbs it. The squash BODY is not the
     orchestrator's to decide: it sends no `commit_message`, so what the landing commit contains is

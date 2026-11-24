@@ -85,7 +85,7 @@ if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
   exit 1
 fi
 
-# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-fork-sync-watch`'s is. the scheduler
+# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-membership-check`'s is. the scheduler
 # discards this script's exit code, so the codes above reach a person only through Healthchecks:
 # `/start` before the pass, then success on 0 or `/fail` on anything else, with the pass's report
 # as the body, which alert-hub delivers. A finding pages; a pass that stops pinging goes down after

@@ -299,8 +299,8 @@ def test_a_member_with_auto_merge_off_and_no_arming_workflow_agrees():
 
 
 def test_a_granted_fork_agrees_with_no_fork_list_to_compare():
-    """The forks stay members, with their grants, until the member-record change applies
-    (ADR-0059 Amendment 16): a fork in the inert population raises no line on its own."""
+    """The check holds no fork list to compare against (the fork chain left for localops,
+    ADR-0059 Amendment 16), so a granted fork in the inert population raises no line on its own."""
     report = _check(
         [_member("A/fork", "dependency_updates", "security_patches", "rollouts")],
         inert=frozenset({"a/fork"}),
