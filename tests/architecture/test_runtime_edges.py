@@ -214,6 +214,7 @@ DEPLOY_COMMANDS = frozenset(
         "git cat-file",
         "git diff",
         "git fetch",
+        "git ls-tree",  # whether the broker's allowlist exists at main (`registered_lanes`)
         "git merge-base",
         "git rev-parse",
         "git show",

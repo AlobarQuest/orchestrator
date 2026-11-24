@@ -877,7 +877,6 @@ def test_the_repositorys_registry_registers_the_thirteen_moved_lanes() -> None:
     }
 
 
-
 # ---- registration by the secrets broker's allowlist (ADR-0055 a32 item 4) --------------------
 
 
@@ -939,6 +938,7 @@ def test_the_allowlists_tables_are_exactly_the_broker_lanes_composes() -> None:
         if deploy.broker_lane(deploy.lane_service(compose.read_text(), lane), lane, every):
             by_compose.add(lane)
     assert allowlist == by_compose
+
 
 # ---- the tables, held to their sources ------------------------------------------------------
 
