@@ -49,6 +49,8 @@
     socket and holds no BWS token).
   - 2026-11-23, amendment 31, proposed (the executor's root paths stay root for development:
     D-73 B and D-74 A; the `loaded` proof as built).
+  - 2026-11-24, amendment 32, proposed (the lane secrets broker's Phase C: the 12 earlier lanes'
+    route, grants and batches, and the one revoke sitting; its open items are Devon's).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -4586,3 +4588,284 @@ Line numbers are at `4d8ca873`. This amendment edits none of them.
 | Amendment 29, "What it grants, and nothing more", "Each root-path narrowing in item 2 is a later decision of Devon's" (lines 4246-4247) | Answered by D-73 B and D-74 A. |
 | Amendment 29, Consequences, "VPS root becomes the executor's root" (lines 4252-4253) | Amended by item 3: the holders are named, and the narrowings are decided. |
 | ADR-0055 T1 (line 363) | Amended by amendment 29 item 2, as item 3 here reads it. |
+
+## Amendment 32 — The lane secrets broker's Phase C: the 12 earlier lanes move and their tokens retire (2026-11-24)
+
+**Status: Proposed (2026-11-24).** Accepted on merge, as amendment 31 is, except for the items
+marked "Open, for Devon", which stay open until Devon answers them. **Relates to:** amendment 30
+(the broker; its item 8, the unlock tier; its item 10, a `--token` run on a broker lane; its
+"Phases"), amendment 29 (a lane token's revoke), amendment 19 (lane tokens and ping URLs), and
+ADR-0059's "Cut-over for one lane".
+
+This amendment plans Phase C, which amendment 30's "Phases" names (lines 4424-4426; every line
+number here is at `5ae929a9`) but no text plans. The lanes' later code pull requests cite it. It
+changes nothing that runs: no allowlist, compose, launcher, script, registry row or code. Devon set
+Phase C first after Phase 1 in an interactive session on 2026-11-24 ("Broker Phase C, which
+finishes the credential-rotation redesign", sds-hq `state/goal.md` line 84).
+
+### Context
+
+Four lanes moved onto the broker in Phase B, each from a compose that had never mapped a token:
+estate landing (#761), the bump driver (#762), follow-up minting (#769) and the change window
+(#784). Inert landing moved in Phase A and keeps its G-79 token as a fallback. Twelve lanes still
+read with their own BWS token: execution-watch, landing-ledger, deploy-watcher, revision-watcher,
+unit-verifier, pin-watcher, membership-check, change-proposer, rotation-decomposer, work-carrier,
+bump-proposer and rotation-proposer. Each has a `<lane>-bws-token` row in `.cred-consumers.toml`
+whose consumer is the resource variable `<LANE>_BWS_ACCESS_TOKEN`, and none has a table in
+`lanes/secrets-broker/allowlist.toml`.
+
+Three facts read from the code at `5ae929a9` shape the plan:
+
+- **Registration is keyed on the token row.** `lanes_in_registry` (`scripts/deploy_orchestrator.py`,
+  lines 1252-1276) registers a lane only by its `<LANE>_BWS_ACCESS_TOKEN` consumer, and skips the
+  broker's own row. `registered_lanes` feeds `prepare`'s lag check (`require_lanes_current`, lines
+  1318-1347) and `lanes_to_follow` (lines 1350-1356). So the four Phase B lanes, which have no token
+  row, are outside both today, and inert landing is inside only through its fallback token's row.
+  Removing a lane's token row removes the lane from both.
+- **The conversion is a `--tag` run.** A lane with a passed `--add` changes compose only through
+  `--tag` (`_plan_change`, lines 1648-1699). `_plan` (lines 1700-1738) runs
+  `compose_broker_refusals` on every change but `add_refusals`, which refuses a compose that maps no
+  token and isn't a broker lane, only on `--add`. So a `--tag` to a compose that dropped the token
+  but lacks the broker mount isn't refused at plan time. `lanes-finish` checks a token's presence
+  only for `--add` and `--token` (deploy.md, lines 325-332).
+- **The broker serves each connection on its own thread.** `_Server` is a
+  `socketserver.ThreadingUnixStreamServer` with daemon threads (`scripts/secrets_broker.py`, line
+  217), with a 5-second request read timeout and a 15-second `bws` timeout per read (lines 60-61).
+  It has no per-lane limit on concurrent requests.
+
+### Decision
+
+1. **Scope.** Phase C covers the following, and nothing else:
+   - **The 12 lanes** named in the context, each onto the broker, and each lane's token retired.
+   - **Inert landing's fallback.** Its G-79 token (row `inert-landing-bws-token`) and the resource
+     variable `INERT_LANDING_BWS_ACCESS_TOKEN`, which its compose maps to nothing, retire with the
+     12. That makes 13 tokens in the revoke sitting.
+   - **The unlock tier** (amendment 30 item 8): its mechanism and the broker token's rotation, both
+     "Open, for Devon" (items 6 and 7).
+   - **The missing adapters.** Six rows have no `rotated_by_sds` and so fall to the manual checklist
+     (`src/rotation_worker/registry.py`, line 57: only `true` counts), and `src/rotation_worker/adapters/`
+     has no module for their providers: three `coolify-api-token` rows
+     (`coolify-estate-lander-token`, `coolify-revision-watcher-read-token`,
+     `coolify-change-window-token`), two `github-app-private-key` rows
+     (`lanes-read-app-private-key`, `lanes-push-app-private-key`) and one `anthropic-api-key` row
+     (`anthropic-change-window-key`). Each adapter is its own amendment, which states the
+     provider's API and the adapter's proof. They don't depend on the lane batches and can run in
+     parallel with them.
+   - **HQ's unregistered secrets.** The design (sds-hq
+     `docs/superpowers/specs/2026-11-20-lane-secrets-broker-design.md`, lines 198-200) counts six.
+     No record this session could read names them, so this amendment doesn't list them (item 11).
+   - **Per-lane fetch fairness**, which sds-hq's own list names (sds-hq `state/goal.md`, line 58),
+     not amendment 30. The broker's behaviour is as the context states; what to change is item 10.
+   - **Out of scope:** the Mac Keychain token `bws-bump-proposer-token`, which has no reader in this
+     repository; the D-48 B rotation pass, which follows Phase C (sds-hq `state/goal.md`, line 84)
+     and owns the rotation-decomposer token D-48 found; and the factory-events passwords, which the
+     design also places in Phase C (item 12).
+2. **The secrets the 12 lanes read.** Each lane's list is the UUIDs its launcher
+   `scripts/run-<lane>.sh` reads plus the ping-URL secret its compose names in
+   `SDS_DEADMAN_PING_URL_UUID`, the rule `tests/scripts/test_secrets_broker_allowlist.py` holds.
+   Each secret's project is the `project` field of `.bws-secrets.toml`, not a BWS read. The broker's
+   reach is the `secrets-broker-bws-token` row in `.cred-consumers.toml` (lines 1462-1503): the
+   projects `SDS Operator` and `SDS / Lane Apps`, plus 13 single-secret grants. The 12 lanes read 26
+   distinct secrets. The broker already reads 8 of them: 6 through its project grants and 2
+   through single-secret grants it holds. The other 18 each need a new single-secret grant (item 3).
+
+   | Secret | Registry name | Project | Broker reads it | Lanes |
+   |---|---|---|---|---|
+   | `b415d03b-f92d-46b1-8a9d-b4f10103df49` | ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE | SDS Operator | Yes, project | execution-watch, revision-watcher, unit-verifier, pin-watcher, rotation-decomposer, work-carrier, bump-proposer, rotation-proposer |
+   | `660d5846-abcb-4751-be86-b483012899eb` | orchestrator-verifier-bearer | SDS Operator | Yes, project | unit-verifier |
+   | `221a48d5-3f29-4898-b300-b4820140c880` | orchestrator-system-bearer | SDS Operator | Yes, project | rotation-decomposer, work-carrier |
+   | `a9843d17-e599-4e80-ab1b-b4ff0164d8e2` | work-carrier-observer-bearer | SDS Operator | Yes, project | work-carrier |
+   | `314a966c-5654-4e3c-8358-b4fd01268775` | lanes-read-app-private-key | SDS / Lane Apps | Yes, project | landing-ledger, deploy-watcher, revision-watcher, unit-verifier, pin-watcher, membership-check, change-proposer, work-carrier, bump-proposer |
+   | `b8f547b9-67d7-4417-adc0-b4fd0126b0f0` | lanes-push-app-private-key | SDS / Lane Apps | Yes, project | bump-proposer, rotation-proposer |
+   | `314f276d-55ca-4ddc-a24d-b4a3013508cd` | change-manager/M2M_TOKEN_READ | Rotation / Keepers | Yes, single-secret | membership-check, rotation-decomposer, work-carrier, bump-proposer |
+   | `2f708d08-ea5d-4d11-bde0-b50200c9a60b` | factory-events-read-password | Factory Events | Yes, single-secret | work-carrier |
+   | `f793576f-e9aa-4f9d-8089-b4a000b9e2d5` | orchestrator-observer-bearer | Rotation / Keepers | No | execution-watch, landing-ledger, deploy-watcher, revision-watcher, pin-watcher, membership-check, change-proposer, work-carrier, bump-proposer, rotation-proposer |
+   | `acccb346-4baa-43ec-a1d4-b4a400c048ee` | change-manager/M2M_TOKEN_PROPOSE | Rotation / Keepers | No | change-proposer, work-carrier, bump-proposer, rotation-proposer |
+   | `3b9503da-eb7e-401d-b4a7-b4a400c07efb` | change-manager/M2M_TOKEN_OBSERVE | Rotation / Keepers | No | deploy-watcher |
+   | `2ce0dbc7-eeac-4bf0-8204-b50200c97516` | factory-events-append-password | Factory Events | No | bump-proposer |
+   | `0bf066e9-28c1-4aa7-8c3d-b50300d492a6` | coolify-revision-watcher-read-token | Ops / Platform | No | revision-watcher |
+   | `726a18ba-7a38-4ecc-aa03-b49a015fd302` | APP_BRAIN_READ_KEY | brains | No | revision-watcher |
+   | `97802aac-5a7f-45e8-8185-b4fc00cd318e` | execution-watch-ping-url | Rotation / Keepers | No | execution-watch |
+   | `ebabdd63-2eff-4b8e-99b7-b4fd01754eae` | landing-ledger-ping-url | Rotation / Keepers | No | landing-ledger |
+   | `4f7f3d8b-a83e-4ae5-a665-b4ff0004b875` | deploy-watcher-ping-url | Rotation / Keepers | No | deploy-watcher |
+   | `9b2722ea-8ec1-425b-ac2e-b4ff00cba931` | revision-watcher-ping-url | Rotation / Keepers | No | revision-watcher |
+   | `1cfc8352-c960-4afc-bd49-b4ff00e8783e` | unit-verifier-ping-url | Rotation / Keepers | No | unit-verifier |
+   | `872684c0-899e-43b7-9c2d-b50000e88b21` | pin-watcher-ping-url | Rotation / Keepers | No | pin-watcher |
+   | `5fc44897-b4df-44ae-8491-b5000129d9be` | membership-check-ping-url | Rotation / Keepers | No | membership-check |
+   | `7651ccc2-7e13-417b-86da-b50100c0d4b2` | change-proposer-ping-url | Rotation / Keepers | No | change-proposer |
+   | `936bbbf2-dc3b-4343-979a-b501013afc87` | rotation-decomposer-ping-url | Rotation / Keepers | No | rotation-decomposer |
+   | `55fbae20-e503-4eb5-b75c-b5040164d394` | work-carrier-ping-url | Rotation / Keepers | No | work-carrier |
+   | `786f75e2-3d02-4667-8607-b50601312a9d` | bump-proposer-ping-url | Rotation / Keepers | No | bump-proposer |
+   | `506a5436-4643-4040-8a8b-b50601312be2` | rotation-proposer-ping-url | Rotation / Keepers | No | rotation-proposer |
+
+   The registry name is the row id in `.cred-consumers.toml`, or the `.bws-secrets.toml` name
+   where no row carries the UUID as its `bws_uuid`. The same lists, counted per lane, are as follows:
+
+   | Lane | Secrets (launcher + ping URL) | Broker reads already | New grants |
+   |---|---|---|---|
+   | execution-watch | 3 (2 + 1) | 1 | 2 |
+   | landing-ledger | 3 (2 + 1) | 1 | 2 |
+   | deploy-watcher | 4 (3 + 1) | 1 | 3 |
+   | revision-watcher | 6 (5 + 1) | 2 | 4 |
+   | unit-verifier | 4 (3 + 1) | 3 | 1 |
+   | pin-watcher | 4 (3 + 1) | 2 | 2 |
+   | membership-check | 4 (3 + 1) | 2 | 2 |
+   | change-proposer | 4 (3 + 1) | 1 | 3 |
+   | rotation-decomposer | 4 (3 + 1) | 3 | 1 |
+   | work-carrier | 9 (8 + 1) | 6 | 3 |
+   | bump-proposer | 8 (7 + 1) | 4 | 4 |
+   | rotation-proposer | 5 (4 + 1) | 2 | 3 |
+
+   The lanes' lists hold 58 entries over 26 distinct secrets. A grant counts once however many lanes
+   need it: the observer bearer's alone serves 10 lanes.
+3. **The grants are Devon's gate steps, and none is granted here.** Each of the 18 is a read grant
+   to machine account `lane-secrets-broker` on one secret, given in the BWS web app:
+   - **In `Rotation / Keepers`, 15:** the 12 ping-URL secrets, `orchestrator-observer-bearer`
+     (`f793576f-…`), `change-manager/M2M_TOKEN_PROPOSE` (`acccb346-…`) and
+     `change-manager/M2M_TOKEN_OBSERVE` (`3b9503da-…`). The single-secret form follows Devon's
+     choice that the broker can't read every lane's keeper (the broker row's comment,
+     `.cred-consumers.toml` lines 1480-1481).
+   - **In `Factory Events`, 1:** `factory-events-append-password` (`2ce0dbc7-…`). ADR-0059 Amendment
+     17 decided the single-secret form for the read password; the append password is the write role,
+     a different role (amendment 26), so its grant is Devon's decision (Open item 9).
+   - **In `Ops / Platform` and `brains`, 2:** `coolify-revision-watcher-read-token` (`0bf066e9-…`)
+     and `APP_BRAIN_READ_KEY` (`726a18ba-…`). The broker reaches neither project. "Project by
+     project" (amendment 30) would grant both projects whole; the form is Devon's decision (Open
+     item 9).
+
+   After each grant, the broker row's `reach_secrets` takes the UUID in the same change that adds
+   the lane's allowlist table, as the Phase B lanes' rows did.
+4. **Each lane's route.** Each step is its own change or act, in this order. The templates are
+   `docs/operations/secrets-broker.md`, "Add a lane" (lines 57-91), and the Phase B pull requests
+   #761, #762, #769 and #784.
+   1. **The broker directory.** On `prod-vps`, as root:
+      `install -d -o 999 -g 999 -m 0750 /data/sds/broker/<lane>` (deploy.md, line 1230). It comes
+      before the broker's move to a release that lists the lane and before the lane's redeploy, so
+      Docker never creates the bind source root-owned.
+   2. **The grants.** Devon's single-secret grants for the lane's secrets that the broker doesn't
+      already read (item 2), as a gate.
+   3. **One reviewed pull request** with, in this repository:
+      - the lane's `[lanes.<lane>]` table in `lanes/secrets-broker/allowlist.toml`, every UUID with
+        its registry name;
+      - the lane's compose: no `BWS_ACCESS_TOKEN` mapping, and the mount
+        `/data/sds/broker/<lane>:/run/sds-broker:ro` and nothing else at, under or above
+        `/data/sds/broker`;
+      - the launcher's host and empty-token checks through `sds_in_lane_container`;
+      - the broker row's `reach_secrets`, and the comments in `.bws-secrets.toml` and
+        `.cred-consumers.toml` that say which identity reads each secret in the lane's container.
+   4. **The release.** The deploy command builds and serves it.
+   5. **The broker's move** to that release ("Move the broker to a new release"), and its
+      `listening` line for the lane.
+   6. **The lane's conversion**, a `--tag` run to the release, then `lanes-finish`.
+   7. **The read proof.** In the lane's container, `lane-run --read` over every UUID in the lane's
+      table prints `ok` for each, and over one UUID outside it prints `refused`. The run's report
+      also records that the container's environment holds no `BWS_ACCESS_TOKEN`, read by name
+      without printing a value.
+   8. **The token's variable.** The resource variable `<LANE>_BWS_ACCESS_TOKEN` is deleted through
+      infraops, after step 7. The compose no longer maps it, so the container doesn't change.
+   9. **The token's retirement** waits for the revoke sitting (item 5).
+
+   Two code changes come before the first lane's step 6, each in its own reviewed pull request:
+   - **A broker lane stays registered without a token row.** Registration must not depend on a
+     token row before any token row is removed. How it does is Open item 13.
+   - **A conversion's compose is checked.** A `--tag` whose compose maps no token must be refused
+     unless the compose is a broker lane's, as `add_refusals` refuses it for `--add`.
+5. **The token's retirement, and the one revoke sitting.** After the last batch's step 8:
+   1. **The precondition, restated for a broker cut-over.** deploy.md's "Before a lane token's
+      revoke" (lines 334-343) asks for a `--token` run's `lanes-finish` on the redeployed container.
+      A broker lane's `--token` run is refused at plan time (amendment 30 item 10), so the
+      precondition for a retirement is the following, for each of the 13 lanes: its conversion's
+      `lanes-finish` passed on the redeployed container, step 7's read proof printed `ok` for every
+      listed UUID on that container, the container holds no `BWS_ACCESS_TOKEN`, and step 8 deleted
+      the variable. No `--token` run is made on a broker lane. Amendment 29's `loaded` match proves
+      a reissue's new value and has no new value to prove here, so it doesn't apply.
+   2. **The sitting.** Devon revokes the 13 lane tokens (the 12 and inert landing's) in one BWS web
+      app sitting. Whether he also deletes each lane's machine account is Open item 14.
+   3. **The registry.** One pull request removes the 13 `<lane>-bws-token` rows and updates the
+      tests that read them (`tests/rotation_worker/test_*_rows.py` and the others that name the
+      row ids). The keeper secrets in `Rotation / Keepers` stay: deleting a BWS secret is Devon's act
+      and isn't planned here.
+   4. **A leak still revokes first** (amendment 19 item 10; Infra Brain 1032). A token that a
+      record names as exposed is rotated or revoked now, outside the sitting and outside this plan's
+      order. The rotation-decomposer token that D-48 found is D-48 B's to handle.
+   5. **No reissue between conversion and revoke.** Every one of the 13 rows is `rotated_by_sds =
+      true` with a `rotate_requested` date. HQ holds every `rotation-<lane>-bws-token` package for a
+      lane in a batch from that batch's start until the revoke, as amendment 30's Phase B held new
+      ones, so no mint sitting is spent on a token that is about to retire.
+6. **Open, for Devon: the unlock tier's mechanism** (amendment 30 item 8; the design's Touch ID
+   idea, lines 198-200). This amendment doesn't settle it.
+7. **Open, for Devon: how the broker's own token rotates** (amendment 30 item 8). Bitwarden has no
+   API to create or revoke an access token (amendment 30, Context), so every rotation has a mint by
+   Devon. This amendment doesn't settle it, and `secrets-broker-bws-token` stays
+   `rotated_by_sds = false` until it does.
+8. **Open, for Devon: whether lanes may move before the broker's token can rotate.** Each batch
+   widens what the broker's token reaches. This amendment doesn't settle it.
+9. **Open, for Devon: the grants outside `Rotation / Keepers`.** The form of the grants for
+   `factory-events-append-password`, `coolify-revision-watcher-read-token` and
+   `APP_BRAIN_READ_KEY` (item 3). Every other grant in item 3 is a gate step for Devon, listed and
+   not given.
+10. **Open, for Devon: a `--token` run on a broker lane** (amendment 30 item 10, which Phase B
+    didn't settle). Until it's answered, the run stays refused at plan time, and item 5's
+    precondition doesn't use it.
+11. **Open, for Devon: HQ's unregistered secrets.** Which secrets they are, and which repository's
+    registry takes each row.
+12. **Open, for Devon: the factory-events passwords.** The design places "the factory-events
+    passwords turned on" in Phase C; amendment 30's Phases list and this plan's scope don't. Both
+    rows stay `rotated_by_sds = false` (amendment 24's open item FE-4).
+13. **Open, for Devon: how a broker lane stays registered** (item 4). It decides whether
+    `prepare`'s lag check and `lanes_to_follow` cover broker lanes.
+14. **Open, for Devon: the lane machine accounts at the revoke.** Whether the sitting deletes each
+    lane's machine account and its grants, or revokes the tokens only.
+15. **Per-lane fetch fairness.** No change is decided here. The broker's limits are as the context
+    states; a change to them is a code pull request that cites a measured wait in the broker's log.
+
+### Proposed batches and order
+
+At most three lanes per batch is a suggestion, not a rule. The order puts read-only watchers first,
+the lanes that act on change-manager next, and last the batch whose grants need Open item 9.
+
+| Batch | Lanes | New grants | Which |
+|---|---|---|---|
+| 1 | execution-watch, landing-ledger, pin-watcher | 4 | `orchestrator-observer-bearer` and the 3 lanes' ping URLs |
+| 2 | unit-verifier, membership-check, deploy-watcher | 4 | `change-manager/M2M_TOKEN_OBSERVE` and the 3 lanes' ping URLs |
+| 3 | change-proposer, rotation-decomposer, rotation-proposer | 4 | `change-manager/M2M_TOKEN_PROPOSE` and the 3 lanes' ping URLs |
+| 4 | work-carrier, bump-proposer, revision-watcher | 6 | `factory-events-append-password`, `coolify-revision-watcher-read-token`, `APP_BRAIN_READ_KEY` and the 3 lanes' ping URLs |
+
+The new grants total 18. Each batch counts a grant only where it is first needed: batch 2's
+membership-check and deploy-watcher read the observer bearer that batch 1's grant gives. Devon can
+give a batch's grants in one sitting, or all 18 in one sitting before batch 1. Within a batch the
+lanes share one release and one broker move, and each lane takes its own steps 6 to 8. The two code
+changes in item 4 land before batch 1. The revoke sitting (item 5) comes once, after batch 4, and
+retires the 12 tokens and inert landing's together.
+
+### What it grants, and nothing more
+
+Nothing. No BWS identity, project, grant, scope, network path or Coolify ability is added or
+widened. The 18 grants in item 3 are gate steps for Devon, named and not given, and each Open item
+stays Devon's decision. No endpoint is added, so the HTTPS rule for public FQDNs (Infra Brain 212)
+doesn't apply. Nothing here declares a credential exposed, and no rotation age changes.
+
+### Consequences
+
+- **When Phase C finishes, no scheduled lane holds a BWS token.** The broker's token is the one BWS
+  token the lanes depend on, which makes Open items 6 to 8 the remaining work on it.
+- **The broker's reach grows by 18 single-secret grants** if Devon gives them all, and by the
+  projects `Ops / Platform` and `brains` if he chooses project grants under Open item 9.
+- **The revoke is one sitting** for 13 tokens, after the last batch.
+- **Registration changes** before any token row is removed (Open item 13).
+
+### Passages it governs
+
+Line numbers are at `5ae929a9`. This amendment edits none of them.
+
+| Passage | Disposition |
+|---|---|
+| Amendment 30 item 8, the unlock tier (lines 4406-4410) | Stands. Its mechanism and the token's rotation are Open items 6 and 7. |
+| Amendment 30 item 10, a `--token` run on a broker lane (lines 4415-4416) | Stands, still open (Open item 10). Item 5 doesn't use the run. |
+| Amendment 30, "Phases", C (lines 4424-4426) | Planned by this amendment. The factory-events passwords are Open item 12. |
+| Amendment 30, "Phases", B, the held packages (lines 4422-4423) | Extended by item 5: HQ holds each batch's lanes' token packages until the revoke. |
+| Amendment 29, a lane token's revoke waits on the loaded fingerprint | Stands for a reissue. A retirement has no new value, so item 5 states its own precondition. |
+| deploy.md, "Before a lane token's revoke" (lines 334-343) | Restated for a broker cut-over by item 5. The page changes with the first lane's pull request. |
+| deploy.md, "Registered lanes and the lane-token matcher" (lines 345-353) | Changes with Open item 13's answer. |
+| `docs/operations/secrets-broker.md`, "Add a lane" (lines 57-91) | Stands as each lane's template (item 4). |
+| `docs/operations/secrets-broker.md`, "What the broker doesn't change" (lines 138-142) | Each batch's pull request narrows it to the lanes still on a token. |
