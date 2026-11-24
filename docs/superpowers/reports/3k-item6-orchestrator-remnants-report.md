@@ -2,7 +2,8 @@ Outcome: done
 
 # 3k item 6: orchestrator fork-chain remnants (first part)
 
-Branch `hq/3k-item6-remnants`, base `origin/main` `ef463b44`. PR: see the PR section.
+Branch `hq/3k-item6-remnants`, base `origin/main` `ef463b44`. PR: AlobarQuest/orchestrator#805 (not merged; held for the paired
+intent-packages PR).
 
 ## What I built
 
@@ -53,6 +54,8 @@ Branch `hq/3k-item6-remnants`, base `origin/main` `ef463b44`. PR: see the PR sec
 - After a comment reflow, re-ran `tests/scripts`, `tests/rotation_worker/test_destinations.py`,
   `tests/membership_check` and `tests/landing_ledger`: 2,037 passed. `bash -n` on every script:
   clean.
+- PR #805 CI: `Quality` (13m27s), `Rollout transcription currency` and `Runner consumer
+  compatibility` all pass.
 - `code-standards risk --repo .`: `normal`, so no vendor review is required.
 - `/code-review`: skipped at my discretion (comment and fixture text only, no logic). I
   self-reviewed the diff line by line instead.
