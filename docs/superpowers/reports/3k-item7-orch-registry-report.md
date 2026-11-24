@@ -21,13 +21,16 @@ The App key and Anthropic key reads by `fork-sync onboard` (`.bws-secrets.toml` 
 
 `packages/rotation-bws-sds-operator-token/package.yaml` at intent-packages `origin/main` (`00b32ef`) still lists a tool-installer destination at line 47:
 `runtime-fetch repo="orchestrator" ref="scripts/run-tool-installer.sh"`.
-It names `repo="orchestrator"`, not `localops`. The registry never had an orchestrator row for that script, so the line is stale on both the repository and the read. Fixing it is a follow-up for the paired revision. I didn't change it.
+It names `repo="orchestrator"`, not `localops`. The registry had an orchestrator row for that script until commit `68180adc` ("re-point tool-installer to localops"). The package didn't follow that re-point, and the read is now gone too. Line 30's count is also affected: it reads "eleven orchestrator lanes' checks", and lines 38-48 list eleven orchestrator `runtime-fetch` rows, tool-installer included. Fixing both lines is a follow-up for the paired revision. I didn't change either.
+
+The package and registry were already unequal at `ef463b44`, because their repositories differ for this destination. The executor and its sibling checks refuse when the registry, package, and envelope destinations differ: `src/rotation_worker/checks.py` 125-131, `src/rotation_decomposer/decompose.py` 71-76, and `src/rotation_proposer/standing_approval.py` 208. So a `bws-sds-operator-token` rotation was held before this PR and stays held until the paired revision drops line 47. This PR doesn't create that hold.
 
 ## Step 4: readers of these rows and comments
 
 - No test counts the removed consumer row or reads the edited comments. A search of `src`, `tests`, and `scripts` for `tool-installer` finds only two places. One is `tests/fixtures/rotation_destination_format.json` 153 and 155, which W-297's #805 changes, so I left it alone. The other is a comment at `scripts/sds-deadman.sh` 325.
 - At run time, `src/rotation_worker/readers.py::scheduled_reads` (line 123) builds the rotation reader verification from each registry consumer's `healthchecks_check`. With the row gone, `sds-tool-installer` drops out of the checks the executor waits on after rotating `bws-sds-operator-token`. That's the intended result, because the job no longer reads the token.
-- `rotation_proposer/generate.py`, `rotation_worker/registry.py`, and `membership_check` read the registry generically. None of them keys on this row.
+- `src/rotation_worker/destinations.py` renders each registry consumer into a destination string (`credential_destinations`, line 75), and `same` (line 113) compares lists. Its callers are the three equality checks named in step 3, so the row's removal matters only to that comparison.
+- `src/membership_check/consistency.py` checks only `rotated_by_sds` rows against the member record's `credential_rotation` grant (lines 169-198). Removing a consumer row inside a credential doesn't change that.
 - No test needed a change.
 
 ## Tests and checks
@@ -45,12 +48,14 @@ It names `repo="orchestrator"`, not `localops`. The registry never had an orches
 
 - The diff removes 7 lines from `.cred-consumers.toml` and rewrites 3 comments in `.bws-secrets.toml`. No `[[secret]]` table, UUID, `lanes` list, `[[credential.exposure]]` entry, or `consumers_verified` changed.
 - The edited READ-bearer sentence still parses: "…run-work-carrier, and on demand scripts/replay_deploy_signal.py."
-- I didn't use `/code-review` or the `code-standards risk` gate. The change is comment and data only, and `make check` exercises the registry parsers.
+- `code-standards risk`: `high-risk` (rule `secrets: .bws-secrets.toml`). Because of that verdict I ran `vendor-review` (directory `/tmp/vendor-review-wgasegvg`). Claude and Codex both approved, with 0 findings and 0 dropped. agy is off by configuration.
+- I also searched localops main's `src` and `scripts` for `BWS_ACCESS_TOKEN_SDS` and `sds-operator`. The only hit is the `src/fork_sync/bws.py` docstring (line 5), which says the narrow account reads none of its values.
 
 ## Concerns
 
 - `scripts/sds-deadman.sh` 325 still names `--install` for `run-tool-installer.sh` as an example of a lane whose bare invocation pings. That script left the orchestrator, so the example is stale. The handoff limits this PR to the two registry files, so I didn't change it.
-- The intent-packages destination at line 47 (see step 3) names the wrong repository as well as an ended read.
+- The intent-packages destination at line 47 and the count at line 30 (see step 3) are stale. Until the paired revision changes them, the `bws-sds-operator-token` rotation stays held, as it already was at the base.
+- localops' `src/fork_sync/bws.py` docstring (line 1) says "The three BWS values `fork-sync onboard` reads", but the module holds two UUIDs. The docstring is stale upstream, in localops, which this PR doesn't touch.
 
 ## Standards followed
 
@@ -71,4 +76,4 @@ All three checks passed on the change commit `12287ad9` (run 45444193958):
 - `Rollout transcription currency`: pass.
 - `Runner consumer compatibility`: pass.
 
-No formatting fix was needed. The report-only commit that follows reruns CI on the new head.
+No formatting fix was needed. Report-only commits that follow rerun CI; their result is on PR #806.
