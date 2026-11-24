@@ -5313,9 +5313,10 @@ accepted.
    - **The inert landing path's fork branches stay (HQ's call).** At the base,
      `inert_landing_admission.py` line 446 sets
      `wholesale = rules is not None and not rules.ecosystem_scoped(pull.author_login)`. That steers
-     the ceiling (line 448), never-again (line 453), revert wait (line 456) and merge method
-     (line 506). `ecosystem_scoped` (`inert_landing_policy.py`, defined at line 148, returning at
-     line 162) is true unless the policy lists the
+     the ceiling (line 448), never-again (line 453), revert wait (line 456), ecosystem
+     exclusion (line 496) and merge method (line 506). `ecosystem_scoped`
+     (`inert_landing_policy.py`, defined at line 148, returning at line 162) is true unless the
+     policy lists the
      author in `non_ecosystem_authors`. change-manager policy v16 (#180, `b8ba8757`) removed
      `fork-secure-upstream-sync[bot]` from the inert lane's permitted and exempted
      (`non_ecosystem_authors`) authors (`app/deploy_policy.py` lines 598 and 603-606). The
@@ -5372,7 +5373,8 @@ accepted.
      credential, scope or grant. A narrow localops BWS identity would end the keep. Minting and
      granting it is Devon's act, a gate, and HQ hasn't planned it; it brings no Phase 1 gain.
 
-   This departs from three sentences, for these three reads only:
+   This departs from the following passages, for these three reads only:
+   - Amendment 16 decision item 7, "The Healthchecks key read ends at task (3)" (line 4735).
    - Amendment 16 decision item 7, "The fork-sync App key and Anthropic key reads end at task (5)"
      (lines 4737-4738), and "stays until task (5), and task (5) ends it" (lines 4740-4741).
    - Open item 7, "none outlasts task (5)" (line 4777).
