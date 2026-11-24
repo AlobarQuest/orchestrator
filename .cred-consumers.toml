@@ -152,7 +152,7 @@ rotated_by_sds = true
   repo = "localops"
   ref = "scripts/run-tool-installer.sh"
   healthchecks_check = "sds-tool-installer"
-  note = "launchd com.devon.tool-installer (its plist passes --install); loads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run through localops' sds-token.sh, and on an acting pass (--install without --dry-run) reads the sds-bridge alert sender token from BWS with it; pings sds-tool-installer through sds-deadman.sh, which resolves the ping URL with the broad account, not this token"
+  note = "launchd com.devon.tool-installer 03:15 (its plist passes --install); loads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run through localops' sds-token.sh, and on an acting pass (--install without --dry-run) reads the sds-bridge alert sender token from BWS with it; pings sds-tool-installer through sds-deadman.sh, which resolves the ping URL with the broad account, not this token"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
