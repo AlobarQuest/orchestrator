@@ -15,7 +15,7 @@ retire (2026-11-24)` at the end of ADR-0055, status Proposed, plus its line in t
    `INERT_LANDING_BWS_ACCESS_TOKEN`; the unlock tier; the six rows with no adapter (three Coolify,
    two GitHub App, one Anthropic); HQ's unregistered secrets; fetch fairness; and what is out of
    scope.
-2. **Per-lane route** (item 4): nine ordered steps from the broker directory to the retirement,
+2. **Per-lane route** (item 4): eight ordered steps from the broker directory to the retirement,
    plus two code changes that must land before batch 1. Item 5 covers the retirement: the
    restated revoke precondition, the one sitting for 13 tokens, the registry removal, the
    leak-revokes-first rule, and HQ's package hold.
@@ -28,7 +28,8 @@ retire (2026-11-24)` at the end of ADR-0055, status Proposed, plus its line in t
    sitting comes once, after batch 4.
 
 The stop points are Open items 6 to 14, and none is settled. I wrote them, with options and
-recommendations, to `docs/superpowers/reports/broker-phase-c-adr-question.md`. I added three items
+recommendations, to `docs/superpowers/reports/broker-phase-c-adr-question.md` (HQ renamed it to
+`broker-phase-c-adr-question-answered.md`). I added three items
 the handoff didn't list, because the code read made them necessary:
 
 - **Registration (Open item 13).** `lanes_in_registry` registers a lane only by its token row's
@@ -59,7 +60,8 @@ the handoff didn't list, because the code read made them necessary:
 
 - `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md`: Amendment 32 and
   its "Amended" line.
-- `docs/superpowers/reports/broker-phase-c-adr-question.md`: the open items for Devon.
+- `docs/superpowers/reports/broker-phase-c-adr-question-answered.md`: the open items for Devon
+  (HQ's rename of `broker-phase-c-adr-question.md`).
 - `docs/superpowers/reports/broker-phase-c-adr-report.md`: this report.
 
 ## Self-review
@@ -85,8 +87,7 @@ the handoff didn't list, because the code read made them necessary:
     passwords.
   - A wrong cross-reference (item 10 for item 15) and the "single-secret" wording in item 2 are
     fixed.
-  - Question 2's option B now names its two gaps: no row names a `helper_target` yet, and the
-    deploy command has no broker lane.
+  - Question 2's option B named two gaps. Round 1 showed the first was false (see "Round 1").
 
 ## Concerns
 
@@ -97,16 +98,15 @@ the handoff didn't list, because the code read made them necessary:
   follow-up minting and the change window). In production mode the lag check doesn't cover them,
   and `finish` doesn't move them to the served tag. Development mode skips the lag check, but
   `lanes_to_follow` still leaves them out.
-- **Fetch fairness** comes from sds-hq's own list (`state/goal.md`, line 58), which no record
-  defines. Item 15 decides nothing.
+- **Fetch fairness** comes from sds-hq's own list (`state/goal.md`, the broker-first plan
+  amendment), which no record defines. Item 15 decides nothing.
 - **HQ's six unregistered secrets** appear in no record I could read, so they aren't listed.
 
 ## Standards followed
 
 - **Code Brain 3 (logging):** not applicable. The amendment prescribes no logging. It cites the
   broker's existing per-request log only as the place to measure a wait.
-- **Code Brain 4 (error handling):** the amendment adds no code. The conversion-check prerequisite
-  turns a silent mis-conversion into a refusal at plan time, so the error isn't swallowed.
+- **Code Brain 4 (error handling):** not applicable (docs only).
 - **Code Brain 5 (security):** no secret, token, header or request body is logged or written. Step 7
   of the route reads `BWS_ACCESS_TOKEN`'s presence by name, never its value.
 - **Infra Brain 591, 592, 593 (`bws.no-token-in-tracked-files`, `bws.no-token-in-git-history`,
@@ -117,3 +117,70 @@ the handoff didn't list, because the code read made them necessary:
   D-48 B's pass.
 - **Infra Brain 212 (HTTPS for public FQDNs):** not applicable, because no endpoint is added. The
   amendment's "What it grants" section says so.
+
+## Round 1
+
+HQ's fix round 1 came from the Opus whole-branch review and HQ's own checks at `5ae929a9`. I checked
+each finding at the source before fixing it.
+
+### Blocking items
+
+1. **Each open item names what it blocks.** Every Open item now has a **Blocks:** line.
+   - Items 8 and 13 block batch 1, and the batches section says so.
+   - Items 6, 7 and 11 block Phase C's close, through a new "Phase C is done when" section that
+     names each one. That section also names the lanes, the revoke, the design's six adapters, and
+     the factory-events passwords only if Devon puts them in.
+   - Items 10 and 14 block the revoke sitting.
+   - Item 9 blocks batch 4's bump-proposer and work-carrier.
+   - Item 12 is out of Phase C pending Devon, and joins "done when" if he puts it in.
+2. **The D-48 token.** Item 1's out-of-scope bullet and item 5.4 now say the rotation-decomposer
+   token was reissued under D-76 B at G-92 on 2026-11-23 (units `7583f478`, `5df0107f` and
+   `de1da609`) and the 2026-11-13 token revoked. They also cite Devon's 2026-11-24 order: the D-48 B
+   pass doesn't rotate a lane token Phase C retires.
+3. **`helper_target`.** I confirmed every lane row names one (`.cred-consumers.toml` 720 to 1292,
+   #793). My first draft took Amendment 31 item 5's "What isn't done" as current, but #793 had
+   since made it. Question 2 drops that gap: it now cites G-92's `loaded` check and says the
+   broker needs its own target.
+4. **The factory-events holders.** Item 3 now says the broker would be one more append holder, not
+   a replacement, and cites D-43 B, D-45, D-47 and Amendment 25 item 3 (lines 3655-3657, the
+   refusal to identities that serve processes beyond the holders).
+   - Open item 9 is now whether the broker may hold the append password at all, plus whether Devon
+     accepts the broker as the carrier's read holder.
+   - The read password is described as already served to the bump driver.
+   - The "serves that lane alone" claim is gone, and the "Passages it governs" row is rewritten.
+   - Question 5 is rewritten the same way. Its recommendation is A by a narrow margin, with B's
+     cost stated: one lane token stays.
+5. **The adapter count.** I counted 11 rows with no `rotated_by_sds`, not 10. The three M2M bearers
+   have `orchestrator_bearer.py`, which leaves eight with no adapter. Item 1 now names all eight,
+   marks the design's six (spec line 199) as Phase C's, and names the two alert-hub sender rows as
+   outside the design's list.
+6. **The narrowest credential.** The Coolify read token and the App Brain key are single-secret
+   gate steps under the 2026-11-18 standing answer. The batches section says 17 grants can go in one
+   sitting, and the append password waits for Open item 9. "What it grants" and Consequences say
+   17 gate steps.
+
+### Follow-ups
+
+All six are fixed:
+
+7. The context and item 15 name the shared `MAX_FETCHES = 8` cap (lines 62 and 280).
+8. Item 4 step 3 removes the lane row's `helper_target` (`test_lane_token_helper_targets.py`,
+   line 108 onward). The lane's entry in the host helper's `/etc/sds-pg-rotate/targets.toml` is
+   removed as its own root act after the merge.
+9. This report says eight steps.
+10. Every sds-hq `goal.md` citation is by section ("Queued", Devon's 2026-11-24 order; the
+    broker-first plan amendment), not by line.
+11. The deploy.md citation is lines 325-327, the paragraph before "Before a lane token's revoke".
+12. Code Brain 4 reads "not applicable (docs only)".
+
+### Checks after round 1
+
+The figures are in "Tests and checks run, round 1", which follows.
+
+### Tests and checks run, round 1
+
+- `make check` on `orchestrator_test_hq_w_306` passed, exit 0: 14,777 tests collected, with
+  14,776 passed and 1 skipped.
+- The security scan found 0 BLOCK and 2 WARN, the same two WARNs as before this change.
+- Round 1 grants nothing, and the changes are docs only: ADR-0055, the question file and this
+  report.

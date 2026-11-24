@@ -36,17 +36,15 @@ token.
   the `loaded` match (amendment 29).
 - **C. Not rotated on a schedule.** It rotates only on an exposure (Infra Brain 1032).
 
-**Recommendation: B**, with two gaps closed first. The adapter and its mint gate exist for lane
-tokens, and amendment 30's Phase C text expects `rotated_by_sds` to become true for this row. The
-gaps:
+**Recommendation: B.** The adapter, its mint gate and the `loaded` proof run for lane tokens
+today. Every lane `bws-lane-token` row names a `helper_target` (#793, `51a8bbe7`), and G-92's
+`loaded` check ran on rotation-decomposer's token on 2026-11-23. Amendment 30's Phase C text also
+expects `rotated_by_sds` to become true for this row. The broker needs its own `helper_target` and
+a target in the host helper, as each lane has.
 
-- No `bws-lane-token` row names a `helper_target` yet, so the `loaded` proof isn't wired for any
-  token (amendment 31 item 5, "What isn't done").
-- The deploy command has no `--lane secrets-broker`, so the broker's redeploy is the two infraops
-  calls in "Move the broker to a new release".
-
-The broker's restart makes each lane fail at most one read, which amendment 30's Consequences
-already accept.
+One gap remains: the deploy command has no `--lane secrets-broker`, so the broker's redeploy is the
+two infraops calls in "Move the broker to a new release". The broker's restart makes each lane fail
+at most one read, which amendment 30's Consequences already accept.
 
 ## 3. A `--token` run on a broker lane (Open item 10; amendment 30 item 10)
 
@@ -60,8 +58,9 @@ Phase B didn't settle it. The run is refused at plan time today.
 - **C. A new verb** (for example `--prove`) with B's behaviour, leaving `--token` refused.
 
 **Recommendation: B or C**, whichever the deploy command's code makes smaller. A recorded proof is
-easier for HQ to check before the revoke sitting than a session's report. Amendment 32's
-precondition (item 5) doesn't use the run, so either answer leaves it valid.
+easier for HQ to check before the revoke sitting than a session's report. Amendment 32 makes this
+answer a precondition of the revoke sitting: under A the sitting uses the session's reported
+proof, and under B or C it adds the recorded run.
 
 ## 4. Whether lanes may move before the broker's token can rotate (Open item 8)
 
@@ -74,29 +73,41 @@ Each batch widens what the broker's token reaches.
 **Recommendation: A.** The hand route exists today, and each batch removes a lane token, which
 shrinks the number of tokens that need a mint sitting.
 
-## 5. The grants outside `Rotation / Keepers` (Open item 9)
+## 5. The factory-events holders (Open item 9)
 
-Three of the 18 new grants aren't in the project that already takes single-secret grants:
+Two questions. Both block batch 4's work-carrier and bump-proposer.
 
-- `factory-events-append-password` (`2ce0dbc7-…`, project `Factory Events`): the write role.
-  ADR-0059 Amendment 17 gave the broker the read password by a single-secret grant.
-- `coolify-revision-watcher-read-token` (`0bf066e9-…`, project `Ops / Platform`).
-- `APP_BRAIN_READ_KEY` (`726a18ba-…`, project `brains`).
+**(a) May the broker hold the append password (`factory-events-append-password`, `2ce0dbc7-…`) at
+all?** Only the approvers hold the append role (D-43 B), and D-45 and D-47 list its holders by name
+(ADR-0055 amendment 25 item 3). That item refuses the append password to `sds-operator`,
+`BWS_ACCESS_TOKEN_BROAD` and `BWS_ACCESS_TOKEN_VPS_BACKUP`, because each serves processes beyond
+those holders. The broker reads for every lane on its allowlist, so it would be one more append
+holder of that kind.
 
-Options for each:
+- **A. Yes.** A single-secret grant to `lane-secrets-broker`, with only the bump proposer's
+  allowlist table naming the secret. Amendment 25 item 3's holder list adds the broker, and D-43 B
+  is amended to allow it.
+- **B. No.** bump-proposer stays on its own lane token, which leaves the revoke sitting, and Phase
+  C retires 12 tokens instead of 13.
 
-- **A. A single-secret read grant** to `lane-secrets-broker`.
-- **B. A project grant**, following amendment 30's "Project by project".
-- **C. No grant.** The lane stays on its token for that secret, which keeps the lane's token and
-  blocks its retirement.
+**Recommendation: A, by a narrow margin.** Your Phase C goal is every earlier lane's token
+retired, and B leaves one. ADR-0059 Amendment 17 already accepted the broker as a holder of the
+read role, which D-44 B had also limited by name, bounded by the allowlist to one lane's socket.
+The same bound applies here. Choose B if amendment 25's rule that no identity reading for other
+processes holds the append password outranks the goal. B costs one lane token that stays.
 
-**Recommendation: A for all three.** `Ops / Platform` holds the Anthropic and dispatch-App keys that
-no lane reads, so a project grant there would give the broker far more than the lane needs. The
-append password is the factory-events write role, so it needs your explicit grant.
+**(b) May the broker be the carrier's read holder?** The broker already holds the read password and
+serves it to the bump driver (ADR-0059 Amendment 17). Work-carrier's move makes it the carrier's
+read holder too, in place of the work-carrier lane account that D-47's read-holder record names. It
+needs no new grant, only your acceptance of the record's change.
 
-The other 15 grants (all in `Rotation / Keepers`: 12 ping URLs, the observer bearer,
-`M2M_TOKEN_PROPOSE` and `M2M_TOKEN_OBSERVE`) are gate steps in the amendment's item 3, named and
-not given.
+**Recommendation: accept.** The same identity already holds the role, and Amendment 17 set the
+precedent for a second lane.
+
+The other 17 grants are gate steps in the amendment's item 3, named and not given. That covers the
+15 in `Rotation / Keepers`, plus `coolify-revision-watcher-read-token` and `APP_BRAIN_READ_KEY` as
+single-secret grants under the narrowest-credential standing answer of 2026-11-18. The form of
+those two grants is no longer a question.
 
 ## 6. How a broker lane stays registered (Open item 13)
 
