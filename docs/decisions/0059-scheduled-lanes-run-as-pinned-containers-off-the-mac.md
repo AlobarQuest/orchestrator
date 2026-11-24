@@ -5171,3 +5171,74 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Its clause "it runs before task (4) withdraws the grants, so no sync pull request waits unlanded in between" (lines 4753-4754) | No longer applies. A sync pull request can wait unlanded after task (4), and that's accepted (decision item 3). |
 | Amendment 16 decision item 5, first row, "so localops lands before task (4) applies" (line 4699) | No longer applies. The rest of the row stands, including the six forks leaving change-manager's inert population at task (4) (decision item 2). |
 | Amendment 16's open item 2, "It changes with the first item" (line 4756) | The link no longer holds. At localops `4360c0c`, onboarding has no change-manager step (decision item 4). Item 2's status isn't decided here. |
+
+## Amendment 21 (2026-11-24): localops' own alerting is not a Phase 1 condition
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review, as
+  Amendment 16 says of itself (HQ D-12). The ADR's own status is unchanged.
+- **Decided by:** Devon, on 2026-11-24, in an interactive HQ session. sds-hq `state/progress.md`
+  records it in the file's last entry at sds-hq `84dc31b2` ("hq: drop 3k item 3 from Phase 1; order
+  broker Phase C before the D-48 rotation pass (Devon 2026-11-24)"). The session proposed two
+  things: dropping localops' own alerting from Phase 1, as item 1 was dropped, and ordering broker
+  Phase C before the D-48 rotation pass. His words, in full:
+
+  > "Yes, do so. I thought that the broker and the easy cred rotation were already done."
+
+  Only the first half of the proposal belongs to this ADR. The session's record of it, not a quote:
+  localops' own alert-hub source and Healthchecks checks are localops' work outside SDS, done when
+  localops wants them. sds-hq `state/goal.md` at `84dc31b2` records the drop at step 3k, open item
+  (3) (line 40).
+- **Relates to:** Amendment 16 (lines 4507-4813), its decision items 6 and 7 (lines 4710-4744) and
+  its open items (lines 4746-4785); Amendment 20 (lines 5117-5173), which dropped open item 1 the
+  same way.
+
+Line numbers are this file's at orchestrator `ee88b4a5`, before the amendment was appended, unless
+another commit is named. Amendment 20 only appended, so Amendment 16's line numbers are the same as
+at `e4bccdae`. The amendment appends only: no passage before it is rewritten. Where it and
+Amendment 16 disagree, this amendment governs once it's accepted.
+
+### Decision
+
+1. **Open item 3 no longer gates Phase 1.** Amendment 16's open item 3, "localops' own alert-hub
+   source and Healthchecks checks" (lines 4757-4759), leaves the list that Phase 1 can't close
+   without (lines 4748-4749). localops' own alert-hub source and Healthchecks checks are localops'
+   work, outside SDS and outside this ADR, done when localops wants them. localops designs them in
+   its ADR 0001, `docs/decisions/0001-localops-alerting.md` at localops `4360c0c`, whose status is
+   Proposed and which grants nothing.
+2. **The interim and the reads stand as written.** Decision item 6's interim (lines 4715-4718),
+   pinging the three SDS-created checks through the copied `sds-deadman.sh` and sending through
+   `sds-bridge`, stands. Decision item 7's reads stand, including the sentence "A task (3) read whose
+   replacement needs a credential Devon hasn't granted by then stays until task (5), and task (5)
+   ends it" (lines 4740-4741). So does open item 7, "none outlasts task (5)" (lines 4776-4778). This
+   amendment extends no read past task (5) and decides nothing about how the `sds-bridge` and
+   Healthchecks key reads end.
+3. **The open items that still gate Phase 1.** After Amendments 20 and 21, Amendment 16's preamble
+   (lines 4748-4749) still covers these six items, as they read. This amendment decides no item's
+   status, and resolves none of them:
+   - Open item 2, "`fork-sync onboard` step 10" (lines 4755-4756): the step admits a fork to
+     change-manager's inert population. Amendment 20 decision item 4 removed its link to item 1 and
+     left its status undecided.
+   - Open item 4, "The read-only App's installation on the forks" (lines 4760-4762): Devon removes
+     the six forks from `alobar-sds-lanes-read`'s installation after the member-record change.
+   - Open item 5, "change-manager's inert population" (lines 4763-4765): the six forks leave
+     `inert_landing`'s repositories as a versioned policy change.
+   - Open item 6, "The orchestrator remnants" (lines 4766-4775): the `fork` layer, the console
+     scripts, the chain's registry and manifest rows, the fixture row, `LANE_CHECKS` and
+     `STAYS_ON_THE_MAC`, the architecture tests and the inert landing path's fork branches.
+   - Open item 7, "The interim reads and the App key" (lines 4776-4778): each read ends at the task
+     decision item 7 names, none outlasts task (5), and task (5) moves the fork-sync App's key
+     registration and the scaffolded workflows' source.
+   - Open item 8, "Increment 6's Mac plumbing" (lines 4779-4785): only `run-activation-sweep.sh`
+     remains in orchestrator after task (3).
+4. **Nothing else changes.** No other open item, authority, credential or grant changes.
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `ee88b4a5`:
+
+| Passage | Disposition |
+|---|---|
+| Amendment 16's open items preamble, "Phase 1 can't close until each is resolved" (lines 4748-4749), as Amendment 20 left it | Open item 3 no longer counts toward it (decision item 1). The preamble stands for open items 2 and 4 to 8 (decision item 3). |
+| Amendment 16's open item 3, "localops' own alert-hub source and Healthchecks checks" (lines 4757-4759) | Out of SDS's scope: it doesn't gate Phase 1. localops does it when it wants, under its ADR 0001 (decision item 1). Its sentence "Until both are in place, localops uses decision item 6's interim" stands. |
+| Amendment 16 decision item 6, "localops' own alert-hub source and Healthchecks checks are the third open item" (lines 4717-4718) | The item is no longer a Phase 1 condition. The interim the same item names stands (decision item 2). |
+| Amendment 16 decision item 7, "The `sds-bridge` read ends at task (3), when localops' own alert-hub source replaces it (open item 3)" and "The Healthchecks key read ends at task (3), with localops' own checks (open item 3)" (lines 4733-4735) | Stand as written, with the sentence that keeps a read until task (5) and ends it there (lines 4740-4741) and open item 7 (decision item 2). |
