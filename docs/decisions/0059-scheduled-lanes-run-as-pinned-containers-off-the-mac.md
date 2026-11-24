@@ -5113,3 +5113,61 @@ amendment appends only.
   live acting pass of `sds-lane-pin-watcher` logs both digests (`infraops pin current: pinned …
   (commit …), main …`, or `behind`). Until the lane image holding it is released and redeployed,
   the scheduled pass doesn't run it: merged isn't deployed.
+
+## Amendment 20 (2026-11-24): the forks leave membership without a first localops landing
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review, as
+  Amendment 16 says of itself (HQ D-12). The ADR's own status is unchanged.
+- **Decided by:** Devon, on 2026-11-24, in an interactive HQ session. sds-hq `state/progress.md`
+  records it in the file's last entry at sds-hq `9ec64879` ("hq: drop 3k item 1 (fork-sync landing
+  before Phase 1 closes), Devon 2026-11-24"). His words, in full:
+
+  > "Lets remove the condition that localops must land each fork's PR once once. That is not
+  > necessary at all."
+
+  The session's record of it, not a quote: localops' first fork-sync landing no longer gates
+  Phase 1 or task (4)'s membership change; localops lands a fork sync whenever one goes green, as
+  its own tool's work outside SDS. sds-hq `state/goal.md` at `9ec64879` records the drop at step
+  3k, open item (1) (line 40).
+- **Relates to:** Amendment 16 (lines 4507-4813), its decision item 5 (lines 4694-4708) and its
+  open items 1 and 2 (lines 4751-4756).
+
+Line numbers are this file's at orchestrator `e4bccdae`, before the amendment was appended, unless
+another commit is named. The amendment appends only: no passage before it is rewritten. Where it
+and Amendment 16 disagree, this amendment governs once it's accepted.
+
+### Decision
+
+1. **Open item 1 no longer gates Phase 1 or task (4).** Amendment 16's open item 1, "How localops
+   lands each fork's sync pull request" (lines 4751-4754), leaves the list that Phase 1 can't close
+   without (lines 4748-4749). Its clause "it runs before task (4) withdraws the grants, so no sync
+   pull request waits unlanded in between" (lines 4753-4754) no longer applies. How localops lands
+   is localops' own work, outside SDS and outside this ADR.
+2. **Decision item 5's first row loses its ordering.** In that row's "After the move" cell (line
+   4699), "so localops lands before task (4) applies" no longer applies. The rest of the row stands:
+   the six forks leave change-manager's inert population at task (4).
+3. **The consequence is accepted.** After task (4) applies, a fork's sync or Dependabot pull
+   request has no SDS lander, and it can wait until localops lands it. Devon accepted that (his
+   words in the preceding **Decided by** entry).
+4. **Open item 2's link to item 1 no longer holds.** Open item 2 (lines 4755-4756) says `fork-sync
+   onboard` step 10 "changes with the first item". Once item 1 is outside SDS's scope, nothing ties
+   item 2 to it: item 2 stands on whether onboarding still touches change-manager. At localops
+   `origin/main` (`4360c0c`), `src/fork_sync/onboarding.py` doesn't open a change-manager pull
+   request. Its step list (lines 753-769) has no change-manager step, and the module's one mention
+   of change-manager is its docstring (lines 12-13): "Onboarding touches no SDS landing lane:
+   change-manager's inert population and App Brain's landing record are no longer steps (ADR-0059
+   Amendment 16, open item 2)." This amendment reports that finding and decides nothing about item
+   2's status.
+5. **Nothing else changes.** No other open item, authority, credential or grant changes.
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `e4bccdae`:
+
+| Passage | Disposition |
+|---|---|
+| Amendment 16's open items preamble, "Phase 1 can't close until each is resolved" (lines 4748-4749) | Open item 1 no longer counts toward it (decision item 1). The preamble stands for every other item. |
+| Amendment 16's open item 1, "How localops lands each fork's sync pull request" (lines 4751-4754) | Out of SDS's scope: it gates neither Phase 1 nor task (4). How localops lands is localops' own work (decision item 1). |
+| Its clause "it runs before task (4) withdraws the grants, so no sync pull request waits unlanded in between" (lines 4753-4754) | No longer applies. A sync pull request can wait unlanded after task (4), and that's accepted (decision item 3). |
+| Amendment 16 decision item 5, first row, "so localops lands before task (4) applies" (line 4699) | No longer applies. The rest of the row stands, including the six forks leaving change-manager's inert population at task (4) (decision item 2). |
+| Amendment 16's open item 2, "It changes with the first item" (line 4756) | The link no longer holds. At localops `4360c0c`, onboarding has no change-manager step (decision item 4). Item 2's status isn't decided here. |
