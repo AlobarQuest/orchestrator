@@ -5242,3 +5242,172 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Amendment 16's open item 3, "localops' own alert-hub source and Healthchecks checks" (lines 4757-4759) | Out of SDS's scope: it doesn't gate Phase 1. localops does it when it wants, under its ADR 0001 (decision item 1). Its sentence "Until both are in place, localops uses decision item 6's interim" stands. |
 | Amendment 16 decision item 6, "localops' own alert-hub source and Healthchecks checks are the third open item" (lines 4717-4718) | The item is no longer a Phase 1 condition. The interim the same item names stands (decision item 2). |
 | Amendment 16 decision item 7, "The `sds-bridge` read ends at task (3), when localops' own alert-hub source replaces it (open item 3)" and "The Healthchecks key read ends at task (3), with localops' own checks (open item 3)" (lines 4733-4735) | Stand as written, with the sentence that keeps a read until task (5) and ends it there (lines 4740-4741) and open item 7 (decision item 2). |
+
+## Amendment 22 (2026-11-24): Amendment 16's remaining open items are resolved
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review, as
+  Amendment 16 says of itself (HQ D-12). The ADR's own status is unchanged.
+- **Decided by:** This amendment records resolutions and makes no new choice. Two parties made the
+  choices it records:
+  - **Devon**, for open items 4 and 5's acts, in an interactive HQ session on 2026-11-24 (HQ gate
+    G-96). sds-hq `state/progress.md` records it in the "interactive session, G-96" entry (line
+    336 at sds-hq `afe511de`).
+  - **HQ**, for open items 6 and 7's choices, under sds-hq's standing answer of 2026-11-19, "the
+    fork chain's move to localops: HQ decides, except what it can't undo" (sds-hq
+    `standing-answers.md` at `8bd90a59`, line 154). Devon's words there, in full:
+
+    > "Anything you can do to get it so fork-sync work is moved back to only be on the local mac
+    > is good. Make the best decisions as you can. The only decisions I need you to bring me for
+    > that work, is a decision you cant undo on your own later, if needed."
+
+    The rule's first sentence: "for step 3k and the fork chain's work in localops, HQ makes every
+    choice itself and records it with its reason in `state/progress.md`."
+- **Relates to:** Amendment 16 (lines 4507-4813), its decision item 7 (lines 4720-4744) and its
+  open items (lines 4746-4784); Amendment 20 (lines 5117-5173); Amendment 21 (lines 5175-5244),
+  its decision items 2 and 3 (lines 5208-5232).
+
+Line numbers are this file's at orchestrator `63f092f6`, before the amendment was appended, unless
+another commit is named. The file is byte-identical to `ef463b44`, so Amendment 21's line numbers
+hold here. Code line numbers are at `63f092f6` too. The amendment appends only: no passage before
+it is rewritten. Where it and an earlier amendment disagree, this amendment governs once it's
+accepted.
+
+### Decision
+
+1. **Open item 2, `fork-sync onboard` step 10: resolved.** Onboarding no longer touches
+   change-manager. At localops `origin/main` (`34319282`), `src/fork_sync/onboarding.py`'s step
+   list (lines 753-767) runs `app_installed`, `baseline`, `scaffold`, `secrets`,
+   `register_anthropic_key`, `register_app_key`, `merge_scaffold`, `first_sync`, `protect`,
+   `first_review`, `fork_list`, `installer_row` and `confirm`. None is a change-manager step, and the
+   docstring says so (lines 12-13). `src/fork_sync/bws.py` reads two BWS secrets, the App key
+   (line 27) and the Anthropic key (line 29), and no change-manager credential.
+2. **Open item 4, the read-only App's installation on the forks: resolved.** During G-96, after the
+   member-record change applied, Devon removed the six forks from `alobar-sds-lanes-read`'s
+   installation. A membership-check pass right after it exited 0 (sds-hq `state/progress.md` line
+   336 at `afe511de`).
+3. **Open item 5, change-manager's inert population: resolved.** change-manager #180 merged as
+   `b8ba8757` (deploy policy v16). `_V16_INERT`'s repositories no longer name the six forks, and
+   its `permitted_authors` is `{DEPENDABOT}` (`app/deploy_policy.py` line 598). In the same G-96
+   session, Devon applied the staged member-record change, and the six forks are `retired` (sds-hq
+   `state/progress.md` line 336 at `afe511de`).
+4. **Open item 6, the orchestrator remnants: resolved.** Each remnant the item names, at the base:
+   - **Gone by #753 (`0f59f4f6`):** the `fork` layer (`layers.toml` has no `[fork]` table), the
+     three console scripts (`pyproject.toml` names none), the `LANE_CHECKS` fork rows
+     (`scripts/deploy_orchestrator.py` lines 996-1014 name no chain lane), `tool-installer` in
+     `STAYS_ON_THE_MAC` (`tests/scripts/test_deploy_lanes.py` line 883 is `{"activation-sweep"}`),
+     and the architecture tests' chain rows (`test_hold_paths.py`, `test_membership_edges.py` and
+     `test_wsp21_invariant_scan.py`, all in #753's diff). #753 also carried Amendment 16 decision
+     item 5's task (4) rows: the two fork rows in `src/landing_ledger/record.py` (lines 196-199
+     record why they left) and the membership check's `FORKS`, fork-list and `TOOLS` comparison
+     (`src/membership_check/` names none of them).
+   - **The registry rows:** #803 (`3fa5be9b`) and #806 (`eec26b56`) removed the chain's rows from
+     `.cred-consumers.toml` and re-pointed `tool-installer` to localops.
+   - **The rotation-destination fixture's row:** intent-packages #204 (`fca5a53`), then
+     orchestrator #805 (`3340fb48`). Both fixtures' sha256 is
+     `24f0db4325ea10b2ac435c49cd900545e80e558912c7485ce45f1587432d3539`. #805 also fixed the
+     stale comments.
+   - **The two fork pages:** they moved to localops #20 (`34319282`); orchestrator #807
+     (`63f092f6`) leaves pointers.
+   - **`"tool_installer"` and `"tool_revision"` stay** (`src/orchestrator/persistence/models.py`
+     lines 110 and 208). They name stored rows, which are immutable.
+   - **The inert landing path's fork branches stay (HQ's call).** At the base,
+     `inert_landing_admission.py` line 446 sets
+     `wholesale = rules is not None and not rules.ecosystem_scoped(pull.author_login)`. That steers
+     the ceiling, never-again, revert wait and merge method (lines 448 and 453).
+     `ecosystem_scoped` (`inert_landing_policy.py` line 161) is true unless the policy lists the
+     author in `non_ecosystem_authors`. change-manager policy v16 (#180, `b8ba8757`) removed
+     `fork-secure-upstream-sync[bot]` from the inert lane's permitted and exempted
+     (`non_ecosystem_authors`) authors (`app/deploy_policy.py` lines 598 and 603-606). The
+     constant survives only in `app/deploy_policy_history.py`, for versions 10 to 15. Under v16,
+     `ecosystem_scoped` is true for every author, so `wholesale` is never true and the branches
+     reach no pull request. Re-enabling them needs a new policy version that declares an exempt
+     author. Deleting the orchestrator branches would remove the reader for such a declaration,
+     for no Phase 1 gain. Keeping them matches sds-hq's standing answer of 2026-11-09 (design for
+     repositories in other owners' accounts).
+
+   The item's list says "These include", so it isn't exhaustive. A sweep at the base,
+   `git grep -n -i -E "fork[-_]sync|fork[-_]harden|tool[-_]installer|run-fork|FORKS\b"` over
+   `src/`, `tests/`, `scripts/`, `pyproject.toml`, `layers.toml`, `.cred-consumers.toml` and
+   `.bws-secrets.toml`, returns the following hits. None acts on the chain or the forks:
+
+   | Hit | Disposition |
+   |---|---|
+   | `src/orchestrator/persistence/models.py` line 110 (`"tool_installer"`) | A stored name: an immutable row's source system. Kept. |
+   | `tests/fixtures/model_in_checks.json` lines 23 and 27 | Stored names: the DB CHECK constraints that hold `models.py`'s two names. Kept with them. |
+   | `src/estate_clients/github_app_mint.py` line 17 | A pointer: a docstring naming the key form localops' fork-sync App stores. It acts on nothing. |
+   | `.bws-secrets.toml` lines 272-287 | Kept as they stand: the App key and Anthropic key rows, which localops' `fork-sync onboard` reads (decision item 5). Lines 272-275 are stale (follow-up 1). |
+   | `.cred-consumers.toml` line 1508 | History: the lane Apps' rows name factory-runner's former `fork-sync-app-private-key` row, at a pinned commit, as their model. |
+   | `layers.toml` lines 155-156 (`docs/operations/fork-hardening.md`, `docs/operations/onboarding-a-fork.md`) | Pointer pages, in the `[runtime]` layer (table at line 105), beside the chain's records (line 154's comment). |
+   | `tests/architecture/test_interpreter_agreement.py` line 107 | History: a docstring recording a measured past rewrite. |
+   | `tests/architecture/test_wsp21_invariant_scan.py` line 181 | History: a comment recording why the merge scan reads argv lists. |
+   | `tests/services/test_inert_landing_admission.py` line 1324, `test_revert_act.py` line 509, `test_revert_landing.py` line 546 | The kept inert landing branches' tests. Kept with the branches. |
+
+5. **Open item 7, the interim reads and the App key: resolved, by a departure from its text.**
+   - **The scheduled jobs' reads ended.** localops #19 merged as `4f7bd937`. Its three launchers
+     read neither the `sds-bridge` alert token nor the Healthchecks key at run time: each ping
+     URL comes from the tracked `scripts/healthchecks.toml` (`sds-deadman.sh` lines 33-49), and
+     a tool-installer finding pings `/fail` (`run-tool-installer.sh` lines 23-24 and 70-71).
+     localops names no narrow `sds-operator` read and no SDS bearer in `src/` or `scripts/`.
+   - **The change-manager read ended** with step 10 (decision item 1).
+   - **Task (5) is done.** The App key's registration moved to localops (localops #18,
+     `4360c0c9`; factory-runner #116, `280b6416`, removed its entry). The scaffolded workflows'
+     source is localops' `src/fork_sync/templates/`.
+   - **The registry rows:** #803 and #806 removed the chain's orchestrator rows, and
+     infraops-mcp-server #177 (`0fe5b92`) removed localops' `tool-installer` from its registry.
+     The App key and Anthropic key rows remain as they stand (`.bws-secrets.toml` lines 270-287).
+     The Anthropic key's registry home is factory-runner (`.cred-consumers.toml`, the
+     `anthropic-api-key` entry, lines 112-118 at factory-runner `main`). Only the App key is
+     localops' own registered credential.
+   - **Three reads are kept, as they are today:**
+     - `fork-sync onboard` reads the App key and the Anthropic key through the broad Mac identity
+       (localops `src/fork_sync/bws.py`, lines 25-27, 29 and 40-54), from an interactive run only.
+     - The installers' Healthchecks key read, interactive only, also through the broad identity:
+       `sds-install.sh` lines 41-52 and `install-fork-harden-launchd.sh` lines 54-63. Each says
+       on stderr that no scheduled pass reads the key.
+
+     Keeping these reads is HQ's call under the 2026-11-19 standing answer. Each runs only
+     interactively, through the broad identity that already holds it. So the keep grants no
+     credential, scope or grant. Replacing them would need a credential localops owns, which only
+     Devon can grant, for no Phase 1 gain.
+
+   This departs from three sentences, for these three reads only:
+   - Amendment 16 decision item 7, "The fork-sync App key and Anthropic key reads end at task (5)"
+     (lines 4737-4738), and "stays until task (5), and task (5) ends it" (lines 4740-4741).
+   - Open item 7, "none outlasts task (5)" (line 4777).
+   - Amendment 21 decision item 2, "This amendment extends no read past task (5)" (lines
+     5212-5213).
+6. **Open item 8, increment 6's Mac plumbing: resolved.** At the base, `git ls-tree HEAD scripts/`
+   lists `run-activation-sweep.sh` and no other of Amendment 3's four staying launchers.
+   `run-fork-harden.sh`, `run-fork-sync-watch.sh` and `run-tool-installer.sh` are gone, and
+   localops' launchers source their own copies of `sds-deadman.sh` and `sds-bws.sh`.
+7. **No open item gates Phase 1.** With items 1 and 3 dropped by Amendments 20 and 21, and items
+   2 and 4 to 8 resolved here, none of Amendment 16's open items gates Phase 1. No authority,
+   credential, grant or other passage changes.
+
+### Follow-ups
+
+These aren't Phase 1 conditions or open items:
+
+1. Orchestrator `.bws-secrets.toml` lines 272-275 say localops reads both keys "until task (5)
+   moves the App key's registration there" and "Their owning registry is factory-runner's
+   .cred-consumers.toml". Task (5) is done, and only the Anthropic key's registry is
+   factory-runner's.
+2. localops `src/fork_sync/bws.py` line 1 says "The three BWS values"; the module reads two.
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `63f092f6`:
+
+| Passage | Disposition |
+|---|---|
+| Amendment 16's open items preamble, "Phase 1 can't close until each is resolved" (lines 4748-4749), as Amendments 20 and 21 left it | Resolved: no open item still counts toward it (decision item 7). |
+| Amendment 16's open item 2, "`fork-sync onboard` step 10" (lines 4755-4756) | Resolved (decision item 1). |
+| Amendment 16's open item 4, "The read-only App's installation on the forks" (lines 4760-4762) | Resolved (decision item 2). |
+| Amendment 16's open item 5, "change-manager's inert population" (lines 4763-4765) | Resolved (decision item 3). |
+| Amendment 16's open item 6, "The orchestrator remnants" (lines 4766-4775) | Resolved (decision item 4). |
+| Amendment 16's open item 7, "The interim reads and the App key" (lines 4776-4778) | Resolved, by a departure (decision item 5). |
+| Amendment 16's open item 8, "Increment 6's Mac plumbing" (lines 4779-4784) | Resolved (decision item 6). |
+| Amendment 21 decision item 3, "The open items that still gate Phase 1" (lines 5215-5232) | Resolved: each item it lists is resolved (decision items 1 to 6). |
+| Amendment 16 decision item 7, "The fork-sync App key and Anthropic key reads end at task (5)" (lines 4737-4738) and "stays until task (5), and task (5) ends it" (lines 4740-4741) | Departed from: kept, HQ under the 2026-11-19 standing answer. `fork-sync onboard` keeps its App key and Anthropic key reads, and the installers keep their Healthchecks key read, each interactive only, through the broad identity (decision item 5). |
+| Amendment 16's open item 7, "none outlasts task (5)" (line 4777) | Departed from: kept, HQ under the 2026-11-19 standing answer. The same three reads (decision item 5). |
+| Amendment 21 decision item 2, "This amendment extends no read past task (5)" (lines 5212-5213) | Departed from: kept, HQ under the 2026-11-19 standing answer. The same three reads (decision item 5). |
