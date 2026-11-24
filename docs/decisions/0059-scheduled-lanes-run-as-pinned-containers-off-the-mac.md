@@ -5189,7 +5189,7 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
   localops wants them. sds-hq `state/goal.md` at `84dc31b2` records the drop at step 3k, open item
   (3) (line 40).
 - **Relates to:** Amendment 16 (lines 4507-4813), its decision items 6 and 7 (lines 4710-4744) and
-  its open items (lines 4746-4785); Amendment 20 (lines 5117-5173), which dropped open item 1 the
+  its open items (lines 4746-4784); Amendment 20 (lines 5117-5173), which dropped open item 1 the
   same way.
 
 Line numbers are this file's at orchestrator `ee88b4a5`, before the amendment was appended, unless
@@ -5228,7 +5228,7 @@ Amendment 16 disagree, this amendment governs once it's accepted.
    - Open item 7, "The interim reads and the App key" (lines 4776-4778): each read ends at the task
      decision item 7 names, none outlasts task (5), and task (5) moves the fork-sync App's key
      registration and the scaffolded workflows' source.
-   - Open item 8, "Increment 6's Mac plumbing" (lines 4779-4785): only `run-activation-sweep.sh`
+   - Open item 8, "Increment 6's Mac plumbing" (lines 4779-4784): only `run-activation-sweep.sh`
      remains in orchestrator after task (3).
 4. **Nothing else changes.** No other open item, authority, credential or grant changes.
 
