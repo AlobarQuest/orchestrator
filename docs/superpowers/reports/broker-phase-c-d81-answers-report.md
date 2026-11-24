@@ -62,8 +62,8 @@ inside Amendment 32 only. The amendment stays `Proposed (2026-11-24)`; no other 
 
 ## PR
 
-Recorded in the PR body and HQ's PR read; the URL and head are in the section "PR, filled after
-opening" at the end of this report.
+https://github.com/AlobarQuest/orchestrator/pull/811. The ADR change is commit `cc069b1e4bad9a768fc7c95713e1fc676d58cfd0`; the
+PR's head is the following commit, which adds only this PR line to the report. Not merged.
 
 ## Self-review
 
