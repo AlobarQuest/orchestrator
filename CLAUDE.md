@@ -45,7 +45,7 @@ style of that module.
 Each rule below is stated once, as it stands now. Where a procedure, method lesson or history lives
 elsewhere, the rule names it. Pages: `docs/operations/` (deploy, credentials, driving-a-unit,
 architecture-guards, local-development, landing-lanes, rotation-executor, secrets-broker,
-onboarding-a-target, onboarding-a-fork),
+onboarding-a-target),
 `docs/method-lessons.md`, and `docs/history/claude-md-invariants-archive.md` (the full original
 text of every bullet, by number; `Archive #N` means that entry, and each rule shortened by Execution
 Part 5 keeps its earlier text under that heading there).
