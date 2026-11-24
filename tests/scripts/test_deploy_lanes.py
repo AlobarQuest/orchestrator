@@ -877,6 +877,69 @@ def test_the_repositorys_registry_registers_the_thirteen_moved_lanes() -> None:
     }
 
 
+
+# ---- registration by the secrets broker's allowlist (ADR-0055 a32 item 4) --------------------
+
+
+def _table(lane: str) -> str:
+    return f"[lanes.{lane}]\nread = []\n"
+
+
+def _publish_allowlist(lanes: Lanes, text: str) -> None:
+    _commit(lanes.work, {deploy.BROKER_ALLOWLIST: text}, "the broker's allowlist")
+    _git(lanes.work, "push", "-q", "origin", "main")
+
+
+def test_an_allowlist_table_registers_a_broker_lane_without_a_token_entry(lanes: Lanes) -> None:
+    assert deploy.registered_lanes(lanes.world()) == set()  # no allowlist file: no broker lane
+    _publish_allowlist(lanes, "[lanes]\n" + _table("estate-landing"))
+    assert deploy.registered_lanes(lanes.world()) == {"estate-landing"}
+
+
+def test_an_unreadable_allowlist_at_main_is_refused(lanes: Lanes) -> None:
+    for text, refusal in (
+        ("[lanes\n", "can't be read"),
+        ('[lanes]\n[lanes.estate-landing]\nread = "x"\n', "exactly a `read` list"),
+    ):
+        _publish_allowlist(lanes, text)
+        with pytest.raises(deploy.Refused, match=refusal):
+            deploy.registered_lanes(lanes.world())
+
+
+def test_an_allowlist_table_for_an_unknown_lane_is_refused() -> None:
+    with pytest.raises(deploy.Refused, match=r"names unknown lanes \['no-such-lane'\]"):
+        deploy.lanes_in_allowlist("[lanes]\n" + _table("no-such-lane") + _table("bump-driver"))
+
+
+def test_a_lane_with_a_token_entry_and_a_table_is_registered_once(lanes: Lanes) -> None:
+    _register_watch(lanes)
+    _publish_allowlist(lanes, "[lanes]\n" + _table("execution-watch"))
+    assert deploy.registered_lanes(lanes.world()) == {"execution-watch"}
+
+
+def test_the_repositorys_registry_and_allowlist_register_seventeen_lanes() -> None:
+    """The thirteen token lanes and the four lanes moved to the secrets broker in its Phase B
+    (ADR-0055 a32), which have no token entry; the inert lander has both."""
+    token = deploy.lanes_in_registry((ROOT / ".cred-consumers.toml").read_text())
+    broker = deploy.lanes_in_allowlist((ROOT / deploy.BROKER_ALLOWLIST).read_text())
+    assert broker - token == {"bump-driver", "change-window", "estate-landing", "follow-up-mint"}
+    assert len(token | broker) == 17
+
+
+def test_the_allowlists_tables_are_exactly_the_broker_lanes_composes() -> None:
+    """A table can't register a lane whose tracked compose still maps a token, and a broker
+    compose can't exist without a table: the compose side of `broker_lane` is asked with an
+    allowlist that names every lane, so only the compose decides."""
+    allowlist = deploy.lanes_in_allowlist((ROOT / deploy.BROKER_ALLOWLIST).read_text())
+    every = {lane: frozenset[str]() for lane in deploy.LANES}
+    by_compose = set()
+    for lane in sorted(deploy.LANES):
+        compose = ROOT / deploy.LANE_COMPOSE.format(lane=lane)
+        assert compose.is_file(), lane
+        if deploy.broker_lane(deploy.lane_service(compose.read_text(), lane), lane, every):
+            by_compose.add(lane)
+    assert allowlist == by_compose
+
 # ---- the tables, held to their sources ------------------------------------------------------
 
 # The launcher that stays on the Mac (ADR-0059 decision 4) and so is no lane.

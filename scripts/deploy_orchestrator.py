@@ -1305,9 +1305,27 @@ def lane_secrets(text: str, lane: str) -> list[str]:
     return found
 
 
+def lanes_in_allowlist(text: str) -> set[str]:
+    """The lanes the secrets broker's allowlist has a table for: each is a broker lane, which
+    has no token entry (ADR-0055 a32 item 4)."""
+    try:
+        allowlist = parse_allowlist(text, f"{BROKER_ALLOWLIST} at main")
+    except AllowlistError as error:
+        raise Refused(str(error)) from error
+    unknown = sorted(set(allowlist) - LANES)
+    if unknown:
+        raise Refused(f"{BROKER_ALLOWLIST} at main names unknown lanes {unknown}")
+    return set(allowlist)
+
+
 def registered_lanes(world: World) -> set[str]:
-    """Each lane the release hold covers: the registry's at `origin/main`."""
-    return lanes_in_registry(_git(world, "show", f"origin/main:{CRED_CONSUMERS}"))
+    """Each lane the release hold covers: by its token entry in the registry, or by its table in
+    the secrets broker's allowlist, both at `origin/main`."""
+    lanes = lanes_in_registry(_git(world, "show", f"origin/main:{CRED_CONSUMERS}"))
+    # Only a missing file means "no broker lane"; any other git failure is refused as itself.
+    if not _git(world, "ls-tree", "--name-only", "origin/main", "--", BROKER_ALLOWLIST).strip():
+        return lanes
+    return lanes | lanes_in_allowlist(_git(world, "show", f"origin/main:{BROKER_ALLOWLIST}"))
 
 
 def _recorded_lanes(world: World) -> list[str]:
