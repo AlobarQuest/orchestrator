@@ -41,7 +41,8 @@ the handoff didn't list, because the code read made them necessary:
 
 ## Tests and checks run
 
-- `make check` in the worktree on `orchestrator_test_hq_w_306` (migrated to head) passed:
+- `make check` in the worktree on `orchestrator_test_hq_w_306` (migrated to head) passed on both
+  commits:
   14,776 passed, 1 skipped, exit 0.
 - Security scan (`security_scan.cli . --category security`): 0 BLOCK. The 2 WARNs were there
   before this change (secret-file gitignore coverage), and this change touches neither.
