@@ -36,8 +36,7 @@
 #   - the read-only App `alobar-sds-lanes-read`'s key (BWS `314a966c-…`), piped straight into
 #     `sds-github-mint`. The pass's GitHub token is minted from it each pass, narrowed to the member
 #     record's observed repositories and three read permissions, and exported as both
-#     `SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN` (the fork list's `gh api` read). `gh` is never asked
-#     for a login.
+#     `SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN`. `gh` is never asked for a login.
 #   The Healthchecks API key (BWS `51509d5e-…`) is never read there: no lane holds it.
 # The container also clones intent-packages anonymously each pass into the pass's `HOME`, for the
 # standing dependency-update packages, and points `BUMP_PROPOSER_PACKAGES_CHECKOUT` at it.
@@ -87,12 +86,11 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # record's observed repositories (onboarding and member), each once: the population the check's
   # declaration and registry-file reads cover (`src/membership_check/cli.py`). Its auto-merge read
   # also covers retired members, which the mint doesn't name, so a retired member's state is a gap
-  # in the container. intent-packages and factory-runner are members, so the fork list's read is
-  # covered too. The mint
-  # never names a public non-member: the listing reads those through the same token. AN UNDERIVABLE
-  # LIST MINTS NOTHING, AND SAYS SO: an unreadable record or an empty population exits 3 (a source
-  # couldn't be read) with the program not run. Any other non-zero code is the tool failing (1) or
-  # not running at all (126, 127, 137), and is passed through verbatim.
+  # in the container. The mint never names a public non-member: the listing reads those through
+  # the same token. AN UNDERIVABLE LIST MINTS NOTHING, AND SAYS SO: an unreadable record or an
+  # empty population exits 3 (a source couldn't be read) with the program not run. Any other
+  # non-zero code is the tool failing (1) or not running at all (126, 127, 137), and is passed
+  # through verbatim.
   REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$SDS_MEMBERS_OBSERVER_TOKEN" \
     env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
   scope_rc=$?
@@ -114,7 +112,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # repositories. The App's key goes from the BWS read straight to the mint's stdin in its stored
   # form; it is never in a variable, an argument or a file, and the mint runs without the lane's
   # token. The three permissions are what the check's GitHub reads use: `contents` for
-  # `factory-target.toml`, the registry files, the workflow files and the fork list's file;
+  # `factory-target.toml`, the registry files and the workflow files;
   # `metadata` for the listings and each repository. `administration` is minted but no read is
   # known to need it: the auto-merge setting is read over GraphQL (`auto_merge.py`), because
   # GitHub serves REST's merge-related settings only to a token with `contents:write`. Any preset
@@ -127,7 +125,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   if [ "$mint_rc" -ne 0 ] || [ -z "$SDS_MEMBERS_GITHUB_TOKEN" ]; then
     sds_outcome_fail "FATAL: could not mint the membership check's GitHub token from the read-only App (sds-github-mint exited $mint_rc)"
   fi
-  # `gh` reads `GH_TOKEN`, so the fork list's `gh api` read uses the minted token too.
+  # `gh` reads `GH_TOKEN`, so any `gh` call in the pass uses the minted token too.
   GH_TOKEN="$SDS_MEMBERS_GITHUB_TOKEN"
 
   # THE STANDING PACKAGES COME FROM AN ANONYMOUS SHALLOW CLONE OF intent-packages (ADR-0059

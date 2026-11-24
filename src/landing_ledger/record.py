@@ -195,8 +195,8 @@ def is_known_defective_metadata_landing(repository: Any, commit: Any) -> bool:
 #
 # TWO OF THE FOUR LEFT THE LIST WITH THE FORK CHAIN (ADR-0059 Amendment 16): the claude-octopus and
 # n8n-as-code rows, both landed by 2026-10-27. The scheduled pass reads seven days back
-# (`run-landing-ledger.sh`), so it never yields them again, and the forks leave the ledger's
-# population when they leave the member record.
+# (`run-landing-ledger.sh`), so it never yields them again, and the forks left the ledger's
+# population when they left the member record.
 #
 # THIS LIST CAN NEVER BE SPENT, exactly as the list above cannot: the rows are immutable and
 # content-addressed, with no supersession path and no delete route.
