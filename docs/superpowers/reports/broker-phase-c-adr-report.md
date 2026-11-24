@@ -12,19 +12,20 @@ retire (2026-11-24)` at the end of ADR-0055, status Proposed, plus its line in t
 "Amended" list. It covers each of the handoff's four parts:
 
 1. **Scope** (decision item 1): the 12 token lanes; inert landing's G-79 token and its unmapped
-   `INERT_LANDING_BWS_ACCESS_TOKEN`; the unlock tier; the six rows with no adapter (three Coolify,
-   two GitHub App, one Anthropic); HQ's unregistered secrets; fetch fairness; and what is out of
+   `INERT_LANDING_BWS_ACCESS_TOKEN`; the unlock tier; the eight rows with no adapter, of which Phase
+   C takes the design's six (three Coolify, two GitHub App, one Anthropic); HQ's unregistered secrets; fetch fairness; and what is out of
    scope.
 2. **Per-lane route** (item 4): eight ordered steps from the broker directory to the retirement,
    plus two code changes that must land before batch 1. Item 5 covers the retirement: the
-   restated revoke precondition, the one sitting for 13 tokens, the registry removal, the
+   restated revoke precondition, the one sitting for 13 tokens (12 if Devon refuses the append
+   grant, Open item 9), the registry removal, the
    leak-revokes-first rule, and HQ's package hold.
 3. **Per-lane table** (item 2): all 26 distinct secrets, each with its name, project and whether
    the broker reads it, and a per-lane count. The broker already reads 8: 6 by project and 2 by
    existing single-secret grants. The other 18 need new grants: 15 in `Rotation / Keepers`, 1 in
    `Factory Events` and 2 outside the broker's projects. The lane lists hold 58 entries.
 4. **Batches** (section "Proposed batches and order"): four batches of three, with 4, 4, 4 and 6
-   new grants (18 in all). Batch 4 holds the three grants that wait on Open item 9. The revoke
+   new grants (18 in all). Batch 4 holds the one grant that waits on Open item 9, the append password. The revoke
    sitting comes once, after batch 4.
 
 The stop points are Open items 6 to 14, and none is settled. I wrote them, with options and
@@ -66,8 +67,8 @@ the handoff didn't list, because the code read made them necessary:
 
 ## Self-review
 
-- The amendment grants nothing. Each of the 18 grants is named as a gate step for Devon, and its
-  "What it grants" section says so.
+- The amendment grants nothing. Each of the 17 gate-step grants is named for Devon, the append
+  password waits for Open item 9, and its "What it grants" section says so.
 - I checked each line citation against `5ae929a9` and corrected four after the first draft.
 - The projects come from `.bws-secrets.toml`, not from a BWS read, and the amendment says so. If
   the manifest is stale for a secret, that secret's grant row is wrong. Devon's grant sitting would
@@ -98,8 +99,12 @@ the handoff didn't list, because the code read made them necessary:
   follow-up minting and the change window). In production mode the lag check doesn't cover them,
   and `finish` doesn't move them to the served tag. Development mode skips the lag check, but
   `lanes_to_follow` still leaves them out.
-- **Fetch fairness** comes from sds-hq's own list (`state/goal.md`, the broker-first plan
-  amendment), which no record defines. Item 15 decides nothing.
+- **Fetch fairness** comes from sds-hq's own list (`state/history/goal-phase1-2026-11-24.md`
+  line 58, the broker-first plan amendment of 2026-11-20), which no record defines. Item 15 decides
+  nothing, and "Phase C is done when" closes it with no change unless a wait is measured.
+- **Devon's Phase C order** is quoted from sds-hq `state/goal.md` line 5 (its `Source:` line), the
+  narrowest-credential rule from sds-hq `standing-answers.md` lines 136-152 (2026-11-18), and the
+  design's Phase C list from spec lines 198-200 (the adapters quote spans 199-200).
 - **HQ's six unregistered secrets** appear in no record I could read, so they aren't listed.
 
 ## Standards followed
@@ -113,8 +118,10 @@ the handoff didn't list, because the code read made them necessary:
   `bws.bootstrap-token-not-inline`):** none of the three files holds a token or a literal example.
   The UUIDs are secret ids, not values, and the scan found 0 BLOCK.
 - **Infra Brain 1032 (`cred.exposure-rotate`):** item 5.4 keeps "a leak still revokes first,"
-  outside the sitting and the batch order, and leaves the rotation-decomposer token D-48 found to
-  D-48 B's pass.
+  outside the sitting and the batch order. The rotation-decomposer token D-48 found isn't left to
+  any later pass: it was reissued under D-76 B at HQ gate G-92 on 2026-11-23 and its 2026-11-13
+  value revoked (item 1, "Out of scope"; item 5.4). The D-48 B pass follows Phase C and doesn't
+  rotate a lane token Phase C retires. No retirement in the plan waits on a recorded exposure.
 - **Infra Brain 212 (HTTPS for public FQDNs):** not applicable, because no endpoint is added. The
   amendment's "What it grants" section says so.
 
@@ -184,3 +191,62 @@ The figures are in "Tests and checks run, round 1", which follows.
 - The security scan found 0 BLOCK and 2 WARN, the same two WARNs as before this change.
 - Round 1 grants nothing, and the changes are docs only: ADR-0055, the question file and this
   report.
+
+## Round 2
+
+HQ's fix round 2 came from the Opus whole-branch and Sonnet re-reviews of `7a537325`. Worker W-307
+made it as one fast-forward commit on `hq/broker-phase-c-adr`, and checked each item at
+`5ae929a9` first. No item settles Open items 6 to 14; each change states both answers.
+
+### Blocking items
+
+1. **Item 9's reach.** Open item 9 now blocks only the append-password grant and steps 3 to 8 of
+   bump-proposer and work-carrier. Their other step 2 grants, the ping URLs included, stay among
+   the 17 gate steps that can be given before batch 1. Question 5 says the same.
+2. **`helper_target`.** "Every lane row names one" was false: `inert-landing-bws-token` is a
+   `bws-lane-token` row with none, and the broker's own row has none. The ADR's item 4 step 3 and
+   question 2 now say each of the 12 token lanes' rows names one. A registry read confirmed 14
+   `bws-lane-token` rows, 12 with a `helper_target`.
+3. **This report's stale lines.** The D-48 text in `Standards followed` now says the token was
+   reissued under D-76 B at G-92 and its 2026-11-13 value revoked. "Six rows with no adapter" is
+   now eight, of which Phase C takes the design's six; "three grants that wait on Open item 9" is
+   now one; "Each of the 18 grants" is now the 17 gate steps.
+4. **Item 9's refusal and the ending text.** Item 1, the item 5 introduction, "Phase C is done
+   when", the batches paragraph and Consequences now each key the count on item 9's answer: 12
+   lanes and 13 tokens if every lane moves, 11 lanes and 12 tokens if Devon refuses the append
+   grant, and in general any lane his answer keeps on its token stays on it.
+5. **The `bump-proposer` account.** Open item 14 and question 7 now say its lane token is a second
+   token of the account that also holds `bws-bump-proposer-token` (`.cred-consumers.toml`,
+   1229-1231 and 1743-1750). Deleting the account ends that token and its append-password read,
+   removes one of amendment 25 item 3's named append holders, and, if item 9 keeps bump-proposer on
+   its lane token, ends that token too. Question 7's recommendation stays B, marked as the
+   worker's, and notes that Devon may choose A for that one account.
+
+### Accuracy
+
+6. Question 2's option B now names the test it changes:
+   `test_no_broker_lane_and_not_the_broker_s_own_token_names_one`
+   (`tests/rotation_worker/test_lane_token_helper_targets.py`, line 108).
+7. At `5ae929a9`, amendment 24 item 4 is lines 3393-3404, amendment 25 item 3 is lines 3641-3655
+   and its refusal is lines 3653-3655. The ADR text and the passages table use these. I also
+   checked amendment 30's 4406-4410, 4415-4416, 4422-4423 and 4424-4426 at the base, and all four
+   are correct.
+8. The narrowest-credential rule is cited as sds-hq `standing-answers.md` lines 136-152, with what
+   it says. Fetch fairness cites `state/history/goal-phase1-2026-11-24.md` line 58, Devon's Phase C
+   quote `state/goal.md` line 5, and the D-48 B order `state/goal.md` line 42 ("Queued"). The
+   design's adapters quote is lines 199-200. The Concerns section uses the same citations.
+9. Open item 12 has a **Blocks:** Phase C's close line, and "Phase C is done when" has a fetch
+   fairness line: closed with no change unless a wait is measured.
+
+Round 1's text in the preceding section is kept as it was written. Its item 3 ("every lane row
+names one"), item 4 (lines 3655-3657), item 5 (spec line 199) and item 10 (`goal.md` cited by
+section) are corrected by items 2, 7 and 8 of this round.
+
+### Tests and checks run, round 2
+
+- `make check` on `orchestrator_test_hq_w_307`, run on the committed round 2 tree, passed, exit 0:
+  14,777 tests collected, with 14,776 passed and 1 skipped (371.58 s).
+- The security scan found 0 BLOCK and 2 WARN, the same two WARNs as before this change.
+- A token-shape grep of the round 2 diff's added lines (the BWS access-token shape, and an inline
+  assignment of `BWS_ACCESS_TOKEN`) matched nothing.
+- Round 2 grants nothing, makes no live call, and changes only the three docs files.

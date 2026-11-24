@@ -37,10 +37,13 @@ token.
 - **C. Not rotated on a schedule.** It rotates only on an exposure (Infra Brain 1032).
 
 **Recommendation: B.** The adapter, its mint gate and the `loaded` proof run for lane tokens
-today. Every lane `bws-lane-token` row names a `helper_target` (#793, `51a8bbe7`), and G-92's
-`loaded` check ran on rotation-decomposer's token on 2026-11-23. Amendment 30's Phase C text also
-expects `rotated_by_sds` to become true for this row. The broker needs its own `helper_target` and
-a target in the host helper, as each lane has.
+today. Each of the 12 token lanes' rows names a `helper_target` (#793, `51a8bbe7`); inert
+landing's row, a broker lane's, names none. G-92's `loaded` check ran on rotation-decomposer's
+token on 2026-11-23. Amendment 30's Phase C text also expects `rotated_by_sds` to become true for
+this row. The broker needs its own `helper_target` and a target in the host helper, as each token
+lane has. B also changes `test_no_broker_lane_and_not_the_broker_s_own_token_names_one`
+(`tests/rotation_worker/test_lane_token_helper_targets.py`, line 108), which refuses a
+`helper_target` on the broker's own token.
 
 One gap remains: the deploy command has no `--lane secrets-broker`, so the broker's redeploy is the
 two infraops calls in "Move the broker to a new release". The broker's restart makes each lane fail
@@ -75,11 +78,13 @@ shrinks the number of tokens that need a mint sitting.
 
 ## 5. The factory-events holders (Open item 9)
 
-Two questions. Both block batch 4's work-carrier and bump-proposer.
+Two questions. Together they block the append-password grant and steps 3 to 8 of batch 4's
+bump-proposer (question a) and work-carrier (question b). Those lanes' other grants, the ping URLs
+included, are among the 17 gate steps and don't wait for this answer.
 
 **(a) May the broker hold the append password (`factory-events-append-password`, `2ce0dbc7-…`) at
 all?** Only the approvers hold the append role (D-43 B), and D-45 and D-47 list its holders by name
-(ADR-0055 amendment 25 item 3). That item refuses the append password to `sds-operator`,
+(ADR-0055 amendment 25 item 3, lines 3641-3655 at `5ae929a9`). That item refuses the append password to `sds-operator`,
 `BWS_ACCESS_TOKEN_BROAD` and `BWS_ACCESS_TOKEN_VPS_BACKUP`, because each serves processes beyond
 those holders. The broker reads for every lane on its allowlist, so it would be one more append
 holder of that kind.
@@ -87,8 +92,9 @@ holder of that kind.
 - **A. Yes.** A single-secret grant to `lane-secrets-broker`, with only the bump proposer's
   allowlist table naming the secret. Amendment 25 item 3's holder list adds the broker, and D-43 B
   is amended to allow it.
-- **B. No.** bump-proposer stays on its own lane token, which leaves the revoke sitting, and Phase
-  C retires 12 tokens instead of 13.
+- **B. No.** bump-proposer stays on its own lane token, which leaves the revoke sitting. Phase C
+  then moves 11 lanes and retires 12 tokens instead of 13, and bump-proposer's lane still holds a
+  BWS token when Phase C closes.
 
 **Recommendation: A, by a narrow margin.** Your Phase C goal is every earlier lane's token
 retired, and B leaves one. ADR-0059 Amendment 17 already accepted the broker as a holder of the
@@ -106,7 +112,9 @@ precedent for a second lane.
 
 The other 17 grants are gate steps in the amendment's item 3, named and not given. That covers the
 15 in `Rotation / Keepers`, plus `coolify-revision-watcher-read-token` and `APP_BRAIN_READ_KEY` as
-single-secret grants under the narrowest-credential standing answer of 2026-11-18. The form of
+single-secret grants under the narrowest-credential standing answer of 2026-11-18 (sds-hq
+`standing-answers.md` lines 136-152): HQ plans the narrowest credential that does the lane's job and
+doesn't raise a decision to choose between a broad and a narrow one. The form of
 those two grants is no longer a question.
 
 ## 6. How a broker lane stays registered (Open item 13)
@@ -128,8 +136,18 @@ the allowlist already decides `broker_lane`.
 - **A. Revoke the tokens only.** The accounts and their grants stay, unused.
 - **B. Revoke the tokens and delete each account** in the same sitting, which removes its grants.
 
+One account is shared. bump-proposer's lane token is a second token of the `bump-proposer`
+machine account, which also holds the Mac Keychain token `bws-bump-proposer-token`
+(`.cred-consumers.toml`, the bump-proposer block's comment at lines 1229-1231, and that token's row
+at lines 1743-1750). Under B, deleting that account also ends the Keychain token and its read of the
+append password, and removes one of amendment 25 item 3's named append holders. If question 5(a)
+is answered B, bump-proposer keeps its lane token, and deleting the account would end that token
+too.
+
 **Recommendation: B.** An account with grants and no token is unused reach. Deleting it is the same
-sitting and no extra mint.
+sitting and no extra mint. This recommendation is the worker's; the `bump-proposer` account is the
+one case where B ends more than the lane token, so Devon may choose B for the other accounts and A
+for that one.
 
 ## 8. HQ's unregistered secrets (Open item 11)
 
