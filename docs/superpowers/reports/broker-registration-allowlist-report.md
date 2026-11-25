@@ -106,6 +106,8 @@ I didn't change that flow.
 - `make check` on a clean tree at `811c711` (the final code): PASS, 14,783 collected, 14,782
   passed, 1 skipped, 0 failed. (An earlier run failed `test_the_deploy_command_runs_exactly_its_commands` on the new
   `git ls-tree`; that is the guard change described earlier.)
+- PR CI at `24bbfb0`: `Quality` (16m42s), `Runner consumer compatibility`, and `Rollout
+  transcription currency` all pass.
 - `ruff format`, `ruff check`, and `pyright` on the changed files: clean.
 - `code-standards risk --repo .`: `normal`.
 - `/code-review` (medium) on `3675d24f..HEAD`: four nits. I fixed the duplicated allowlist read.
@@ -157,6 +159,9 @@ hold no UUIDs.
   the test follows it.
 
 ## Concerns
+
+- The test database `orchestrator_test_hq_w_308` and this worktree are left for HQ's teardown,
+  since the PR isn't merged.
 
 - If a later PR adds an allowlist table for a lane before `LANE_CHECKS` knows it, every release
   is refused until that is fixed. This is the same as a token row for an unknown lane, and
