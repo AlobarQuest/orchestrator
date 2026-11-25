@@ -1588,6 +1588,24 @@ def _allowlist_at(world: World, commit: str) -> dict[str, frozenset[str]]:
         raise Refused(str(error)) from error
 
 
+def token_refusals(
+    service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]]
+) -> list[str]:
+    """How the compose fails to give the lane a way to read: it maps the lane's own token
+    variable, or it maps none and is a broker lane's. An `--add` and a `--tag` both check it."""
+    mapped = "${" + lane.upper().replace("-", "_") + "_BWS_ACCESS_TOKEN}"
+    environment = _environment(service)
+    if TOKEN_VARIABLE in environment:
+        if environment[TOKEN_VARIABLE] != mapped:
+            return [f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}"]
+    elif not broker_lane(service, lane, allowlist):
+        return [
+            f"it maps no {TOKEN_VARIABLE} as {mapped!r}, and it is no broker lane: one that "
+            f"mounts {LANE_BROKER_BIND.format(lane=lane)!r} and that {BROKER_ALLOWLIST} lists"
+        ]
+    return []
+
+
 def add_refusals(
     service: dict[str, Any], lane: str, allowlist: dict[str, frozenset[str]] | None = None
 ) -> list[str]:
@@ -1599,15 +1617,7 @@ def add_refusals(
             f"it maps {SCHEDULE_VARIABLE} as {environment.get(SCHEDULE_VARIABLE)!r}, "
             f"not {SCHEDULE_MAPPING!r}"
         )
-    mapped = "${" + lane.upper().replace("-", "_") + "_BWS_ACCESS_TOKEN}"
-    if TOKEN_VARIABLE in environment:
-        if environment[TOKEN_VARIABLE] != mapped:
-            refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
-    elif not broker_lane(service, lane, allowlist or {}):
-        refusals.append(
-            f"it maps no {TOKEN_VARIABLE} as {mapped!r}, and it is no broker lane: one that "
-            f"mounts {LANE_BROKER_BIND.format(lane=lane)!r} and that {BROKER_ALLOWLIST} lists"
-        )
+    refusals += token_refusals(service, lane, allowlist or {})
     if lane in STATEFUL_LANES and _state_volume(service, lane) is None:
         refusals.append(f"it mounts no named volume at {LANE_STATE_MOUNT.format(lane=lane)}")
     return refusals
@@ -1713,6 +1723,24 @@ def _plan_change(
     require_descendant(world, added.commit, run.commit)
 
 
+def _compose_refusals(
+    kind: str,
+    compose: str,
+    service: dict[str, Any],
+    lane: str,
+    allowlist: dict[str, frozenset[str]],
+) -> list[str]:
+    """What the change's tracked compose is refused for. Every change checks its routes to the
+    broker's directory, an `--add` its whole entry, and a `--tag` its way to read. A `--schedule`
+    or `--token` keeps the last finished run's commit, so the compose that run already passed."""
+    refusals = compose_broker_refusals(compose, lane)
+    if kind == "add":
+        refusals += add_refusals(service, lane, allowlist)
+    elif kind == "tag":
+        refusals += token_refusals(service, lane, allowlist)
+    return refusals
+
+
 def _plan(
     world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneRun], mode: str
 ) -> None:
@@ -1729,9 +1757,7 @@ def _plan(
     service = lane_service(run.compose_sent, lane)
     allowlist = _broker_allowlist(world, run.commit, service)
     run.brokered = broker_lane(service, lane, allowlist)
-    refusals = compose_broker_refusals(run.compose_sent, lane)
-    if change.kind == "add":
-        refusals += add_refusals(service, lane, allowlist)
+    refusals = _compose_refusals(change.kind, run.compose_sent, service, lane, allowlist)
     if refusals:
         raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
     if change.kind == "add":

@@ -189,7 +189,12 @@ Each phase takes `--lane <lane>` and exactly one change:
   tag (in production; development mode takes any released commit, "Development mode"), and its
   commit must descend from the commit of the lane's first passed `--add`. An older target has no
   launcher for the lane, and only the change window can go back to the Mac first ("Rollback for
-  one lane").
+  one lane"). As for an `--add`, the tracked compose at that commit must map `BWS_ACCESS_TOKEN` as
+  `${<LANE>_BWS_ACCESS_TOKEN}` or be a broker lane's: it maps no token, mounts
+  `/data/sds/broker/<lane>` read-only at `/run/sds-broker`, and the commit's
+  `lanes/secrets-broker/allowlist.toml` lists the lane. A `--tag` to a compose that is neither is
+  refused, so a lane converts to the broker by a `--tag` to a commit that carries both the bind
+  and the allowlist table (ADR-0055 Amendment 32 item 4).
 - `--schedule <true|false>`: change the lane's `LANE_SCHEDULE_ENABLED`. It keeps the running tag
   and writes the tracked compose at that tag.
 - `--add --tag sha-<40 hex>`: the lane's first start, on the resource HQ created. The tag must be
