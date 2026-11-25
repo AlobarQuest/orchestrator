@@ -6,7 +6,8 @@ Handoff: `sds-hq/state/handoffs/broker-registration-allowlist.md` (ADR-0055 Amen
 Open item 13 option A). Worker W-308. Branch `hq/broker-registration-allowlist`, based on
 `origin/main` at `3675d24f`, which had not moved when work started.
 
-PR: https://github.com/AlobarQuest/orchestrator/pull/812 (code and tests at head `62407b875d48a679e3cdabf31332e168d4fdb3a9`; this report's own update commit follows it). Not merged.
+PR: https://github.com/AlobarQuest/orchestrator/pull/812. Code and tests are final at
+`811c71118dd02a8655aedfd2ab4cd186262c41fa`; later commits touch only this report. Not merged.
 
 ## What I built
 
@@ -23,7 +24,8 @@ The change, by requirement:
    both call it, so registration and the compose check can't read the allowlist differently.
 2. **Unknown lane.** `allowlisted_lanes(allowlist)` refuses a table for a lane outside `LANES`
    (`LANES = frozenset(LANE_CHECKS)`): "`lanes/secrets-broker/allowlist.toml` at main names
-   unknown lanes [...]". This mirrors the unknown token-lane refusal.
+   unknown lanes [...]". This mirrors the unknown token-lane refusal. `registered_lanes` reads the
+   allowlist only through `allowlisted_lanes`, and the test goes through `registered_lanes`.
 3. **A lane in both sources.** `registered_lanes` returns the union, so inert landing (fallback
    token row plus table) is registered once. The "more than one token entry" refusal stays inside
    `lanes_in_registry`, which only sees token rows.
@@ -36,8 +38,12 @@ The change, by requirement:
    files. For every lane in `LANES`, it requires `lanes/<lane>/compose.yaml` to exist. It asks
    `broker_lane` with an allowlist that names every lane, so only the compose half (no token, own
    socket bind, no stray broker mount) decides. Then it asserts that set equals the allowlist's
-   tables. My reading matches the ADR text: a table can't register a lane whose compose maps a
-   token, and a broker compose can't exist without a table.
+   tables. I read ADR-0055 at `3675d24f` (the context bullet at 4620-4626, item 4 at 4812-4816,
+   Open item 13 at 4882-4884, and the passages table at 4969) and section 6 of
+   `broker-phase-c-adr-question-answered.md`. Neither says more than "held equal by a test". My
+   reading is the handoff's: a table can't register a lane whose compose maps a token, and a
+   broker compose can't exist without a table. The conversion batches are consistent with this:
+   a conversion PR adds a lane's table and its broker compose in one commit.
 6. **The repository's registered set.**
    `test_the_repositorys_registry_and_allowlist_register_seventeen_lanes` is a sibling of the
    thirteen-lanes test. It asserts that the allowlist adds exactly `bump-driver`, `change-window`,
@@ -45,13 +51,17 @@ The change, by requirement:
    The unit tests for requirements 1 to 3 use the `lanes` git fixture, so they go through
    `origin/main`:
    - `test_an_allowlist_table_registers_a_broker_lane_without_a_token_entry` (no file: empty;
-     then a table registers its lane)
+     a table committed but not pushed: still empty; pushed to `origin/main`: registered)
    - `test_an_unreadable_allowlist_at_main_is_refused` (TOML error, and a malformed table)
    - `test_an_allowlist_table_for_an_unknown_lane_is_refused`
    - `test_a_lane_with_a_token_entry_and_a_table_is_registered_once`
 7. **Docs.** `docs/operations/deploy.md`, "Registered lanes and the lane-token matcher", says a
    lane is registered by its token entry or its allowlist table. It also says what removing each
-   does, and that a lane with both stays registered until both are gone.
+   does, and that a lane with both stays registered until both are gone. The passages table at
+   4969 names only this section. A grep of the root `CLAUDE.md`, `scripts/CLAUDE.md`, `src/`,
+   `docs/operations/` (`secrets-broker.md` included), and `docs/method-lessons.md` found no other
+   text describing registration. No doc lists the deploy command's git subcommands, so the
+   `git ls-tree` addition needed no doc change.
 
 Stop points checked: `origin/main` was still `3675d24f`. Every allowlisted lane has a tracked
 compose, and `broker_lane` says each is a broker lane, because the equality test passes. No new
@@ -77,7 +87,8 @@ lanes:
   in `lane_phases`, the command `uv run python -m scripts.deploy_orchestrator lanes-prepare --lane
   <lane> --tag sha-<built_commit>` for each lane to follow.
 - **A broker lane's follow run.** When an operator runs that printed `lanes-prepare --tag`, `_plan`
-  routes it through `_plan_change`, then reads the lane's compose at the tag's commit. It computes
+  routes it through `_plan_change`, which reads the last finished run and the running container's
+  values and no registry row. `_plan` then reads the lane's compose at the tag's commit. It computes
   `run.brokered` through `_broker_allowlist`/`broker_lane`, and runs
   `compose_broker_refusals(run.compose_sent, lane)` for every change kind, `--tag` included. A
   refusal stops the run with "the tracked compose of lane `<lane>` at `<tag>`: ...". `add_refusals`
@@ -92,8 +103,8 @@ I didn't change that flow.
 
 ## Tests and checks
 
-- `make check` on the final head: PASS, 14,783 collected, 14,782 passed, 1 skipped, 0 failed.
-  (An earlier run failed `test_the_deploy_command_runs_exactly_its_commands` on the new
+- `make check` on a clean tree at `811c711` (the final code): PASS, 14,783 collected, 14,782
+  passed, 1 skipped, 0 failed. (An earlier run failed `test_the_deploy_command_runs_exactly_its_commands` on the new
   `git ls-tree`; that is the guard change described earlier.)
 - `ruff format`, `ruff check`, and `pyright` on the changed files: clean.
 - `code-standards risk --repo .`: `normal`.
@@ -104,19 +115,22 @@ I didn't change that flow.
 
 ### Mutation checks
 
-I applied each mutation to a scratch copy of the file, ran the new tests with `__pycache__`
-cleared, and restored the file. Six code mutations were rerun after the refactor. All seven were
-killed and none survived.
+A script mutated each file in place, cleared `__pycache__`, ran the new tests, and restored the
+file from its in-memory original. The final run covers all nine mutations against the final tests,
+M1, M5, and M8 at `811c711`. All nine are killed. M8 survived one earlier run, because the fixture's
+checkout always equalled `origin/main`. I added the unpushed-commit step, and it is now killed.
 
 | Mutation | Killed by |
 |---|---|
-| M1 `registered_lanes` ignores the allowlist | `..._registers_a_broker_lane_without_a_token_entry`, `..._unreadable_allowlist_at_main_is_refused` |
-| M2 unknown allowlist lane accepted | `test_an_allowlist_table_for_an_unknown_lane_is_refused` |
+| M1 `registered_lanes` ignores the allowlist | `..._registers_a_broker_lane_without_a_token_entry`, `..._unreadable_allowlist_at_main_is_refused`, `..._for_an_unknown_lane_is_refused` |
+| M2 `allowlisted_lanes` accepts an unknown lane | `test_an_allowlist_table_for_an_unknown_lane_is_refused` |
+| M2b `registered_lanes` bypasses `allowlisted_lanes` | `test_an_allowlist_table_for_an_unknown_lane_is_refused` |
 | M3 a lane in both sources refused as "more than one token entry" | `test_a_lane_with_a_token_entry_and_a_table_is_registered_once` |
 | M4 an `AllowlistError` swallowed as `{}` | `test_an_unreadable_allowlist_at_main_is_refused` |
 | M5 a missing allowlist not tolerated (no `ls-tree` probe) | `..._registers_a_broker_lane_without_a_token_entry`, plus two existing lane-phase tests |
 | M6 a table added for `execution-watch`, whose compose maps a token | `test_the_allowlists_tables_are_exactly_the_broker_lanes_composes` |
-| M7 the `change-window` table deleted (broker compose without a table) | `test_the_allowlists_tables_are_exactly_the_broker_lanes_composes` (assertion: extra `change-window` on the compose side) |
+| M7 the `change-window` table deleted (broker compose without a table) | `test_the_repositorys_registry_and_allowlist_register_seventeen_lanes`, `test_the_allowlists_tables_are_exactly_the_broker_lanes_composes` (assertion: extra `change-window` on the compose side) |
+| M8 registration reads the allowlist at `HEAD`, not `origin/main` | `..._registers_a_broker_lane_without_a_token_entry` |
 
 ### Token-shape grep
 
@@ -147,7 +161,10 @@ hold no UUIDs.
 - If a later PR adds an allowlist table for a lane before `LANE_CHECKS` knows it, every release
   is refused until that is fixed. This is the same as a token row for an unknown lane, and
   requirement 2 asks for it. Land the `LANE_CHECKS` entry first, or in the same PR.
-- After this lands, the first production `prepare` lag-checks the four broker lanes. Any of them
+- `deploy-mode.toml` at `origin/main` is `mode = "development"`, so the next release skips the lag
+  check. `finish` still prints the broker lanes' follow commands, because `lanes_to_follow` doesn't
+  read the mode.
+- Once the mode is production, the first `prepare` lag-checks the four broker lanes. Any of them
   whose last passed run isn't at the served commit refuses the release until it follows the
   served tag.
 
