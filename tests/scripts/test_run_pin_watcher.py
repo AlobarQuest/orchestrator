@@ -353,10 +353,10 @@ def test_a_socket_variable_naming_no_socket_refuses_and_reads_nothing(tmp_path: 
 
 
 def _brokered(
-    tmp_path: Path, socket_path: Path, *args: str, **fake: str | None
+    tmp_path: Path, socket_path: Path, *args: str
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
-    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake)
+    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path))
 
 
 def _served() -> dict[str, str | None]:
