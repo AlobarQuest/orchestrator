@@ -13,9 +13,9 @@
 #
 # EXIT CODES, the whole interface a scheduled run has:
 #   0  the pass ran.
-#   1  the lane could not do its job: no lane socket or token, a missing credential, an unusable state directory, alert-hub
-#      refusing a send, a refused --seed, or a missing known-subjects file (which also raises
-#      `execution-watch-unread`).
+#   1  the lane could not do its job: no lane socket or token, a missing credential, an unusable
+#      state directory, alert-hub refusing a send, a refused --seed, or a missing known-subjects
+#      file (which also raises `execution-watch-unread`).
 #   2  something was found: the orchestrator could not be read, so every remembered key was held.
 #      This is the lane's FINDING code: the check answers whether the lane is alive, and an orchestrator deploy
 #      must not page; `execution-watch-unread` is the page, after two hours.

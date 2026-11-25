@@ -78,7 +78,8 @@ fi
 # other non-zero code is the tool failing (1) or not running at all (126, 127, 137), and is passed
 # through verbatim.
 REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$LANDING_LEDGER_TOKEN" \
-  env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
+  env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+  "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
 if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
   echo "the ledger's repositories could not be derived: sds_scope exited $scope_rc" >&2
@@ -96,10 +97,10 @@ done <<< "$REPOSITORIES"
 # THE GITHUB TOKEN IS MINTED HERE, after the scope, because the mint names the
 # scoped repositories: so an unreadable scope (exit 3 above) mints nothing. The App's key goes from
 # the BWS read straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a
-# variable, an argument or a file, and the mint runs without the lane's token or the socket's marker. The four permissions
-# are what the ledger's GET calls use (`src/landing_ledger/github.py`): the repository, branch,
-# commits and gate file (`metadata`, `contents`), pull requests (`pull_requests`), and workflow
-# runs, jobs and attempts (`actions`).
+# variable, an argument or a file, and the mint runs without the lane's token or the socket's
+# marker. The four permissions are what the ledger's GET calls use (`src/landing_ledger/github.py`):
+# the repository, branch, commits and gate file (`metadata`, `contents`), pull requests
+# (`pull_requests`), and workflow runs, jobs and attempts (`actions`).
 # Any preset value is replaced, so the pass runs only on the token it minted.
 LANDING_LEDGER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
   | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \

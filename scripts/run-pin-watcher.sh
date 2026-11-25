@@ -109,7 +109,8 @@ fi
 # the day reads as incomplete rather than clean. Any other non-zero code is the tool failing (1)
 # or not running at all (126, 127, 137), and is passed through verbatim.
 REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$ORCHESTRATOR_API_TOKEN" \
-  env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
+  env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+  "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
 if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
   echo "the watcher's repositories could not be derived: sds_scope exited $scope_rc" >&2
@@ -127,11 +128,11 @@ done <<< "$REPOSITORIES"
 # THE GITHUB TOKEN IS MINTED EACH PASS, a dry run included, after the derivation, because the
 # mint names its repositories. The App's key goes from the BWS read straight to the mint's stdin
 # in its stored form, base64 of the PEM; it is never in a variable, an argument or a file, and
-# the mint runs without the lane's token or the socket's marker. The two permissions are what the watcher's GET calls
-# use (`src/pin_watcher/github.py`): the recommendation, each caller file, a compare and a commit
-# (`contents`), and each repository and each owner's listing (`metadata`). Members in more than
-# one owner make the mint refuse, which is a failed mint here (exit 1). Any preset value is
-# replaced, so the pass runs only on the token it minted.
+# the mint runs without the lane's token or the socket's marker. The two permissions are what the
+# watcher's GET calls use (`src/pin_watcher/github.py`): the recommendation, each caller file, a
+# compare and a commit (`contents`), and each repository and each owner's listing (`metadata`).
+# Members in more than one owner make the mint refuse, which is a failed mint here (exit 1). Any
+# preset value is replaced, so the pass runs only on the token it minted.
 PIN_WATCHER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
   | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
       --app-id "$READ_APP_ID" "${TARGETS[@]}" \
