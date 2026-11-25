@@ -344,13 +344,23 @@ as the revoke's precondition.
 
 ### Registered lanes and the lane-token matcher
 
-A lane is registered while this repository's `.cred-consumers.toml` at `origin/main` holds its
-token entry. The matcher (`lanes_in_registry`) takes any `[[credential.consumer]]` with
-`kind = "coolify-env"`, `resource_type = "service"` and `key = "<LANE>_BWS_ACCESS_TOKEN"`, and
-reads the lane as `<LANE>` lower-cased with `_` as `-` (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is
-`execution-watch`). It refuses a key that names no lane the command knows, and two entries for one
-lane. Removing a lane's entry, the last step of "Rollback for one lane", drops the lane from
-`prepare`'s check; its run files remain.
+A lane is registered while, at `origin/main`, this repository's `.cred-consumers.toml` holds its
+token entry or the secrets broker's allowlist (`lanes/secrets-broker/allowlist.toml`) holds its
+table (`registered_lanes`; ADR-0055 Amendment 32 item 4). A broker lane has no token entry, so its
+table registers it; a lane with both is registered once. The matcher (`lanes_in_registry`) takes
+any `[[credential.consumer]]` with `kind = "coolify-env"`, `resource_type = "service"` and
+`key = "<LANE>_BWS_ACCESS_TOKEN"`, and reads the lane as `<LANE>` lower-cased with `_` as `-`
+(`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is `execution-watch`). It refuses a key that names no lane the
+command knows, and two entries for one lane. `_allowlist_at` reads the allowlist with the
+broker's own parser, as the lane phases do: an unreadable allowlist is refused, and a missing file
+registers no broker lane. `allowlisted_lanes` refuses a table for a lane the command doesn't know.
+
+Removing a token lane's entry, the last step of "Rollback for one lane", drops the lane from
+`prepare`'s check; its run files remain. Removing a broker lane's table drops it the same way, and
+the broker refuses the lane's reads once a release carries the change. A table and a broker
+compose come and go together: `test_the_allowlists_tables_are_exactly_the_broker_lanes_composes`
+fails while a broker compose has no table or a table's compose maps a token. A lane with both a
+token entry and a table stays registered until both are gone.
 
 `execution-watch`'s tracked files (`lanes/execution-watch/compose.yaml` and `crontab`) don't
 register it: its token entry lands with its cut-over. Its compose names

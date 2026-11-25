@@ -1305,9 +1305,20 @@ def lane_secrets(text: str, lane: str) -> list[str]:
     return found
 
 
+def allowlisted_lanes(allowlist: dict[str, frozenset[str]]) -> set[str]:
+    """The lanes the secrets broker's allowlist has a table for: each is a broker lane, which
+    has no token entry (ADR-0055 a32 item 4)."""
+    unknown = sorted(set(allowlist) - LANES)
+    if unknown:
+        raise Refused(f"{BROKER_ALLOWLIST} at main names unknown lanes {unknown}")
+    return set(allowlist)
+
+
 def registered_lanes(world: World) -> set[str]:
-    """Each lane the release hold covers: the registry's at `origin/main`."""
-    return lanes_in_registry(_git(world, "show", f"origin/main:{CRED_CONSUMERS}"))
+    """Each lane the release hold covers: by its token entry in the registry, or by its table in
+    the secrets broker's allowlist, both at `origin/main`."""
+    tokens = lanes_in_registry(_git(world, "show", f"origin/main:{CRED_CONSUMERS}"))
+    return tokens | allowlisted_lanes(_allowlist_at(world, "origin/main"))
 
 
 def _recorded_lanes(world: World) -> list[str]:
@@ -1562,6 +1573,11 @@ def _broker_allowlist(
     one names no broker lane, so that compose is refused as a lane with no token is."""
     if TOKEN_VARIABLE in _environment(service):
         return {}
+    return _allowlist_at(world, commit)
+
+
+def _allowlist_at(world: World, commit: str) -> dict[str, frozenset[str]]:
+    """The secrets broker's allowlist at `commit`; a commit without one names no broker lane."""
     # Only a missing file means "no broker lane"; any other git failure is refused as itself.
     if not _git(world, "ls-tree", "--name-only", commit, "--", BROKER_ALLOWLIST).strip():
         return {}
