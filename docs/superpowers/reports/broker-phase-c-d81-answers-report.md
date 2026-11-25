@@ -106,16 +106,16 @@ Fix round 1 of 2 (worker W-310), on HQ's Opus whole-branch review of `a22961e0`.
 `a22961e0` had no later commit; the fix is one fast-forward commit. Line numbers are in the fixed
 file.
 
-1. **"What it grants" (lines 4994-4997):** "Seventeen of the 18 …", "isn't a gate step until …"
+1. **"What it grants" (lines 4990-4994):** "Seventeen of the 18 …", "isn't a gate step until …"
    and "Each Open item stays Devon's decision" are replaced: all 18 grants are gate steps, the
    append password one under D-81 (4) A; 6 to 9, 12 and 14 are D-81's; 10, 11 and 13 are HQ's
    under build-mode rule 2 and add no grant. **Status line (lines 4594-4596):** stays
    `Proposed (2026-11-24)`, and now says D-81 answers 6 to 9, 12 and 14, HQ settles 11 and 13, and
    item 10 stays open until HQ settles it.
-2. **Answers, Open item 13 (lines 4939-4941):** the false "pull request in review" is replaced by
+2. **Answers, Open item 13 (lines 4936-4938):** the false "pull request in review" is replaced by
    the handoff's text: an orchestrator code change on the branch
    `hq/broker-registration-allowlist`, which lands before batch 1.
-3. **Answers, Open item 11 (lines 4942-4944):** states recommendation 8 in full (name, BWS UUID,
+3. **Answers, Open item 11 (lines 4939-4941):** states recommendation 8 in full (name, BWS UUID,
    reader, owning repository in HQ's next handoff; a worker registers each) and that only the
    procedure is settled, the secrets not yet named.
 4. **Item markers (lines 4883 and 4893):** items 11 and 13 read `**Settled by HQ:** see Answers
@@ -123,7 +123,7 @@ file.
 5. **"Passages it governs" (lines 5015, 5017, 5022):** amendment 30 item 8 adds "answered by D-81
    (1) A and (2) B"; "Phases", C adds "out of Phase C under D-81 (7) B"; amendment 25 item 3 and
    D-43 B is "Amended by D-81 (4) A and (5) A …; the grant stays a gate step."
-6. **"Phase C is done when", the unlock tier (lines 4958-4959):** replaced with the handoff's
+6. **"Phase C is done when", the unlock tier (lines 4955-4956):** replaced with the handoff's
    sentence; the self-contradiction is gone.
 
 Nothing else changed. The two Concerns in the round-0 report are resolved by items 1 and 4.
