@@ -77,6 +77,8 @@ None of them blocks this docs pull request.
 - `docs/superpowers/reports/coolify-token-adapter-adr-report.md`: this report.
 - `docs/superpowers/reports/coolify-token-adapter-adr-question.md`: the five open items.
 
+Pull request: #815 (https://github.com/AlobarQuest/orchestrator/pull/815), opened against `main` and not merged.
+
 ## Self-review
 
 - I made no mutating call. The calls I made were `coolify_version`, two `coolify_search_docs`
