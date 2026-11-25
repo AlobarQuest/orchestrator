@@ -892,7 +892,9 @@ def _publish_allowlist(lanes: Lanes, text: str) -> None:
 
 def test_an_allowlist_table_registers_a_broker_lane_without_a_token_entry(lanes: Lanes) -> None:
     assert deploy.registered_lanes(lanes.world()) == set()  # no allowlist file: no broker lane
-    _publish_allowlist(lanes, "[lanes]\n" + _table("estate-landing"))
+    _commit(lanes.work, {deploy.BROKER_ALLOWLIST: "[lanes]\n" + _table("estate-landing")}, "a")
+    assert deploy.registered_lanes(lanes.world()) == set()  # read at origin/main, not the checkout
+    _git(lanes.work, "push", "-q", "origin", "main")
     assert deploy.registered_lanes(lanes.world()) == {"estate-landing"}
 
 
@@ -906,9 +908,10 @@ def test_an_unreadable_allowlist_at_main_is_refused(lanes: Lanes) -> None:
             deploy.registered_lanes(lanes.world())
 
 
-def test_an_allowlist_table_for_an_unknown_lane_is_refused() -> None:
+def test_an_allowlist_table_for_an_unknown_lane_is_refused(lanes: Lanes) -> None:
+    _publish_allowlist(lanes, "[lanes]\n" + _table("no-such-lane") + _table("bump-driver"))
     with pytest.raises(deploy.Refused, match=r"names unknown lanes \['no-such-lane'\]"):
-        deploy.allowlisted_lanes({"no-such-lane": frozenset(), "bump-driver": frozenset()})
+        deploy.registered_lanes(lanes.world())
 
 
 def test_a_lane_with_a_token_entry_and_a_table_is_registered_once(lanes: Lanes) -> None:
