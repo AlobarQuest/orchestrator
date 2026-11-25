@@ -6,7 +6,7 @@ Handoff: `sds-hq/state/handoffs/broker-registration-allowlist.md` (ADR-0055 Amen
 Open item 13 option A). Worker W-308. Branch `hq/broker-registration-allowlist`, based on
 `origin/main` at `3675d24f`, which had not moved when work started.
 
-PR: PR_URL (head `PR_HEAD`). Not merged.
+PR: https://github.com/AlobarQuest/orchestrator/pull/812 (code and tests at head `62407b875d48a679e3cdabf31332e168d4fdb3a9`; this report's own update commit follows it). Not merged.
 
 ## What I built
 
