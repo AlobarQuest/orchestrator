@@ -5022,3 +5022,314 @@ Line numbers are at `5ae929a9`. This amendment edits none of them.
 | Amendment 25 item 3, the accounts that read the factory-events secrets (lines 3641-3655), and D-43 B's append holders (amendment 24 item 4, lines 3393-3404) | Amended by D-81 (4) A and (5) A: the broker becomes one more append holder (bump proposer only) and the carrier's read holder in place of the work-carrier lane account; the grant stays a gate step. |
 | `docs/operations/secrets-broker.md`, "Add a lane" (lines 57-91) | Stands as each lane's template (item 4). |
 | `docs/operations/secrets-broker.md`, "What the broker doesn't change" (lines 138-142) | Each batch's pull request narrows it to the lanes still on a token. |
+
+## Amendment 33 — A rotation adapter for Coolify API tokens: a person mints and revokes, the executor proves (2026-11-24)
+
+**Status: Proposed (2026-11-24).** Accepted on merge, as amendment 31 is, except the items marked
+"Open, for Devon", which stay open until he answers. **Relates to:** amendment 32 item 1 ("The
+missing adapters"), amendment 1 (the Coolify measurements and decision), amendment 15 (a type is
+only its provider), amendment 19 (lane tokens and the inbox), amendment 29 (the loaded
+fingerprint) and amendment 30 (the lane secrets broker).
+
+Amendment 32 item 1 puts the design's six missing adapters in Phase C and says each is "its own
+amendment, which states the provider's API and the adapter's proof" (lines 4651-4664; every line
+number in this amendment is at `7af40971` unless it names another file or commit). This amendment
+covers the first class, `coolify-api-token`. It changes nothing that runs: no registry row,
+adapter, type, compose, launcher, grant or package. The code pull request that builds the adapter
+cites it.
+
+### Context
+
+#### The three rows
+
+Each is read from `.cred-consumers.toml` at `7af40971`. None is `rotated_by_sds`, so each falls to
+the manual checklist (`src/rotation_worker/registry.py`, line 57), and
+`tests/architecture/test_rotation_agreement.py` (line 31) lists the class in `UNTYPED`, the
+classes the SDS deliberately has no type for.
+
+| Row (lines) | Scopes | Keeper (BWS project) | Consumers | Fingerprint recorded |
+|---|---|---|---|---|
+| `coolify-estate-lander-token` (622-647) | `read`, `write`, `deploy`; never `read:sensitive` (probed in-process 2026-10-30, the row's comment) | `f9f59233-…`, `COOLIFY_TOKEN_SDS_ESTATE_LANDER`, in `SDS Operator` | `runtime-fetch` by `scripts/run-estate-landing.sh`, on `--submit` passes only, not fatal if unreadable; in `sds-lane-estate-landing` through the broker (a Phase B lane, #761). Healthchecks check `sds-estate-landing`, pinged every pass. The note also names a Mac path, with the narrow `sds-operator` identity | Yes: `fingerprint_sha256_8 = "594d2c0d"`, 8 hex characters, not the executor's 16-character prefix and length (`rotation_worker/values.py`, `PREFIX_LENGTH`) |
+| `coolify-revision-watcher-read-token` (649-670) | `read` only; never `read:sensitive` (Devon, HQ gate G-62, 2026-11-15) | `0bf066e9-…`, `prod-coolify-read-token`, in `Ops / Platform` | `runtime-fetch` by `scripts/run-revision-watcher.sh`, every pass, as `REVISION_WATCHER_PLATFORM_TOKEN`; in its container with the lane's own BWS token until Phase C batch 4 moves it onto the broker (amendment 32, "Proposed batches and order"). Check `sds-revision-watcher`. The note also names a Mac path, with the broad identity | No: no session has read the value |
+| `coolify-change-window-token` (1784-1809) | `read`, `write`, `deploy`, team-wide; never `read:sensitive` (Devon, HQ gate G-88, 2026-11-22) | `3d41395a-…`, `change-window-coolify-token`, in `Rotation / Keepers` | `runtime-fetch` by `scripts/run-change-window.sh`, on `--submit` passes only (`lanes/change-window/crontab`, line 10: daily at 04:00), and fatal if unreadable (`run-change-window.sh`, lines 129-130); in `sds-lane-change-window` through the broker (#784). Check `Change Manager OPs Check` | No |
+
+No row has a `coolify-env`, `coolify-env-held` or Actions-secret destination: each token's only
+copies are its keeper and what a lane fetches per pass. `launchctl list` on `operator-mac`
+(2026-11-24) shows no estate-landing or revision-watcher job, so the two Mac paths the notes name
+have no scheduled reader there. The code pull request settles them (item 5).
+
+The executor's own production Coolify token, in `Rotation / Coolify` (decision 4, lines 226-230;
+the asset table, line 356), isn't one of these rows. It stays in the hand-rotated set, and this
+amendment doesn't change that.
+
+#### The provider's API
+
+Production Coolify runs `4.0.0-beta.473` (infraops `coolify_version`, 2026-11-24). Everything in
+this subsection is a reading of Coolify's source at tag `v4.0.0-beta.473` (commit
+`57ea0764b8f0a491fd1d30bedc5cbe281744b36c`), not a measurement, as amendment 1 labels source
+readings.
+
+- **No REST route creates, lists or revokes an API token.** `routes/api.php` has no token route.
+  Its two routes that sound like one are other things: `/security/keys` (lines 62-67) manages SSH
+  private keys, and `/cloud-tokens` (lines 69-74) manages cloud-provider tokens. The API
+  controllers at the tag (`app/Http/Controllers/Api/`) include no token controller.
+- **A token is created and revoked only in the web UI**, by a signed-in user, through the Livewire
+  component `app/Livewire/Security/ApiTokens.php`: `addNewToken` calls Sanctum's `createToken`
+  with a description and the chosen abilities (lines 77-100), and `revoke` deletes one of the
+  signed-in user's own tokens (lines 102-112). Its abilities are `read`, `read:sensitive`,
+  `write`, `deploy` and `root` (lines 44-75). The component has no expiry and no per-resource
+  access, which agrees with amendment 1's "no token can be limited to particular applications"
+  (line 618).
+- **Abilities are checked before the handler.** Each route names `api.ability:<ability>`
+  (`app/Http/Middleware/ApiAbility.php`): a token without it gets 403
+  `Missing required permissions: <ability>`, and an unknown or revoked token gets 401
+  `Unauthenticated.`. `root` passes every check. `read:sensitive` is not checked by a route; it
+  sets the request attribute `can_read_sensitive` (`app/Http/Middleware/ApiSensitiveData.php`),
+  which handlers read to include or omit values. Amendment 1 question 1 measured that difference on
+  dev: a `read` + `read:sensitive` token's envs response carries `value` and `real_value`, and a
+  token without `read:sensitive` gets neither field (line 540).
+
+Coolify's documentation at its repository's head (`coollabsio/coolify-docs`, commit
+`7e97a720fbef2d6e5b9928d0a246c3035c0efbba`, 2026-11-24,
+`content/docs/core/security/credentials/api-tokens.mdx`) describes a later version: tokens with an expiry, resource-limited access, a `delete` permission,
+**Pause** and **Roll**. None of that is in the deployed component, and this amendment relies on
+none of it. A Coolify upgrade that brings it is its own change.
+
+So the API can't mint, and the shape is the existing one for a provider without a mint or revoke
+API: a person mints into the inbox, the executor proves and stores, and a person revokes after the
+executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
+`Capabilities(machine_mint=False, machine_revoke=False)`, `types.py` line 39).
+
+### Decision
+
+1. **The type.** `coolify-api-token` becomes a credential type with
+   `Capabilities(machine_mint=False, machine_revoke=False)`: not hosted, with an overlap, no issue
+   plan, no `env_at_distribute`. Its keepers are in the BWS store (`store_kind` `bws-secret`), so
+   the VPS host executor takes its units. `plans.derive` (amendment 15) then gives, from each row's
+   destinations (a keeper and `runtime-fetch` readers, so no `distribute`), the same plan
+   Bitbucket's is:
+   1. **mint** (person): mint and stage. Devon creates the token in Coolify's UI with the row's
+      abilities, under the row's description, and pastes it into the inbox
+      (`Rotation / Inbox`; `inbox.pasted`).
+   2. **store** (machine): `verify_new`, then `store`, which writes the keeper and reads it back.
+   3. **verify** (machine): `verify_consumers`. The unit waits unclaimed until every
+      `runtime-fetch` reader has run since the keeper's revision date (`worker._gates_retire`,
+      `worker.py` line 954), and its completion sends the revoke alert.
+   4. **revoke** (person): Devon revokes the old token in Coolify's UI.
+   5. **confirm** (machine): `confirm_dead`.
+
+   Devon still makes two browser acts per rotation, as every type without a mint API does. What
+   leaves his hands is the keeper write, the proofs and the timing of the revoke.
+2. **The probe and its known-bad control.** `probe` sends `GET /api/v1/version` (`routes/api.php`
+   line 43, `api.ability:read`), which every row's token may call: live is exactly 200. The control
+   is a random value of the token's shape, a numeric id, `|` and a random secret, which Sanctum
+   refuses with 401 before any handler runs. `dead_statuses` is `{401}`. The control and the
+   subject go through the same probe, so a refused control proves the 200 came from the token
+   (amendment 5's rule). `probe_before_revoke` is the same request.
+3. **The identity check.** `same_identity` holds when both values answer 200 and
+   `GET /api/v1/teams/current` (line 46) names the same team id for each. That's the account check
+   only. All three rows' tokens are in the one team, so it can't tell them apart, and a value the
+   inbox binds must also pass item 4.
+4. **The scope check, in `verify_new`.** A token's abilities can't be read back through the API, so
+   the new value is probed against routes whose ability middleware answers before the handler. A
+   request the token may make reaches a handler that refuses it without writing; a request it may
+   not make gets 403 `Missing required permissions: …`. Each row declares its abilities in a new
+   field (item 5), and `verify_new` refuses a value whose answers don't match the declaration:
+   - **`write`:** `PATCH /api/v1/projects/<random UUID>` with a body holding only a field the
+     handler doesn't allow. With `write`, `update_project` answers 422 `Validation failed.` before
+     it looks up a project (`ProjectController.php`, lines 341-390), so it writes nothing even if
+     the UUID existed. Without `write`, 403.
+   - **`deploy`:** `GET /api/v1/deploy` with no `uuid` and no `tag`. With `deploy`, `deploy` answers
+     400 `You must provide uuid or tag.` (`DeployController.php`, lines 351-385) and deploys
+     nothing.
+     Without `deploy`, 403.
+   - **`read:sensitive` absent:** no route answers differently by status, so this needs a read whose
+     response body differs. How is Open item 13.
+
+   For the revision watcher's token, both probes must answer 403. That holds the read-only token's
+   scope: a mint with `write` or `deploy` never reaches its keeper. These answers are read from
+   source and are unmeasured; the code pull request measures them on `dev-coolify` first (Open item
+   14). The adapter's confined client permits exactly the requests in items 2 to 4, and nothing
+   else (`estate_clients.confined.ConfinedClient`, as `bitbucket.py` builds it).
+5. **The consumers' proof, and rule R10.** Every consumer of these three rows fetches the keeper
+   fresh on each pass, and none holds the value at rest:
+   - The broker caches and writes nothing; each read is a new `bws` read (amendment 30 item 4,
+     lines 4386-4389; `scripts/secrets_broker.py`, line 18).
+   - The revision watcher, until batch 4, reads with its own lane token through `bws` each pass
+     (`sds_bws_value`), and nothing in its container keeps the value between passes.
+
+   So a consumer can't stay on the old value past a pass that started after the keeper changed.
+   Amendment 29's `loaded` fingerprint proves a value a container loaded at start and keeps. These
+   consumers keep none, so it doesn't apply, and no helper target is named. The proof is the
+   existing one for a scheduled `runtime-fetch` reader ("How each consumer kind is verified", line
+   342): the keeper readback in `store`, then each row's `healthchecks_check` reporting a run that
+   began after the keeper's revision date, which the `verify` unit waits on before Devon is asked to
+   revoke. That meets R10 and Infra Brain 1032 by machine evidence: the consumer set is the
+   registry's, the readers are scheduled, and no revoke alert is sent before each has run.
+
+   What a green ping proves differs per row, and the code pull request's tests state each:
+   - **Change window:** the read is fatal, so a green `--submit` pass read the new value. The lane
+     runs daily at 04:00, so the `verify` unit can wait up to a day.
+   - **Revision watcher:** the read is every pass. A green pass read the new value.
+   - **Estate landing:** the read is not fatal, and the check is pinged every pass. A green pass
+     after the store proves that a pass began after the store, so any value it read was the new
+     one, but not that the read succeeded. That isn't a revoke risk, because no consumer can be
+     left on the old value. It is a gap in proving the lander can use the token: the lander uses
+     it only to re-point or restore a landing, which `verify_new`'s `write` and `deploy` probes
+     cover for the value itself. **Carried gap:** the lander's read is proven only by the broker's
+     per-request log line (lane, UUID, outcome), which the executor can't read. Open item 15 names
+     the options. The adapter's code pull request carries the gap until that item is answered.
+   - **The Mac paths in two rows' notes:** no scheduled job reads them (Context). A reader run only
+     when invoked is a human-attested exception ("How each consumer kind is verified"), which a
+     derived plan refuses (`checks._check_runtime_fetch_verifiable`, `checks.py` line 311). The
+     code pull request removes each from its row's note after confirming it has no reader, or the
+     row stays out of the type. **Carried gap**, verified by that pull request.
+6. **The revoke and confirm-dead.** Devon revokes the old token in Coolify's UI after the `verify`
+   unit's alert. `confirm_dead` probes the old value and passes on 401 beside the control's 401
+   and a 200 from the new value. No other credential is needed: the old value proves its own
+   revocation. A leak still revokes first (amendment 19 item 10, D-26; Infra Brain 1032), so the
+   adapter sets `revoke_may_come_first`, as the lane-token adapter does: the probe before the
+   revoke takes either answer.
+7. **The keepers' projects.** The `store` step writes the keeper, so the keeper must be in a
+   project where the executor's identity can write. The executor's reach, from the freshest
+   sources:
+
+   | Project | Row whose keeper is there | Executor reads | Executor writes | Source |
+   |---|---|---|---|---|
+   | `Rotation / Keepers` | `coolify-change-window-token` | Yes | Yes | `docs/operations/rotation-executor.md`, line 677; decision 4 and amendment 6 |
+   | `SDS Operator` | `coolify-estate-lander-token` | No | No | Decision 4, lines 215-217 ("not `SDS Operator`"); `rotation-executor.md`, line 677 |
+   | `Ops / Platform` | `coolify-revision-watcher-read-token` | Only the Healthchecks Management key's secret (`51509d5e-…`), by direct grant (amendment 23, D-36) | No | `rotation-executor.md`, line 677; amendment 23, lines 3239-3248 |
+
+   So the change window's row can rotate as soon as the adapter is built, and the other two need
+   their keepers moved, or a grant, first. Each is Devon's act (Open item 11). A project grant on
+   `SDS Operator` is ruled out: the SYSTEM and VERIFIER bearers are there, and decision 4 keeps them
+   outside the executor's reach (lines 223-225). Moving a keeper into `Rotation / Keepers` widens
+   what the executor's identity reads by two Coolify tokens. Its own Coolify token in
+   `Rotation / Coolify` already holds every ability both have, so the widening adds no Coolify
+   ability.
+8. **No new network path.** The adapter calls production Coolify at the executor's existing
+   `coolify_url`, the tailnet address (`rotation_worker/coolify.py`, lines 16-17 and 35-37;
+   amendment 29 item 1), from the host its own Coolify token already calls from. It sends the consumer tokens only
+   there.
+9. **Logging and failure.** The adapter logs nothing of a value: evidence carries only fingerprints
+   (the sha256 prefix and length, `rotation_worker/values.py`) through `contract.py`, as every
+   adapter's does. A probe's transport failure returns no answer, so the step is indeterminate and
+   fails the unit, which a requeue retries (amendment 5). An unexpected status fails `verify_new`
+   with the status named. Nothing is swallowed.
+10. **What the code pull request changes.** Named here, none changed by this amendment:
+    - `src/rotation_worker/adapters/coolify_api_token.py`, the provider: `NAME` and `PROVIDER`
+      (`coolify`, the rows' `provider`), the probes in items 2 to 4, `check_row` refusing a row
+      without its declared abilities, and `mint`, `host`, `consumer_loaded` and `revoke` raising
+      `ContractError`, as `bitbucket.py` does.
+    - `src/rotation_worker/adapters/__init__.py`: the import and an `ADAPTERS` entry with
+      `capabilities=TYPES[...]`, `check_row` and `revoke_may_come_first=True`.
+    - `src/rotation_worker/types.py`: a `TYPES` entry with the capabilities in item 1, and
+      `CLASS_TYPES["coolify-api-token"]`.
+    - `tests/architecture/test_rotation_agreement.py`: `coolify-api-token` leaves `UNTYPED`.
+    - `tests/architecture/test_rotation_edges.py`: a `PROVIDER_EDGES` entry for the adapter's
+      reach.
+    - `tests/architecture/test_wsp21_invariant_scan.py`: the module in `OUTBOUND_ALLOWLIST`, with
+      its reason, beside `bitbucket.py` (line 835).
+    - `layers.toml`, if no pattern there already names the new module.
+    - `src/orchestrator/factory-policy.toml`: the adapter name in the `rotation_adapters` lists
+      that name `bitbucket` (lines 464 and 575).
+    - `.cred-consumers.toml`: each row's declared abilities field, the Mac notes settled
+      (item 5), and `rotated_by_sds = true` with a `rotate_requested` date only for a row whose
+      keeper the executor can write (item 7) and whose Open items are answered. Another worker
+      edits that file, so the pull request rebases on it.
+    - intent-packages: its `approval-policy.toml`, wherever it lists the adapters by name as it
+      lists `bitbucket`, and one `rotation-<row id>` package per row the rotation proposer
+      generates.
+    - `docs/operations/rotation-executor.md`: a section for the type.
+11. **Open, for Devon: the keepers of the estate lander's and the revision watcher's tokens.** The
+    executor can't write either (item 7). Options:
+    - **A.** Move each keeper into `Rotation / Keepers` (his act: the move needs write on both
+      projects, amendment 1 question 5), after each consumer account is given a single-secret read
+      grant there and proven to read it, as decision 4 requires. For the estate lander that's
+      `lane-secrets-broker`, which reads it today through its `SDS Operator` project grant. For the
+      revision watcher, recommended after Phase C's revoke sitting, when its only reader is the
+      broker: amendment 32 item 3's planned grant on `0bf066e9-…` in `Ops / Platform` is then given
+      in `Rotation / Keepers` instead.
+    - **B.** A direct read and write grant for `rotation-executor` on each secret where it is. That
+      gives the executor its first write outside the rotation projects.
+    - **C.** Leave both rows manual; only the change window's rotates.
+
+    **Recommendation: A**, since decision 4 already says every rotated keeper moves to
+    `Rotation / Keepers` and A adds no new kind of reach. **Blocks:** those two rows'
+    `rotated_by_sds`.
+12. **Open, for Devon: the executor creating or revoking Coolify tokens itself.** The deployed API
+    has no route for it (Context). The only route is the web UI's Livewire component, which needs a
+    signed-in user's session: Devon's, or a new Coolify user's. Options:
+    - **A.** No. A person mints and revokes, as item 1 plans.
+    - **B.** Give the executor a Coolify user session to drive the UI. That's token-admin reach,
+      a new identity and a credential outside any API.
+
+    **Recommendation: A.** It's re-askable if a Coolify upgrade adds a token API. **Blocks:**
+    nothing in item 1.
+13. **Open, for Devon: proving a new token lacks `read:sensitive`.** No route answers it by status
+    (item 4). Options:
+    - **A.** No machine proof. Devon's mint is the only record, and the `write` and `deploy` probes
+      still run.
+    - **B.** Read the envs of one named existing application and check that no `value` or
+      `real_value` field is present (amendment 1 question 1's discriminator). A wrong mint would
+      put that application's values in the executor's memory, never in a log.
+    - **C.** As B, against a canary application Devon creates with one variable that holds no
+      secret, used only by this probe. That's one new Coolify resource, and a wrong mint then reaches
+      nothing secret through the probe.
+
+    **Recommendation: C**, because the revision watcher's token must stay read-only and C proves
+    it without exposing a secret. A is the fallback if Devon wants no new resource. **Blocks:** the
+    adapter's `verify_new`, for the last of item 4's checks.
+14. **Open, for Devon: the measurement tokens.** Item 4's answers are read from source. Measuring
+    them on `dev-coolify` needs three throwaway tokens Devon mints there (`read`;
+    `read` + `write` + `deploy`; `read` + `read:sensitive`), stored in a BWS project the measuring
+    session reads, and revoked after the run. They are probe credentials, so they're his to mint.
+    **Recommendation:** yes, before the adapter merges, as amendment 1 measured before its
+    decision. **Blocks:** the code pull request's merge.
+15. **Open, for Devon: proving the estate lander's read** (item 5's carried gap). Options:
+    - **A.** Carry the gap. The lander's next re-point or restore is its own proof, and a failed
+      read already alerts `landing-not-pointed-back`.
+    - **B.** The executor reads the broker's log lines for the lane and UUID. That's a new reach:
+      the executor has no Docker access on the host (amendment 29 item 1).
+    - **C.** The estate-landing lane files an observation each `--submit` pass naming the token's
+      fingerprint, and the row names it as `observation_source` and `observation_subject` (the
+      existing alternative to `healthchecks_check`). That's a lane change in its own pull request.
+
+    **Recommendation: A** for the first rotation, since no consumer can stay on the old value, and
+    C if the gap is to close. **Blocks:** nothing in the change window's row.
+
+### What it grants, and nothing more
+
+Nothing. No BWS identity, project, grant or scope, no Coolify token, user or ability, no network
+path and no probe credential is added or widened. Every grant, move, resource and credential in
+Open items 11 to 15 is a gate step for Devon, named and not given. The read-only token's scope
+isn't changed, and item 4 adds the check that holds it. No endpoint is added, so the HTTPS rule for
+public FQDNs (Infra Brain 212) doesn't apply. Nothing here declares a credential exposed, and no
+rotation age changes.
+
+### Consequences
+
+- **One Coolify token can rotate once the adapter merges**: the change window's, whose keeper the
+  executor already writes. The other two wait on Open item 11.
+- **Each rotation still has two browser acts for Devon**, the mint and the revoke, because the
+  deployed Coolify has no token API. The keeper write, the proofs and the revoke's timing become the
+  executor's.
+- **The revoke follows machine evidence** for every scheduled reader, by the existing
+  `runtime-fetch` route. No helper target and no loaded-fingerprint read is added.
+- **The executor's identity reads two more Coolify tokens** if Open item 11 is answered A, with no
+  Coolify ability beyond its own token's.
+
+### Passages it governs
+
+This amendment edits none of them.
+
+| Passage | Disposition |
+|---|---|
+| Amendment 32 item 1, "The missing adapters" (lines 4651-4664) | The `coolify-api-token` class is decided here. The `github-app-private-key` and `anthropic-api-key` classes stay for their own amendments. |
+| Amendment 32 item 3, the `Ops / Platform` grant on `0bf066e9-…` (line 4747) | Stands. If Open item 11 is answered A after the revoke sitting, the grant is given in `Rotation / Keepers` instead. |
+| Amendment 32's broker row, the `SDS Operator` project grant (`.cred-consumers.toml`, line 1489) | Stands. Under Open item 11 A, the estate lander's keeper leaves the project, and the broker reads it by a single-secret grant in `Rotation / Keepers`. |
+| Decision 4, the keepers move to `Rotation / Keepers` (lines 205-217) | Applied to two more keepers, under Open item 11 A. |
+| "How each consumer kind is verified", the scheduled `runtime-fetch` row (line 342) | Stands, and is the consumers' proof (item 5). |
+| Amendment 29 item 3, a lane token's revoke waits on the loaded fingerprint | Stands for lane tokens. It doesn't apply to these rows, whose consumers keep no value (item 5). |
+| Amendment 1, the Coolify decision (lines 610-656) | Stands. Its source readings are extended by this amendment's, at the same version. |
+| `tests/architecture/test_rotation_agreement.py`, `UNTYPED` (line 31) | Changes with the code pull request (item 10). |
