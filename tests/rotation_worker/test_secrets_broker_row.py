@@ -49,6 +49,11 @@ SECRETS = frozenset(
         "0e9ebf2d-5b62-4f81-a731-b50a00e0df18",  # change-window-anthropic-key
         "71616bf5-14ba-4888-b3f8-b50a00e13ed2",  # ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW
         "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3",  # change-window-ping-url
+        # HQ gate G-100 (ADR-0055 Amendment 32, item 4): Phase C's first batch.
+        "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+        "97802aac-5a7f-45e8-8185-b4fc00cd318e",  # execution-watch-ping-url
+        "ebabdd63-2eff-4b8e-99b7-b4fd01754eae",  # landing-ledger-ping-url
+        "872684c0-899e-43b7-9c2d-b50000e88b21",  # pin-watcher-ping-url
     }
 )
 
