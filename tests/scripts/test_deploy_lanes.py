@@ -1399,6 +1399,46 @@ def test_a_tokenless_lane_that_isnt_set_up_on_the_broker_is_refused(
     assert "is no broker lane" in lanes.runs("execution-watch")[-1].reason
 
 
+@pytest.mark.parametrize(
+    ("compose", "allowlist"),
+    [
+        (BROKER_COMPOSE, OTHER_ALLOWLIST),
+        (BROKER_COMPOSE, None),
+        (BROKER_COMPOSE.replace(f"      - {BROKER_BIND}\n", ""), ALLOWLIST),
+    ],
+    ids=["not-allowlisted", "no-allowlist-file", "no-bind"],
+)
+def test_a_tag_to_a_tokenless_compose_that_isnt_a_broker_lanes_is_refused(
+    lanes: Lanes, compose: str, allowlist: str | None
+) -> None:
+    """A token lane whose compose drops its token without becoming a broker lane would start
+    with no way to read, so its `--tag` is refused at plan time as an `--add` is."""
+    lanes.added_watch()
+    sha = _broker_commit(lanes, compose, allowlist)
+    assert lanes.prepare_tag("execution-watch", sha) == EXIT_REFUSED
+    assert "is no broker lane" in lanes.runs("execution-watch")[-1].reason
+
+
+def test_a_tag_to_a_compose_mapping_another_lanes_token_is_refused(lanes: Lanes) -> None:
+    lanes.added_watch()
+    compose = WATCH_COMPOSE.replace("${EXECUTION_WATCH_BWS_", "${INERT_LANDING_BWS_")
+    sha = _broker_commit(lanes, compose, None)
+    assert lanes.prepare_tag("execution-watch", sha) == EXIT_REFUSED
+    assert "doesn't map BWS_ACCESS_TOKEN as" in lanes.runs("execution-watch")[-1].reason
+
+
+def test_a_tag_converting_a_token_lane_to_the_broker_finishes(lanes: Lanes) -> None:
+    """The allowlist table and the lane's own bind arrive in the commit the `--tag` runs."""
+    lanes.added_watch()
+    sha = _broker_commit(lanes, BROKER_COMPOSE, ALLOWLIST)
+    change = ("--tag", tag(sha))
+    assert lanes.prepare_tag("execution-watch", sha) == EXIT_OK
+    assert lanes.runs("execution-watch")[-1].brokered
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    assert lanes.finish("execution-watch", *change, *_watch_reads(sha)) == EXIT_OK
+    assert _status(lanes, "execution-watch") == ["finished", "finished"]
+
+
 # ---- the execution-watch lane's tracked files ----------------------------------------------
 
 
