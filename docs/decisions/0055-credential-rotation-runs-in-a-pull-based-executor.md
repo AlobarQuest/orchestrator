@@ -4591,8 +4591,9 @@ Line numbers are at `4d8ca873`. This amendment edits none of them.
 
 ## Amendment 32 — The lane secrets broker's Phase C: the 12 earlier lanes move and their tokens retire (2026-11-24)
 
-**Status: Proposed (2026-11-24).** Accepted on merge, as amendment 31 is, except for the items
-marked "Open, for Devon", which stay open until Devon answers them. **Relates to:** amendment 30
+**Status: Proposed (2026-11-24).** Accepted on merge, as amendment 31 is. Of the items marked
+"Open, for Devon", D-81 answers 6 to 9, 12 and 14, HQ settles 11 and 13 (see Answers), and item 10
+stays open until HQ settles it. **Relates to:** amendment 30
 (the broker; its item 8, the unlock tier; its item 10, a `--token` run on a broker lane; its
 "Phases"), amendment 29 (a lane token's revoke), amendment 19 (lane tokens and ping URLs), and
 ADR-0059's "Cut-over for one lane".
@@ -4879,7 +4880,7 @@ Three facts read from the code at `5ae929a9` shape the plan:
     **HQ's to settle:** see Answers (2026-11-24); not settled yet.
 11. **Open, for Devon: HQ's unregistered secrets.** Which secrets they are, and which repository's
     registry takes each row. **Blocks:** Phase C's close.
-    **Answered:** see Answers (2026-11-24).
+    **Settled by HQ:** see Answers (2026-11-24).
 12. **Open, for Devon: the factory-events passwords.** The design places "the factory-events
     passwords turned on" in Phase C; amendment 30's Phases list and this plan's scope don't. Both
     rows stay `rotated_by_sds = false` (amendment 24's open item FE-4). They are out of Phase C
@@ -4889,7 +4890,7 @@ Three facts read from the code at `5ae929a9` shape the plan:
 13. **Open, for Devon: how a broker lane stays registered** (item 4). It decides whether
     `prepare`'s lag check and `lanes_to_follow` cover broker lanes. **Blocks:** batch 1, through the
     registration code change in item 4.
-    **Answered:** see Answers (2026-11-24).
+    **Settled by HQ:** see Answers (2026-11-24).
 14. **Open, for Devon: the lane machine accounts at the revoke.** Whether the sitting deletes each
     lane's machine account and its grants, or revokes the tokens only. bump-proposer's lane token is
     a second token of the `bump-proposer` machine account, which also holds the Mac Keychain token
@@ -4932,10 +4933,12 @@ HQ settled three items itself under build-mode rule 2 (mechanism, not what is bu
 HQ's, not Devon's (construction-mode ruling,
 `~/docs/software-delivery-system/2026-07-30-construction-mode-ruling.md`):
 
-- **Open item 13:** A. A broker lane is registered through its allowlist table, in an orchestrator
-  pull request in review as `hq/broker-registration-allowlist`.
-- **Open item 11:** HQ lists its unregistered secrets and registers each in its owning repository's
-  `.cred-consumers.toml` (the question file's recommendation 8).
+- **Open item 13:** A. A broker lane is registered through its allowlist table, by an
+  orchestrator code change on the branch `hq/broker-registration-allowlist`, which lands before
+  batch 1.
+- **Open item 11:** HQ lists each unregistered secret (name, BWS UUID, reader, owning repository)
+  in its next handoff, and a worker registers each in that repository's `.cred-consumers.toml` (the
+  question file's recommendation 8). Only the procedure is settled; the secrets aren't named yet.
 - **Open item 10:** open, and HQ's to settle with a recorded read-proof run. It isn't settled yet.
 
 ### Phase C is done when
@@ -4949,8 +4952,8 @@ answered:
   sitting (item 5). A lane his answer keeps on its token stays on it.
 - **The revoke:** the sitting's tokens are revoked, their rows removed and their variables deleted
   (item 5): 13 if every lane moves, and 12 if Devon refuses the append grant; D-81 (4) A: 13.
-- **The unlock tier** has a mechanism Devon chose (Open item 6). D-81 (1) A: the tier is named,
-  with no mechanism, and each use stays Devon's browser act.
+- **The unlock tier** is the one Devon chose (Open item 6): D-81 (1) A, a named tier with no
+  mechanism; each use stays Devon's browser act.
 - **The broker's token** rotates by the route Devon chose (Open item 7), and its row says so. D-81
   (2) B: the row becomes `rotated_by_sds = true` when the `bws-lane-token` adapter route is built.
 - **HQ's unregistered secrets** are named and registered (Open item 11).
@@ -4985,9 +4988,10 @@ grant (Open item 9); D-81 (4) A: 13.
 ### What it grants, and nothing more
 
 Nothing. No BWS identity, project, grant, scope, network path or Coolify ability is added or
-widened. Seventeen of the 18 grants in item 3 are gate steps for Devon, named and not given; the
-append password isn't a gate step until Devon answers Open item 9. Each Open item stays Devon's
-decision. No endpoint is added, so the HTTPS rule for public FQDNs (Infra Brain 212)
+widened. All 18 grants in item 3 are gate steps for Devon, named and not given; the append
+password became one under D-81 (4) A. Open items 6 to 9, 12 and 14 are answered by D-81; Open items
+10, 11 and 13 are HQ's under build-mode rule 2 (see Answers), and their answers add no grant. No
+endpoint is added, so the HTTPS rule for public FQDNs (Infra Brain 212)
 doesn't apply. Nothing here declares a credential exposed, and no rotation age changes.
 
 ### Consequences
@@ -5008,13 +5012,13 @@ Line numbers are at `5ae929a9`. This amendment edits none of them.
 
 | Passage | Disposition |
 |---|---|
-| Amendment 30 item 8, the unlock tier (lines 4406-4410) | Stands. Its mechanism and the token's rotation are Open items 6 and 7. |
+| Amendment 30 item 8, the unlock tier (lines 4406-4410) | Stands. Its mechanism and the token's rotation are Open items 6 and 7, answered by D-81 (1) A and (2) B. |
 | Amendment 30 item 10, a `--token` run on a broker lane (lines 4415-4416) | Stands, still open (Open item 10). Item 5 doesn't use the run. |
-| Amendment 30, "Phases", C (lines 4424-4426) | Planned by this amendment, with a "done when". The factory-events passwords are Open item 12. |
+| Amendment 30, "Phases", C (lines 4424-4426) | Planned by this amendment, with a "done when". The factory-events passwords are Open item 12, out of Phase C under D-81 (7) B. |
 | Amendment 30, "Phases", B, the held packages (lines 4422-4423) | Extended by item 5: HQ holds each batch's lanes' token packages until the revoke. |
 | Amendment 29, a lane token's revoke waits on the loaded fingerprint | Stands for a reissue. A retirement has no new value, so item 5 states its own precondition. |
 | deploy.md, "Before a lane token's revoke" (lines 334-343) | Restated for a broker cut-over by item 5. The page changes with the first lane's pull request. |
 | deploy.md, "Registered lanes and the lane-token matcher" (lines 345-353) | Changes with Open item 13's answer. |
-| Amendment 25 item 3, the accounts that read the factory-events secrets (lines 3641-3655), and D-43 B's append holders (amendment 24 item 4, lines 3393-3404) | Stands. Changes only by Devon's answer to Open item 9: the broker as one more append holder, and as the carrier's read holder in place of the work-carrier lane account. |
+| Amendment 25 item 3, the accounts that read the factory-events secrets (lines 3641-3655), and D-43 B's append holders (amendment 24 item 4, lines 3393-3404) | Amended by D-81 (4) A and (5) A: the broker becomes one more append holder (bump proposer only) and the carrier's read holder in place of the work-carrier lane account; the grant stays a gate step. |
 | `docs/operations/secrets-broker.md`, "Add a lane" (lines 57-91) | Stands as each lane's template (item 4). |
 | `docs/operations/secrets-broker.md`, "What the broker doesn't change" (lines 138-142) | Each batch's pull request narrows it to the lanes still on a token. |

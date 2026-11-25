@@ -99,3 +99,56 @@ PR's head is the following commit, which adds only this PR line to the report. N
 - **Infra Brain 212 (HTTPS for public FQDNs):** no endpoint; not applicable.
 - **Construction-mode ruling:** cited by path
   (`~/docs/software-delivery-system/2026-07-30-construction-mode-ruling.md`), not restated.
+
+## Round 1
+
+Fix round 1 of 2 (worker W-310), on HQ's Opus whole-branch review of `a22961e0`. Branch head
+`a22961e0` had no later commit; the fix is one fast-forward commit. Line numbers are in the fixed
+file.
+
+1. **"What it grants" (lines 4994-4997):** "Seventeen of the 18 …", "isn't a gate step until …"
+   and "Each Open item stays Devon's decision" are replaced: all 18 grants are gate steps, the
+   append password one under D-81 (4) A; 6 to 9, 12 and 14 are D-81's; 10, 11 and 13 are HQ's
+   under build-mode rule 2 and add no grant. **Status line (lines 4594-4596):** stays
+   `Proposed (2026-11-24)`, and now says D-81 answers 6 to 9, 12 and 14, HQ settles 11 and 13, and
+   item 10 stays open until HQ settles it.
+2. **Answers, Open item 13 (lines 4939-4941):** the false "pull request in review" is replaced by
+   the handoff's text: an orchestrator code change on the branch
+   `hq/broker-registration-allowlist`, which lands before batch 1.
+3. **Answers, Open item 11 (lines 4942-4944):** states recommendation 8 in full (name, BWS UUID,
+   reader, owning repository in HQ's next handoff; a worker registers each) and that only the
+   procedure is settled, the secrets not yet named.
+4. **Item markers (lines 4883 and 4893):** items 11 and 13 read `**Settled by HQ:** see Answers
+   (2026-11-24).`; items 6 to 9, 12 and 14 keep `Answered`, and item 10's line is unchanged.
+5. **"Passages it governs" (lines 5015, 5017, 5022):** amendment 30 item 8 adds "answered by D-81
+   (1) A and (2) B"; "Phases", C adds "out of Phase C under D-81 (7) B"; amendment 25 item 3 and
+   D-43 B is "Amended by D-81 (4) A and (5) A …; the grant stays a gate step."
+6. **"Phase C is done when", the unlock tier (lines 4958-4959):** replaced with the handoff's
+   sentence; the self-contradiction is gone.
+
+Nothing else changed. The two Concerns in the round-0 report are resolved by items 1 and 4.
+
+- **New PR head:** the fix commit, pushed to `hq/broker-phase-c-d81-answers` as a fast-forward;
+  its sha is in #811's body ("Fix round 1").
+- **`make check`** against `orchestrator_test_hq_w_310`, migrated with `alembic upgrade head`:
+  exit 0, 14777 collected, 14776 passed, 1 skipped.
+- **Token-shape grep** of the round's diff (`0.` + UUID prefix, and an inline `BWS_ACCESS_TOKEN=`
+  assignment): 0 matches.
+
+### Round 1 concerns
+
+- In item 9's own text, "Their other step 2 grants … are among the 17 gate steps" still counts 17.
+  It's the Open item's original text, which round 0 kept unchanged by rule, and the Answers
+  section records the 18; I left it, as the handoff limits this round to the six items.
+
+### Standards followed (round 1)
+
+- **Code Brain 3 (structured JSON logs), 4 (never swallow an exception):** no code changes, so
+  neither applies.
+- **Code Brain 5 (never log secrets):** no secret value written; the round names a branch and
+  registry fields only.
+- **Infra Brain 591, 592, 593:** the round's diff token-shape grep found 0 matches, and no inline
+  `BWS_ACCESS_TOKEN=` assignment.
+- **Infra Brain 1032 `cred.exposure-rotate`:** no exposure is declared or changed.
+- **Infra Brain 212 (HTTPS for public FQDNs):** no endpoint; not applicable.
+- **Construction-mode ruling:** still cited by path, not restated.
