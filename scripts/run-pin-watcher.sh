@@ -20,19 +20,23 @@
 # tool and an honest finding sharing one code is a collision this estate has already paid for.
 #
 # THE ACTING PASS TELLS A PERSON: any pass without `--dry-run` (the crontab passes no arguments). It
-# fetches the `sds-bridge` alert token with the lane's token, as SDS_BRIDGE_ALERT_TOKEN, and
+# fetches the `sds-bridge` alert token like the other secrets, as SDS_BRIDGE_ALERT_TOKEN, and
 # exits 1 when it cannot read it. A `--dry-run` pass sends nothing and fetches no alert token.
 #
 # NOTHING HERE ACTS. It reads GitHub and files one observation per caller. It changes no workflow,
 # no pin and no repository; advancing a pin stays a person's one-line pull request.
 #
-# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3). A set `BWS_ACCESS_TOKEN` means the
-# lane's container: `lane-run` passes the lane's own token as its one secret, and every secret
-# below is read with it, in the environment, never as a process argument. The GitHub credential is
-# an installation token minted each pass from the read-only App `alobar-sds-lanes-read`, narrowed
-# to the member record's observed repositories and the two read permissions the watcher's calls
-# use. The BWS token is unset before the watcher runs, which needs neither it nor the App's key.
-# Without the token the launcher refuses with exit 1.
+# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret. Every secret below is
+# read with `sds_bws_value` and one argument, through the socket or with that token in the
+# environment, never as a process argument; the broker serves this lane only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The GitHub credential is an installation token
+# minted each pass from the read-only App `alobar-sds-lanes-read`, narrowed to the member record's
+# observed repositories and the two read permissions the watcher's calls use. `BWS_ACCESS_TOKEN`
+# and `SDS_SECRETS_SOCKET` are removed from every child and unset before the watcher runs, which
+# needs neither nor the App's key; the socket itself stays reachable, as the design accepts.
+# Without a socket or a token the launcher refuses with exit 1.
 #
 # Usage:
 #   scripts/run-pin-watcher.sh [--dry-run]
@@ -47,10 +51,15 @@ READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
+# Sourced first: the host test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
 # Outside the lane's container this refuses before arming the dead-man switch or reading anything:
 # armed here, the switch would ping the production check.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the pin-watcher lane runs only in its container, through lane-run" >&2
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the pin-watcher lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -62,9 +71,6 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-pin-watcher --finding 2 "$@"
 
-# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
 
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
@@ -74,7 +80,7 @@ export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_
 # The derivation below reads the member record with the observer bearer on every pass, a dry run
 # included, so an unread bearer is fatal before anything else.
 if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
-  echo "FATAL: could not read the observer bearer from BWS (the lane's token)." >&2
+  echo "FATAL: could not read the observer bearer from BWS (the lane's socket or token)." >&2
   exit 1
 fi
 
@@ -89,7 +95,7 @@ if ! _pin_is_dry_run "$@"; then
   SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
   export SDS_BRIDGE_ALERT_TOKEN
   if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
-    echo "FATAL: could not read the sds-bridge alert sender token from BWS (the lane's token)." >&2
+    echo "FATAL: could not read the sds-bridge alert sender token from BWS (the lane's socket or token)." >&2
     exit 1
   fi
 fi
@@ -103,7 +109,7 @@ fi
 # the day reads as incomplete rather than clean. Any other non-zero code is the tool failing (1)
 # or not running at all (126, 127, 137), and is passed through verbatim.
 REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$ORCHESTRATOR_API_TOKEN" \
-  env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
+  env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
 if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
   echo "the watcher's repositories could not be derived: sds_scope exited $scope_rc" >&2
@@ -121,13 +127,13 @@ done <<< "$REPOSITORIES"
 # THE GITHUB TOKEN IS MINTED EACH PASS, a dry run included, after the derivation, because the
 # mint names its repositories. The App's key goes from the BWS read straight to the mint's stdin
 # in its stored form, base64 of the PEM; it is never in a variable, an argument or a file, and
-# the mint runs without the lane's token. The two permissions are what the watcher's GET calls
+# the mint runs without the lane's token or the socket's marker. The two permissions are what the watcher's GET calls
 # use (`src/pin_watcher/github.py`): the recommendation, each caller file, a compare and a commit
 # (`contents`), and each repository and each owner's listing (`metadata`). Members in more than
 # one owner make the mint refuse, which is a failed mint here (exit 1). Any preset value is
 # replaced, so the pass runs only on the token it minted.
 PIN_WATCHER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-  | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+  | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
       --app-id "$READ_APP_ID" "${TARGETS[@]}" \
       --permission metadata=read --permission contents=read)"
 mint_rc=$?
@@ -137,7 +143,7 @@ if [ "$mint_rc" -ne 0 ] || [ -z "$PIN_WATCHER_GITHUB_TOKEN" ]; then
        "(sds-github-mint exited $mint_rc)" >&2
   exit 1
 fi
-unset BWS_ACCESS_TOKEN
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 "$REPO_ROOT/.venv/bin/pin-watcher" "$@"
 rc=$?

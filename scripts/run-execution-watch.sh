@@ -13,7 +13,7 @@
 #
 # EXIT CODES, the whole interface a scheduled run has:
 #   0  the pass ran.
-#   1  the lane could not do its job: a missing credential, an unusable state directory, alert-hub
+#   1  the lane could not do its job: no lane socket or token, a missing credential, an unusable state directory, alert-hub
 #      refusing a send, a refused --seed, or a missing known-subjects file (which also raises
 #      `execution-watch-unread`).
 #   2  something was found: the orchestrator could not be read, so every remembered key was held.
@@ -21,10 +21,14 @@
 #      must not page; `execution-watch-unread` is the page, after two hours.
 # Anything else is reported as 1.
 #
-# ONE BWS IDENTITY. The lane runs only in its container (ADR-0059): `lane-run` passes the lane's
-# own token as `BWS_ACCESS_TOKEN`, its one secret, and every fetch below reads through it in the
-# environment, never as a process argument. The token is unset before the program runs, which needs
-# none. The alert token is fetched only on a --submit pass: a pass that sends nothing needs none.
+# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059), where `sds_in_lane_container` is true: `lane-run`
+# names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET` (ADR-0055 amendment 30), or
+# passes a lane's own token as its one secret. Every fetch below is `sds_bws_value` with one
+# argument, through the socket or with that token in the environment, never as a process argument;
+# the broker serves this lane only the UUIDs its entry in `lanes/secrets-broker/allowlist.toml`
+# lists. `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` are unset before the program runs, which needs
+# neither; the socket itself stays reachable, as the design accepts. The alert token is fetched
+# only on a --submit pass: a pass that sends nothing needs none.
 #
 # Usage:
 #   scripts/run-execution-watch.sh [--seed | --submit]
@@ -36,8 +40,12 @@ SDS_BRIDGE_ALERT_UUID="${EXECUTION_WATCH_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the execution-watch lane runs only in its container, through lane-run" >&2
+# The shared BWS reader (`sds-bws.sh`), sourced first: the host test below is its
+# `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the execution-watch lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -56,17 +64,14 @@ _arm_args=("$@")
 [ "$_submitting" -eq 1 ] || _arm_args=(--dry-run)
 sds_deadman_arm sds-execution-watch --finding 2 "${_arm_args[@]}"
 
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
-# Read through the token already in the environment.
+# Read through the socket, or the token already in the environment.
 _lane_secret() { sds_bws_value "$1"; }
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
 ORCHESTRATOR_API_TOKEN="$(_lane_secret "$OBSERVER_BEARER_UUID")"
 export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
 if [ -z "${ORCHESTRATOR_API_TOKEN:-}" ]; then
-  echo "FATAL: could not read the orchestrator observer bearer from BWS (narrow)" >&2
+  echo "FATAL: could not read the orchestrator observer bearer from BWS (the lane's socket or token)" >&2
   exit 1
 fi
 
@@ -74,11 +79,11 @@ if [ "$_submitting" -eq 1 ]; then
   SDS_BRIDGE_ALERT_TOKEN="$(_lane_secret "$SDS_BRIDGE_ALERT_UUID")"
   export SDS_BRIDGE_ALERT_TOKEN
   if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
-    echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)" >&2
+    echo "FATAL: could not read the sds-bridge alert sender token from BWS (the lane's socket or token)" >&2
     exit 1
   fi
 fi
-unset BWS_ACCESS_TOKEN
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 if [ ! -x "$REPO_ROOT/.venv/bin/execution-watch" ]; then
   echo "FATAL: no execution-watch in $REPO_ROOT/.venv (run uv sync)" >&2

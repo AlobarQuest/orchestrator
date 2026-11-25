@@ -61,3 +61,25 @@ read = [
   "71616bf5-14ba-4888-b3f8-b50a00e13ed2",  # ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW (--submit only)
   "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3",  # change-window-ping-url
 ]
+
+[lanes.execution-watch]
+read = [
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE (--submit only)
+  "97802aac-5a7f-45e8-8185-b4fc00cd318e",  # execution-watch-ping-url
+]
+
+[lanes.landing-ledger]
+read = [
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "ebabdd63-2eff-4b8e-99b7-b4fd01754eae",  # landing-ledger-ping-url
+]
+
+[lanes.pin-watcher]
+read = [
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE (acting passes only)
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "872684c0-899e-43b7-9c2d-b50000e88b21",  # pin-watcher-ping-url
+]

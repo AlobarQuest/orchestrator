@@ -16,13 +16,17 @@
 # NOTHING HERE ACTS. Both passes read and file observations; neither changes a pull request, a
 # repository setting, or any canonical state.
 #
-# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3). A set `BWS_ACCESS_TOKEN` means the
-# lane's container: `lane-run` passes the lane's own token as its one secret, and every BWS read
-# below goes through it in the environment, never as a process argument. The GitHub credential is
-# an installation token minted each pass from the read-only App `alobar-sds-lanes-read`, narrowed
-# to the scoped repositories and the four read permissions the ledger's calls use. The BWS token
-# is unset before the ledger runs, which needs neither it nor the App's key. Without the token the
-# launcher refuses with exit 1.
+# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret. Every BWS read below is
+# `sds_bws_value` with one argument, through the socket or with that token in the environment,
+# never as a process argument; the broker serves this lane only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The GitHub credential is an installation token
+# minted each pass from the read-only App `alobar-sds-lanes-read`, narrowed to the scoped
+# repositories and the four read permissions the ledger's calls use. `BWS_ACCESS_TOKEN` and
+# `SDS_SECRETS_SOCKET` are removed from every child and unset before the ledger runs, which needs
+# neither nor the App's key; the socket itself stays reachable, as the design accepts. Without a
+# socket or a token the launcher refuses with exit 1.
 #
 # Usage:
 #   scripts/run-landing-ledger.sh [--dry-run]
@@ -36,10 +40,15 @@ READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
+# Sourced first: the host test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
 # Outside the lane's container this refuses before arming the dead-man switch or reading anything:
 # armed here, the switch would ping the production check.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the landing-ledger lane runs only in its container, through lane-run" >&2
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the landing-ledger lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -51,9 +60,6 @@ source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-landing-ledger --finding 2 "$@"
 
 
-# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
 
 LANDING_LEDGER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export LANDING_LEDGER_TOKEN
@@ -72,7 +78,7 @@ fi
 # other non-zero code is the tool failing (1) or not running at all (126, 127, 137), and is passed
 # through verbatim.
 REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$LANDING_LEDGER_TOKEN" \
-  env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
+  env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
 if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
   echo "the ledger's repositories could not be derived: sds_scope exited $scope_rc" >&2
@@ -90,13 +96,13 @@ done <<< "$REPOSITORIES"
 # THE GITHUB TOKEN IS MINTED HERE, after the scope, because the mint names the
 # scoped repositories: so an unreadable scope (exit 3 above) mints nothing. The App's key goes from
 # the BWS read straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a
-# variable, an argument or a file, and the mint runs without the lane's token. The four permissions
+# variable, an argument or a file, and the mint runs without the lane's token or the socket's marker. The four permissions
 # are what the ledger's GET calls use (`src/landing_ledger/github.py`): the repository, branch,
 # commits and gate file (`metadata`, `contents`), pull requests (`pull_requests`), and workflow
 # runs, jobs and attempts (`actions`).
 # Any preset value is replaced, so the pass runs only on the token it minted.
 LANDING_LEDGER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-  | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+  | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
       --app-id "$READ_APP_ID" "${TARGETS[@]}" \
       --permission metadata=read --permission contents=read \
       --permission pull_requests=read --permission actions=read)"
@@ -106,7 +112,7 @@ if [ "$mint_rc" -ne 0 ] || [ -z "$LANDING_LEDGER_GITHUB_TOKEN" ]; then
   echo "FATAL: could not mint the ledger's GitHub token from the read-only App" >&2
   exit 1
 fi
-unset BWS_ACCESS_TOKEN
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 PASS_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 LEDGER="$REPO_ROOT/.venv/bin/landing-ledger"

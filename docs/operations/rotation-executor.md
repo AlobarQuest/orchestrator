@@ -854,7 +854,7 @@ It prints `switched`, `not yet` or `unreadable` for each reader, with the start 
 it found. It exits 2 when any reader is unreadable. When it prints nothing and exits 0, the
 credential's row names no scheduled reader: no `runtime-fetch` consumer with a read and no
 Actions-secret copy. A `bws-lane-token` row with `helper_target`, such as
-`execution-watch-bws-token`, is one: its lane is proved by the helper's `loaded` fingerprint
+`deploy-watcher-bws-token`, is one: its lane is proved by the helper's `loaded` fingerprint
 ("Lane tokens and ping URLs"), which this command doesn't read.
 
 ### If a rotation stalls after host
@@ -1361,9 +1361,9 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    `container`, `role` or `database`, only the lane container and the variable it loads.
 
    ```toml
-   [target.execution-watch]
+   [target.deploy-watcher]
 
-   [[target.execution-watch.consumer]]
+   [[target.deploy-watcher.consumer]]
    container = "<the lane's container name>"
    env = "BWS_ACCESS_TOKEN"
    ```
@@ -1383,12 +1383,9 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
 
    | Target | Container |
    |---|---|
-   | `execution-watch` | `execution-watch-svkt4ux8o16dnl7n3k6qcd99` |
-   | `landing-ledger` | `landing-ledger-gs1z8orebdnq9ug574sia6fs` |
    | `deploy-watcher` | `deploy-watcher-p12q9n6xcy5u8eib1m4gmvar` |
    | `revision-watcher` | `revision-watcher-kmjkrhlmv6c7ee76g77a8491` |
    | `unit-verifier` | `unit-verifier-y144dc0981smrtzl587hqa4f` |
-   | `pin-watcher` | `pin-watcher-athv39w06xtmvqtxnjs3m8d0` |
    | `membership-check` | `membership-check-qb6f52pfvhcoh2w2sgrhii2z` |
    | `change-proposer` | `change-proposer-w35r4jsmylloghoexdc18gfl` |
    | `rotation-decomposer` | `rotation-decomposer-hcghb8xli5qqo6kl8enuu080` |

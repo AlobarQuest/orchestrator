@@ -1,23 +1,28 @@
 # sds-lane-execution-watch (ADR-0059 increment 2, Amendment 1): the execution-watch lane. HQ
 # creates the resource from this file. It serves nothing: no port, no domain, so no Traefik labels
-# and no `networks:` entry. The lane's token is the resource's own
-# `EXECUTION_WATCH_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes; this file
-# names it and never holds a value. `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's
-# ping-URL secret, `execution-watch-ping-url` in `Rotation / Keepers`: an id, not a secret and not
-# the ping URL. `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that
-# secret with the lane's own token (`scripts/sds-deadman.sh`). Until the executor writes the URL
-# there, the secret holds the inbox's empty marker, so the helper refuses it and pings nothing.
+# and no `networks:` entry.
+# It holds no token: it reads every secret the pass needs through the lane secrets broker (ADR-0055
+# amendment 30), whose socket directory `/data/sds/broker/execution-watch` it mounts read-only at
+# `/run/sds-broker`. `lane-run` names the socket to the launcher (`scripts/run-execution-watch.sh`),
+# and the broker serves it only the UUIDs its entry in `lanes/secrets-broker/allowlist.toml` lists.
+# The resource keeps its `EXECUTION_WATCH_BWS_ACCESS_TOKEN` variable until the lane tokens are
+# revoked, and this file maps it to nothing.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `execution-watch-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret
+# through the broker (`scripts/sds-deadman.sh`). While the secret holds the inbox's empty marker,
+# the helper refuses it and pings nothing.
 services:
   execution-watch:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["execution-watch"]
     environment:
-      BWS_ACCESS_TOKEN: ${EXECUTION_WATCH_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       EXECUTION_WATCH_STATE_DIR: /var/lib/sds/execution-watch
       SDS_DEADMAN_PING_URL_UUID: 97802aac-5a7f-45e8-8185-b4fc00cd318e
     volumes:
       - sds-lanes-execution-watch-state:/var/lib/sds/execution-watch
+      - /data/sds/broker/execution-watch:/run/sds-broker:ro
     restart: unless-stopped
 
 volumes:
