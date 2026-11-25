@@ -59,8 +59,6 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-landing-ledger --finding 2 "$@"
 
-
-
 LANDING_LEDGER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export LANDING_LEDGER_TOKEN
 if [ -z "$LANDING_LEDGER_TOKEN" ]; then
