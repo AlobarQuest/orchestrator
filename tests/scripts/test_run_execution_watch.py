@@ -226,9 +226,7 @@ def _served() -> dict[str, str | None]:
     return {OBSERVER_UUID: "observer", ALERT_UUID: "alert", PING_URL_UUID: PING_URL}
 
 
-def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(
-    tmp_path: Path, broker
-) -> None:
+def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(tmp_path: Path, broker) -> None:
     """`bws` never runs, and the program gets neither the lane's token nor the socket's marker."""
     result, log = _run(tmp_path, "--submit", container=_socket(broker(_served())))
     assert result.returncode == 0, result.stderr

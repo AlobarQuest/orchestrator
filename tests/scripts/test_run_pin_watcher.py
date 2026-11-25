@@ -356,9 +356,7 @@ def _brokered(
     tmp_path: Path, socket_path: Path, *args: str, **fake: str | None
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
-    return _run(
-        tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake
-    )
+    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path), **fake)
 
 
 def _served() -> dict[str, str | None]:
@@ -370,9 +368,7 @@ def _served() -> dict[str, str | None]:
     }
 
 
-def test_on_the_socket_an_acting_pass_reads_every_secret_through_it(
-    tmp_path: Path, broker
-) -> None:
+def test_on_the_socket_an_acting_pass_reads_every_secret_through_it(tmp_path: Path, broker) -> None:
     """The socket serves the ping URL, the bearer, the alert token and the App's key; `bws` never
     runs, and no child gets the lane's token or the socket's marker."""
     result, logs = _brokered(tmp_path, broker(_served()))
@@ -439,7 +435,12 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     assert deploy.broker_lane(service, "pin-watcher", allowlist)
     assert deploy.add_refusals(service, "pin-watcher", allowlist) == []
     assert deploy.compose_broker_refusals(COMPOSE.read_text(), "pin-watcher") == []
-    assert allowlist["pin-watcher"] == {OBSERVER_UUID, ALERT_UUID, READ_APP_KEY_UUID, PING_URL_KEEPER}
+    assert allowlist["pin-watcher"] == {
+        OBSERVER_UUID,
+        ALERT_UUID,
+        READ_APP_KEY_UUID,
+        PING_URL_KEEPER,
+    }
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["pin-watcher"],

@@ -286,8 +286,9 @@ def test_on_the_socket_without_a_token_a_pass_reads_every_secret_through_it(
     assert logs["bws"] == []
     assert logs["gh"] == []
     assert f"stdin=value-of-{READ_APP_KEY_UUID}" in logs["lane"]
-    assert f"scope -m scripts.sds_scope ledger token=value-of-{OBSERVER_UUID} lane_token=" in (
-        logs["lane"]
+    assert (
+        f"scope -m scripts.sds_scope ledger token=value-of-{OBSERVER_UUID} lane_token="
+        in (logs["lane"])
     )
     assert logs["child"] == [
         "scope socket=",
