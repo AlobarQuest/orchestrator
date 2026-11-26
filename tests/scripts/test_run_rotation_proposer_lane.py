@@ -647,9 +647,7 @@ def test_on_the_socket_without_a_token_a_submitting_pass_reads_every_secret_thro
         assert value(uuid) not in run.output
 
 
-def test_on_the_socket_a_dry_run_reads_no_secret_and_mints_nothing(
-    tmp_path: Path, broker
-) -> None:
+def test_on_the_socket_a_dry_run_reads_no_secret_and_mints_nothing(tmp_path: Path, broker) -> None:
     served = {BROKER_PING_URL_UUID: "https://hc.example/ping/rotation-proposer"}
     run = _brokered(tmp_path, broker(served))
     assert run.code == 0, run.output
