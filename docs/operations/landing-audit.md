@@ -150,10 +150,11 @@ and an honest finding sharing one exit code is a collision this estate has alrea
 
 - Migration `0023_wsp36_landing_audit` applied and an image carrying it, or every write is refused:
   `observation_type` is bounded by a database CHECK and by the running image's vocabulary.
-- `LANDING_LEDGER_TOKEN` — the OBSERVER bearer, BWS `f793576f-…` in `SDS Operator`.
-- `LANDING_LEDGER_GITHUB_TOKEN` — **has no BWS record.** The launcher falls back to `gh auth
-  token`, which means a scheduled job resting on an interactive login, and it dies silently when
-  that login is re-issued. Backlogged P2 `113af446955b`.
+- `LANDING_LEDGER_TOKEN` — the OBSERVER bearer, BWS `f793576f-…` in `Rotation / Keepers`, read
+  in the lane's container through the lane secrets broker (`docs/operations/secrets-broker.md`).
+- `LANDING_LEDGER_GITHUB_TOKEN` — an installation token the launcher mints each pass from the
+  read-only App `alobar-sds-lanes-read`, whose key (BWS `314a966c-…`) it reads through the broker
+  and pipes straight into `sds-github-mint` (`scripts/run-landing-ledger.sh`).
 
 The launcher records a **seven-day** window, not the thirty-day default. Recording costs about
 twelve GitHub requests per landing and the 2026-08-08 backfill exhausted the 5000/hour limit in one

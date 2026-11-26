@@ -1445,7 +1445,8 @@ def test_a_tag_converting_a_token_lane_to_the_broker_finishes(lanes: Lanes) -> N
 def test_the_execution_watch_compose_meets_the_add_refusals() -> None:
     compose = (ROOT / "lanes/execution-watch/compose.yaml").read_text()
     service = deploy.lane_service(compose, "execution-watch")
-    assert deploy.add_refusals(service, "execution-watch") == []
+    allowlist = load_allowlist(ROOT / deploy.BROKER_ALLOWLIST)
+    assert deploy.add_refusals(service, "execution-watch", allowlist) == []
     environment = deploy._environment(service)
     assert environment["EXECUTION_WATCH_STATE_DIR"] == "/var/lib/sds/execution-watch"
     assert deploy._state_volume(service, "execution-watch") == "sds-lanes-execution-watch-state"

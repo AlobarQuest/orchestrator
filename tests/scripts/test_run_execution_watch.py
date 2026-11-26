@@ -3,7 +3,8 @@ dead-man switch, and how it maps the program's exit code.
 
 Nothing here touches the real BWS or Healthchecks: the launcher is copied with its helpers into a
 throwaway tree holding a stub `execution-watch`, and a stub `bws` is first on PATH. The launcher
-runs only in the lane's container, so every pass but the refusal is given the lane's token.
+runs only in the lane's container, so every pass but the refusal is given the lane's token, or the
+secrets broker's socket as `SDS_SECRETS_SOCKET` (a stand-in broker, `conftest.py`'s).
 """
 
 from __future__ import annotations
@@ -14,6 +15,10 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
+
+from scripts import deploy_orchestrator as deploy
+from scripts.secrets_broker import load_allowlist
 
 LAUNCHER = Path("scripts/run-execution-watch.sh")
 HELPERS = ("sds-install.sh", "sds-deadman.sh", "sds-bws.sh")
@@ -21,6 +26,9 @@ HELPERS = ("sds-install.sh", "sds-deadman.sh", "sds-bws.sh")
 PING_URL = "https://hc.example/ping/execution-watch"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
+ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
+PING_URL_KEEPER = "97802aac-5a7f-45e8-8185-b4fc00cd318e"
+COMPOSE = Path("lanes/execution-watch/compose.yaml")
 # The container's `bws`: `$BWS_REFUSES` lists the UUIDs the lane's token can no longer read (all
 # of them, for a revoked token); the ping-URL secret holds `PING_URL`. Each call logs its argv and
 # whether the token arrived in its environment.
@@ -50,6 +58,7 @@ def _program(exit_code: int) -> str:
         'echo "observer=${ORCHESTRATOR_API_TOKEN:+set}" >> "$STUB_LOG"\n'
         'echo "alert=${SDS_BRIDGE_ALERT_TOKEN:+set}" >> "$STUB_LOG"\n'
         'echo "lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$STUB_LOG"\n'
+        'echo "socket=${SDS_SECRETS_SOCKET:+set}" >> "$STUB_LOG"\n'
         f"exit {exit_code}\n"
     )
 
@@ -117,21 +126,21 @@ def _pings(tmp_path: Path) -> list[str]:
 def test_a_bare_run_reads_only_and_does_not_ping(tmp_path: Path) -> None:
     result, log = _run(tmp_path, container=_container())
     assert result.returncode == 0
-    assert log == ["args=", "observer=set", "alert=", "lane_token="]
+    assert log == ["args=", "observer=set", "alert=", "lane_token=", "socket="]
     assert "not arming" in result.stdout
 
 
 def test_a_seed_run_needs_no_alert_token_and_does_not_ping(tmp_path: Path) -> None:
     result, log = _run(tmp_path, "--seed", container=_container())
     assert result.returncode == 0
-    assert log == ["args=--seed", "observer=set", "alert=", "lane_token="]
+    assert log == ["args=--seed", "observer=set", "alert=", "lane_token=", "socket="]
     assert "not arming" in result.stdout
 
 
 def test_a_submit_run_reads_both_and_arms_the_switch(tmp_path: Path) -> None:
     result, log = _run(tmp_path, "--submit", container=_container())
     assert result.returncode == 0
-    assert log == ["args=--submit", "observer=set", "alert=set", "lane_token="]
+    assert log == ["args=--submit", "observer=set", "alert=set", "lane_token=", "socket="]
     assert "not arming" not in result.stdout
     assert "[deadman]" in result.stdout
 
@@ -169,7 +178,7 @@ def test_in_the_container_every_read_uses_the_lanes_token_from_the_environment(
     result, log = _run(tmp_path, "--submit", container=_container())
     assert result.returncode == 0
     # The program inherits neither the lane's token nor any other identity.
-    assert log == ["args=--submit", "observer=set", "alert=set", "lane_token="]
+    assert log == ["args=--submit", "observer=set", "alert=set", "lane_token=", "socket="]
     reads = (tmp_path / "bws.log").read_text().splitlines()
     assert [line.split()[2] for line in reads] == [
         PING_URL_UUID,
@@ -203,3 +212,90 @@ def test_a_failure_after_the_start_ping_ends_in_fail(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert log == []
     assert _pings(tmp_path) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+
+def _socket(socket_path: Path) -> dict[str, str]:
+    """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
+    return {"SDS_SECRETS_SOCKET": str(socket_path), "SDS_DEADMAN_PING_URL_UUID": PING_URL_UUID}
+
+
+def _served() -> dict[str, str | None]:
+    return {OBSERVER_UUID: "observer", ALERT_UUID: "alert", PING_URL_UUID: PING_URL}
+
+
+def test_on_the_socket_a_submit_pass_reads_every_secret_through_it(tmp_path: Path, broker) -> None:
+    """`bws` never runs, and the program gets neither the lane's token nor the socket's marker."""
+    result, log = _run(tmp_path, "--submit", container=_socket(broker(_served())))
+    assert result.returncode == 0, result.stderr
+    assert log == ["args=--submit", "observer=set", "alert=set", "lane_token=", "socket="]
+    assert not (tmp_path / "bws.log").exists()
+    assert _pings(tmp_path) == [f"{PING_URL}/start", PING_URL]
+
+
+def test_on_the_socket_a_bare_pass_asks_no_alert_token(tmp_path: Path, broker) -> None:
+    served = _served()
+    del served[ALERT_UUID]
+    result, log = _run(tmp_path, container=_socket(broker(served)))
+    assert result.returncode == 0, result.stderr
+    assert log == ["args=", "observer=set", "alert=", "lane_token=", "socket="]
+
+
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [(OBSERVER_UUID, "bws_failed"), (ALERT_UUID, "not_allowed")],
+    ids=["bearer-read-failed", "alert-not-on-the-allowlist"],
+)
+def test_a_secret_the_socket_refuses_fails_the_pass(
+    tmp_path: Path, broker, refused: str, reason: str
+) -> None:
+    served = _served()
+    if reason == "bws_failed":
+        served[refused] = None
+    else:
+        del served[refused]
+    result, log = _run(tmp_path, "--submit", container=_socket(broker(served)))
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {refused}: {reason}" in result.stderr
+    assert "(the lane's socket or token)" in result.stderr
+    assert log == []
+    assert not (tmp_path / "bws.log").exists()
+    assert _pings(tmp_path) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+def test_a_dead_socket_fails_the_pass_and_never_falls_back_to_bws(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    result, log = _run(tmp_path, "--submit", container=_socket(dead_socket))
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {OBSERVER_UUID}: no_reply" in result.stderr
+    assert log == []
+    assert not (tmp_path / "bws.log").exists()
+
+
+def test_a_socket_variable_naming_no_socket_refuses_and_runs_nothing(tmp_path: Path) -> None:
+    """`SDS_SECRETS_SOCKET` alone isn't the container: it must name a socket."""
+    not_a_socket = tmp_path / "broker.sock"
+    not_a_socket.write_text("")
+    result, log = _run(tmp_path, "--submit", container=_socket(not_a_socket))
+    assert result.returncode == 1
+    assert "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN" in result.stderr
+    assert log == []
+    assert _pings(tmp_path) == []
+
+
+def test_the_compose_is_a_broker_lane_and_maps_no_token() -> None:
+    service = deploy.lane_service(COMPOSE.read_text(), "execution-watch")
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "execution-watch", allowlist)
+    assert deploy.add_refusals(service, "execution-watch", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "execution-watch") == []
+    assert allowlist["execution-watch"] == {OBSERVER_UUID, ALERT_UUID, PING_URL_KEEPER}
+    assert "BWS_ACCESS_TOKEN" not in service["environment"]
+    assert service["volumes"] == [
+        "sds-lanes-execution-watch-state:/var/lib/sds/execution-watch",
+        "/data/sds/broker/execution-watch:/run/sds-broker:ro",
+    ]
+    assert set(yaml.safe_load(COMPOSE.read_text())) == {"services", "volumes"}
