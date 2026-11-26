@@ -28,7 +28,6 @@ UNTYPED: Final = frozenset(
         "alert-hub-sender-token",
         "anthropic-api-key",
         "brain-mcp-key",
-        "coolify-api-token",
         "coolify-pg-password",
         "github-app-private-key",
         "github-pat-classic",

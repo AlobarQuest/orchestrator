@@ -213,6 +213,18 @@ class ShapeVerified(Protocol):
         ...
 
 
+@runtime_checkable
+class ScopeChecked(Protocol):
+    """A provider whose new value must hold exactly its row's declared scope, which the provider
+    can't read back, so verify_new probes it after the value answers live (a Coolify API token,
+    ADR-0055 amendment 33 item 4)."""
+
+    def check_scope(self, new: Value) -> str:
+        """Refuse (`ContractError`) a value whose scope isn't the declared one. Returns the note
+        verify_new files, which names no value."""
+        ...
+
+
 ConsumerProof = Literal["patch", "loaded"]
 # The one phrase per proof that verify_consumers' note names (#789 follow-up 4). Fixed text, with
 # no destination, container or id, so the note's length is bounded and no 32-character run forms.
@@ -674,6 +686,10 @@ def _verify_new(run: UnitRun, step: Step) -> None:
             raise ContractError(problem)
         note = run.provider.lookup_note(new)
     probes = run.probe(new, "new", "live")
+    if isinstance(run.provider, ScopeChecked):
+        # Only a value proved live is scope-checked, so a dead one's 401 is never read as scope.
+        scope = run.provider.check_scope(new)
+        note = scope if note is None else f"{note}; {scope}"
     run.record(
         step,
         StepEvidence(

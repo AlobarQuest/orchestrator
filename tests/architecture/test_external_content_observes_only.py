@@ -391,6 +391,20 @@ CLASSIFICATION: dict[str, Row] = {
             "/api/v1/services/{}/restart": (
                 "Coolify's restart of the one approved Postgres service (rotation design)"
             ),
+            "/api/v1/version": (
+                "Coolify's version route, the Coolify API token's probe (ADR-0055 amendment 33)"
+            ),
+            "/api/v1/teams/current": (
+                "Coolify's current team, the Coolify API token's identity check (amendment 33)"
+            ),
+            "/api/v1/deploy": (
+                "Coolify's deploy route, called with no target as the deploy scope probe "
+                "(amendment 33)"
+            ),
+            "/api/v1/projects/{}": (
+                "Coolify's project update, sent a refused body as the write scope probe "
+                "(amendment 33)"
+            ),
         },
     ),
     "change_proposer": Row(

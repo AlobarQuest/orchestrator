@@ -833,6 +833,13 @@ OUTBOUND_ALLOWLIST = {
     # orchestrator's.
     Path("src/rotation_worker/adapters/github_pat.py"),
     Path("src/rotation_worker/adapters/bitbucket.py"),
+    # ADR-0055 amendment 33. The Coolify API token adapter probes production Coolify at the
+    # executor's tailnet `coolify_url` with the value as its bearer: the version route, the current
+    # team, a write probe on a random project UUID that the handler refuses with 422 before any
+    # lookup, a deploy probe with no target that answers 400, and one canary application's env
+    # list. It may send nothing else. Pinned by tests/rotation_worker/test_coolify_api_token.py.
+    # Its egress is not the orchestrator's.
+    Path("src/rotation_worker/adapters/coolify_api_token.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

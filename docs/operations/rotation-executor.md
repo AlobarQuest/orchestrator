@@ -379,6 +379,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    coolify_url = "http://100.92.138.19:8000"
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
    change_manager_application = "re45tafypao3nly3qa9a79dp"
+   # coolify_canary_application = "<the canary application's uuid>"  # leave out until it exists
    healthchecks_key_id = "f07b1368-f937-4287-baf1-b4ed00b6b274"
    healthchecks_management_key_id = "51509d5e-64f5-4781-ae82-b4ed00b644e1"  # set at increment 3 (2026-11-10)
    github_app_id = "5383095"
@@ -416,6 +417,9 @@ expired, the node logged out and every write timed out before it connected (ADR-
    reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
    secrets"). `inbox_secret_id` is where a person pastes a value they minted, read with the root
    ("A person's mint is taken from the inbox").
+   `coolify_canary_application` is the uuid of the canary application whose env list proves
+   a new Coolify API token lacks `read:sensitive` (the following "Coolify API tokens" section).
+   With it unset, that type's verify-new refuses by name.
 
 3. Enable the timer: `orb -m rotation-executor -u root systemctl enable --now
    rotation-worker.timer`. Read its passes with `journalctl -u rotation-worker` (one JSON line per
@@ -1068,6 +1072,82 @@ already dead.
 3. For a decomposition approved with the mint as a human act, resolve it at `/review` with a
    note. The fingerprint is optional: `store`'s verify-new proves the value works before anything
    depends on it.
+
+## Coolify API tokens
+
+The deployed Coolify (`4.0.0-beta.473`) has no API that creates or revokes a token, so a person
+mints and revokes in Coolify's UI and the executor proves and stores (ADR-0055 amendment 33,
+D-82). The type is `coolify-api-token`, with Bitbucket's plan: a human act mints and stages, then
+`store` (AC-001, AC-002: verify-new, store), `verify` (AC-003), a human act that revokes the old
+token, and `confirm` (AC-004). The adapter's provider is `coolify` and it reads no admin secret:
+every request carries the value being proved as its bearer, and goes only to `coolify_url`, the
+tailnet address.
+
+### Mint a token
+
+1. In Coolify, open the **API Tokens** page (`/security/api-tokens`), and enter the token name
+   from the row's `provider_identity` as its **Description**.
+2. Tick the row's `abilities`. Tick `deploy` first: ticking it resets the selection to `deploy`
+   alone, so tick `read` and `write` after it. Never tick `read:sensitive` or `root`.
+3. Create the token, and paste it into the inbox (`Rotation / Inbox`). Run `pbcopy < /dev/null`.
+
+After the `verify` unit completes and its alert arrives, revoke the old token in the same page.
+`confirm` then probes the old value and passes on 401 beside the control's 401 and the new
+value's 200. After an exposure you may revoke first: the `verify` unit accepts an old value
+that is already dead, and `confirm` proves it. The inbox then can't bind the new value, because its identity check needs the old
+value to answer, so stage it by hand ("Mint and stage a value by hand").
+
+### What verify-new proves
+
+Coolify never reads a token's abilities back, so verify-new probes the new value against the
+row's `abilities` after it answers live on `GET /api/v1/version`. Each answer is read from
+Coolify's source at the tag; the dev Coolify measurement (D-82 item 14) proves them before the
+adapter's first rotation.
+
+| Probe | Ability held | Ability absent |
+|---|---|---|
+| `PATCH /api/v1/projects/<a random UUID>` with only a field `update_project` doesn't allow | 422 | 403 |
+| `GET /api/v1/deploy` with no `uuid` and no `tag` | 400 | 403 |
+| `GET /api/v1/applications/<canary>/envs` | `read:sensitive`: an entry carries `value` or `real_value` | no entry carries either |
+
+Any other status refuses the value, naming it, and a probe with no answer fails the unit. A `root`
+token passes the first two probes as `read` + `write` + `deploy` does, and only the canary catches
+it. The canary is one application holding one variable with no secret, used by nothing else; its
+uuid is the executor's `coolify_canary_application`. An empty env list proves nothing, so
+the canary must keep its variable.
+
+The inbox checks only that a pasted token answers for the same team, not its scope, so a token
+minted with the wrong abilities is staged and then refused by verify-new, which fails the `store`
+unit. A requeue alone fails it again, because staging still holds that token. To recover:
+
+1. Revoke the wrongly minted token in Coolify.
+2. In `Rotation / Work`, delete the staging secret `rotation/<credential id>/<occurrence>/staging`.
+3. Requeue the unit (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, or retry
+   it on `/review` once they're spent (the "Alerts" table). It then waits, unclaimed, until a
+   value is staged.
+4. Mint again with the row's `abilities`, and paste the token into the inbox.
+
+### The registry rows
+
+Each row declares `abilities`, always with `read` and never `read:sensitive` or `root`; a row
+without them is refused before a claim. Each reader is a scheduled `runtime-fetch` with a
+`healthchecks_check`, so the `verify` unit waits unclaimed until each has run since the keeper's
+revision. What a green ping proves differs per row:
+
+- **`coolify-change-window-token`:** the launcher's read is fatal, so a green `--submit` pass read
+  the new value. The lane runs daily at 04:00, so `verify` can wait up to a day.
+- **`coolify-revision-watcher-read-token`:** the launcher reads every pass and runs only in its
+  container, so a green pass read the new value. Both scope probes must answer 403.
+- **`coolify-estate-lander-token`:** the read isn't fatal and the check is pinged every pass, so a
+  green pass proves only that a pass began after the keeper changed, not that the read succeeded.
+  No consumer can stay on the old value, because each pass fetches the keeper fresh. The gap in
+  proving the lander can use the token is carried (D-82 item 15 A): its next re-point or restore is
+  its own proof.
+
+No row is `rotated_by_sds` yet. The change window's keeper is in `Rotation / Keepers`, which the
+executor writes, and its row is handed over once the dev measurement has run and the canary
+exists. The other two keepers are in `SDS Operator` and `Ops / Platform`, which the executor
+can't write, and wait on Devon moving each into `Rotation / Keepers` (D-82 item 11 A).
 
 ## BWS machine tokens: the Keychain instance
 

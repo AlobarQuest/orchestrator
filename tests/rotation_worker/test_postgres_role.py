@@ -308,6 +308,7 @@ EXISTING_PLANS: dict[str, list[tuple[str, list[str]]]] = {
     "github-pat": [("mint", ["mint", "stage"]), ("store", SWITCH), RETIRE],
     "bitbucket": BY_PERSON,
     "bws-machine-token": BY_PERSON,
+    "coolify-api-token": BY_PERSON,
 }
 
 
