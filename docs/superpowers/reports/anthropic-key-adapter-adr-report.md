@@ -196,3 +196,59 @@ this paragraph changes only this report.
 - **Construction-mode ruling**
   (`~/docs/software-delivery-system/2026-07-30-construction-mode-ruling.md`): items that are
   Devon's are raised as Open items. No HQ-settled item was needed.
+
+## Round 1
+
+Worker W-321, fix round 1 of 2, on HQ's Opus whole-branch review of `f48fe5b0`. That review found
+one blocking item and no false claim or grant. I checked that `origin/hq/anthropic-key-adapter-adr`
+had no commit after `f48fe5b0` (`git log f48fe5b0..origin/hq/anthropic-key-adapter-adr` was
+empty), fast-forwarded to it, and pushed a fast-forward.
+
+### The edit
+
+- **Item 3, the identity check (commit `bd5d8ee5`).** The unscoped key's 400 is no longer called a
+  carried gap. The amendment says the 400 is documented for requests in general and unmeasured for
+  `GET /v1/models`, but the route doesn't rest on it: `same_identity` requires a 200 and an
+  `anthropic-workspace-id` header equal to the row's `workspace_id`. So an unscoped key, or any key
+  that doesn't resolve to the declared workspace, fails the bind whatever status it gets. A 400
+  isn't live, and a missing or mismatched header refuses.
+- **No other passage called it a carried gap.** I grepped the amendment and this report for
+  "carried gap", "unscoped" and "400". The remaining carried gaps are item 4's (a green pass
+  doesn't prove Anthropic accepted the key in use) and item 5's (a stray key made by hand). The
+  Context's mint note ("item 3 refuses an unscoped key") stays true under the new wording.
+
+The round's head is the commit that adds this section; #819's body names it.
+
+### Checks run
+
+- **Token-shape grep:** I grepped the added lines of `git diff 9caad335..HEAD`, both files, after
+  the last edit, for Anthropic's key prefix, the BWS token shape, a `wrkspc_` id followed by
+  characters, and runs of 40 or more key characters. Every match is the ADR's file name
+  (`0055-credential-rotation-runs-in-a-pull-based-executor`) matching the long-run pattern. None
+  is a key or token (4 matching lines). This grep is narrower than round 0's, which also counted
+  paths and URLs.
+- **Not run:** `make check`, for round 0's reason: docs only, and no test reads ADR-0055's text.
+
+### Follow-ups, in #819's body only
+
+These are not edits; HQ's review listed them:
+
+1. Item 5's stray-key gap names no exit check (it copies Amendment 35 item 7); consider tying it to
+   item 10.
+2. Item 7's `github_actions.py` is `src/rotation_worker/github_actions.py`, not under `adapters/`.
+3. The per-item agent call is `run-window.ts:72` (claimed items only), not `change-mgr-cli.ts`
+   153-155.
+4. `CHANGE_WINDOW_ANTHROPIC_UUID` can override the launcher's keeper UUID; the code PR's reader
+   test could assert that neither the compose nor the allowlist sets it.
+5. The Context's progress citation 6175 is 6173 for the Mac-job-out line.
+
+### Concerns
+
+- None beyond the follow-ups. I made no change outside item 3.
+
+### Standards followed, round 1
+
+The round 0 `Standards followed` section stays accurate. The edit adds no log path, value or
+grant. It makes item 3's refusal explicit, which is Code Brain 4's fail-closed handling (a missing
+or mismatched header refuses). The token-shape grep in the preceding Checks run covers Infra Brain
+591, 592 and 593.
