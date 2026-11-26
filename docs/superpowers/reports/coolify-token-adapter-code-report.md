@@ -173,6 +173,8 @@ So I removed the Mac path from both rows' notes. `test_no_note_names_a_mac_reade
     counts only `rotated_by_sds` rows whose keeper the instance reads. Confirmed
     `revoke_may_come_first` reaches `contract._verify_consumers`, which then takes either answer
     for the old value.
+- CI on PR #820 at `603f2f16` (run 45882303070): `Quality`, `Rollout transcription currency`
+  and `Runner consumer compatibility` all succeeded; `Quality` ran 14877 passed, 14 skipped.
 - `code-standards risk`: `high-risk` (auth: the adapter and its two test files).
 - `/code-review` (high): five findings. Fixed three: the config sample's placeholder (an operator
   copying it got the malformed-UUID refusal, not the named one), the latent note overwrite in
@@ -253,3 +255,9 @@ and this report.
 - **Infra Brain 212 (HTTPS for public FQDNs):** not applicable. The adapter adds no endpoint and
   calls Coolify only at the executor's existing tailnet `coolify_url`; it refuses any URL that is
   neither https nor a tailnet address.
+
+## Teardown
+
+The worktree `.worktrees/hq-W-319` and the database `orchestrator_test_hq_w_319` stay in place:
+the PR is unmerged, and HQ resumes here after the measurement. Remove both, and the branch, once
+#820 merges.
