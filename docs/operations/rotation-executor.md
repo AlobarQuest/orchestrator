@@ -379,7 +379,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    coolify_url = "http://100.92.138.19:8000"
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
    change_manager_application = "re45tafypao3nly3qa9a79dp"
-   coolify_token_canary_application = "<the canary application's uuid, once it exists>"
+   # coolify_token_canary_application = "<the canary application's uuid>"  # leave out until it exists
    healthchecks_key_id = "f07b1368-f937-4287-baf1-b4ed00b6b274"
    healthchecks_management_key_id = "51509d5e-64f5-4781-ae82-b4ed00b644e1"  # set at increment 3 (2026-11-10)
    github_app_id = "5383095"

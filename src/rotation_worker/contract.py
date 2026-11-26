@@ -688,7 +688,8 @@ def _verify_new(run: UnitRun, step: Step) -> None:
     probes = run.probe(new, "new", "live")
     if isinstance(run.provider, ScopeChecked):
         # Only a value proved live is scope-checked, so a dead one's 401 is never read as scope.
-        note = run.provider.check_scope(new)
+        scope = run.provider.check_scope(new)
+        note = scope if note is None else f"{note}; {scope}"
     run.record(
         step,
         StepEvidence(

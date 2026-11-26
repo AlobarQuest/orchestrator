@@ -183,11 +183,10 @@ class CoolifyApiTokenProvider:
         return self.probe(value)
 
     def same_identity(self, new: Value, old: Value) -> bool:
-        """Whether both values answer and name the same team. The account check only."""
-        if self.probe(new) != 200 or self.probe(old) != 200:
-            return False
-        new_team, old_team = self._team(new), self._team(old)
-        return new_team is not None and new_team == old_team
+        """Whether both values answer the current team's route, which needs `read`, with the same
+        team. The account check only."""
+        new_team = self._team(new)
+        return new_team is not None and new_team == self._team(old)
 
     def _team(self, value: Value) -> int | None:
         try:
