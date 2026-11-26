@@ -58,7 +58,7 @@ class AdapterContext:
     change_manager_application: str | None = None
     # The canary application whose env list proves a new Coolify API token lacks read:sensitive
     # (ADR-0055 amendment 33, D-82 item 13 C).
-    coolify_token_canary_application: str | None = None
+    coolify_canary_application: str | None = None
     mirror: RepoMirror | None = None
     healthchecks: Healthchecks | None = None
     # The Management key's check listing, which a ping URL's mint reads (ADR-0055 amendment 23).
@@ -260,7 +260,7 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         lambda context: coolify_api_token.build_provider(
             credential=context.credential,
             coolify_url=context.coolify_url,
-            canary_application=context.coolify_token_canary_application,
+            canary_application=context.coolify_canary_application,
         ),
         capabilities=TYPES[coolify_api_token.NAME].capabilities,
         check_row=coolify_api_token.check_row,

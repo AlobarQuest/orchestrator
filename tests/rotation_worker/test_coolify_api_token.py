@@ -11,13 +11,16 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 import pytest
 
 from rotation_worker.adapters import ADAPTERS, coolify_api_token
-from rotation_worker.config import VM_ONLY
+from rotation_worker.checks import Approved
+from rotation_worker.config import VM_ONLY, load
 from rotation_worker.contract import ContractError, Rotation, ScopeChecked, Step, UnitRun
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.inbox import ConfirmsIdentity
@@ -250,7 +253,7 @@ def test_with_no_canary_configured_verify_new_refuses_by_name() -> None:
     coolify = Coolify()
     new = coolify.add(*EVERY)
     provider = _provider(coolify, canary=None)
-    with pytest.raises(ContractError, match="no coolify_token_canary_application is configured"):
+    with pytest.raises(ContractError, match="no coolify_canary_application is configured"):
         provider.check_scope(new)
     # The rest of the provider still works: the inbox and confirm-dead need no canary.
     assert provider.probe(new) == 200
@@ -383,4 +386,51 @@ def test_mint_host_consumer_loaded_and_revoke_are_a_person_s() -> None:
 
 
 def test_the_canary_setting_is_the_vm_s_alone() -> None:
-    assert "coolify_token_canary_application" in VM_ONLY
+    assert "coolify_canary_application" in VM_ONLY
+
+
+def test_the_configured_canary_reaches_the_built_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """From the VM's config file, through `build_setup` and the worker's `_provider`, to the
+    adapter: a line dropped anywhere on that path leaves the canary unset."""
+    from rotation_worker import cli, worker
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "\n".join(
+            [
+                'orchestrator_url = "https://sds.alobar.net"',
+                'credential_key_id = "rotation-executor-1"',
+                'organization_id = "11111111-1111-4111-8111-111111111111"',
+                'work_project_id = "22222222-2222-4222-8222-222222222222"',
+                'root_token_file = "/etc/rotation-worker/root-token"',
+                'state_dir = "/var/lib/rotation-worker"',
+                'source_revision = "0123456789ab"',
+                f'coolify_url = "{COOLIFY_URL}"',
+                f'coolify_canary_application = "{CANARY}"',
+            ]
+        )
+    )
+    for opener in (
+        "open_store",
+        "open_client",
+        "open_healthchecks",
+        "open_ping_urls",
+        "open_github_app",
+        "open_notifier",
+        "open_inbox",
+        "open_pg_helper",
+    ):
+        monkeypatch.setattr(cli, opener, lambda *_: None)
+    setup = cli.build_setup(load(path))
+    approved = SimpleNamespace(
+        adapter=ADAPTERS[coolify_api_token.NAME],
+        rotation=None,
+        host_without_overlap=False,
+        registry=SimpleNamespace(credential={"abilities": EVERY}),
+        plan=coolify_api_token.PLAN,
+    )
+    provider = worker._provider(setup, cast(Approved, approved))
+    assert isinstance(provider, coolify_api_token.CoolifyApiTokenProvider)
+    assert provider._canary_path == f"/api/v1/applications/{CANARY}/envs"

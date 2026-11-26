@@ -697,7 +697,7 @@ LAUNCHERS: dict[str, str] = {
 NOT_IDENTITIES = frozenset(
     {
         "change_manager_application",
-        "coolify_token_canary_application",
+        "coolify_canary_application",
         "coolify_url",
         "github_app_id",
         "keepers_project_id",

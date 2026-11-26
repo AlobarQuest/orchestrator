@@ -148,7 +148,7 @@ class Setup:
     coolify_url: str | None = None
     orchestrator_application: str | None = None
     change_manager_application: str | None = None
-    coolify_token_canary_application: str | None = None
+    coolify_canary_application: str | None = None
     # The key id the executor's own bearer is registered under.
     executor_key_id: str | None = None
     # The Healthchecks listing, read with the key in `Rotation / Healthchecks`.
@@ -587,7 +587,7 @@ def _provider(setup: Setup, approved: Approved) -> Provider:
             orchestrator_application=setup.orchestrator_application,
             executor_key_id=setup.executor_key_id,
             change_manager_application=setup.change_manager_application,
-            coolify_token_canary_application=setup.coolify_token_canary_application,
+            coolify_canary_application=setup.coolify_canary_application,
             mirror=setup.mirror,
             healthchecks=setup.healthchecks,
             ping_urls=setup.ping_urls,

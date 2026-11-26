@@ -68,7 +68,7 @@ SENSITIVE_FIELDS: Final = ("value", "real_value")
 # A Coolify resource uuid: lowercase letters and digits.
 CANARY_UUID: Final = re.compile(r"^[a-z0-9]{8,64}$")
 NO_CANARY: Final = (
-    "no coolify_token_canary_application is configured, so the new token's lack of "
+    "no coolify_canary_application is configured, so the new token's lack of "
     "read:sensitive can't be proved"
 )
 # This type has no packages from before derivation, so its one candidate is the derived plan of a
@@ -117,7 +117,7 @@ def build_provider(
     if problem is not None:
         raise ContractError(f"the Coolify URL {problem}")
     if canary_application is not None and not CANARY_UUID.fullmatch(canary_application):
-        raise ContractError("coolify_token_canary_application isn't a Coolify uuid")
+        raise ContractError("coolify_canary_application isn't a Coolify uuid")
     project_path = f"/api/v1/projects/{absent_project or uuid.uuid4()}"
     canary_path = (
         None if canary_application is None else f"/api/v1/applications/{canary_application}/envs"

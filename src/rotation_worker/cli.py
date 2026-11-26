@@ -255,7 +255,7 @@ def build_setup(config: Config) -> Setup:
         coolify_url=config.coolify_url,
         orchestrator_application=config.orchestrator_application,
         change_manager_application=config.change_manager_application,
-        coolify_token_canary_application=config.coolify_token_canary_application,
+        coolify_canary_application=config.coolify_canary_application,
         executor_key_id=config.credential_key_id,
         healthchecks=open_healthchecks(config, store),
         ping_urls=open_ping_urls(config, store),

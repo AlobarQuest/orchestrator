@@ -379,7 +379,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    coolify_url = "http://100.92.138.19:8000"
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
    change_manager_application = "re45tafypao3nly3qa9a79dp"
-   # coolify_token_canary_application = "<the canary application's uuid>"  # leave out until it exists
+   # coolify_canary_application = "<the canary application's uuid>"  # leave out until it exists
    healthchecks_key_id = "f07b1368-f937-4287-baf1-b4ed00b6b274"
    healthchecks_management_key_id = "51509d5e-64f5-4781-ae82-b4ed00b644e1"  # set at increment 3 (2026-11-10)
    github_app_id = "5383095"
@@ -417,7 +417,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
    secrets"). `inbox_secret_id` is where a person pastes a value they minted, read with the root
    ("A person's mint is taken from the inbox").
-   `coolify_token_canary_application` is the uuid of the canary application whose env list proves
+   `coolify_canary_application` is the uuid of the canary application whose env list proves
    a new Coolify API token lacks `read:sensitive` (the following "Coolify API tokens" section).
    With it unset, that type's verify-new refuses by name.
 
@@ -1093,8 +1093,8 @@ tailnet address.
 
 After the `verify` unit completes and its alert arrives, revoke the old token in the same page.
 `confirm` then probes the old value and passes on 401 beside the control's 401 and the new
-value's 200. After an exposure you may revoke first: the adapter accepts an old value that is
-already dead. The inbox then can't bind the new value, because its identity check needs the old
+value's 200. After an exposure you may revoke first: the `verify` unit accepts an old value
+that is already dead, and `confirm` proves it. The inbox then can't bind the new value, because its identity check needs the old
 value to answer, so stage it by hand ("Mint and stage a value by hand").
 
 ### What verify-new proves
@@ -1113,14 +1113,19 @@ adapter's first rotation.
 Any other status refuses the value, naming it, and a probe with no answer fails the unit. A `root`
 token passes the first two probes as `read` + `write` + `deploy` does, and only the canary catches
 it. The canary is one application holding one variable with no secret, used by nothing else; its
-uuid is the executor's `coolify_token_canary_application`. An empty env list proves nothing, so
+uuid is the executor's `coolify_canary_application`. An empty env list proves nothing, so
 the canary must keep its variable.
 
 The inbox checks only that a pasted token answers for the same team, not its scope, so a token
-minted with the wrong abilities is staged and then refused by verify-new on every attempt. To
-recover, revoke that token in Coolify, delete the rotation's staging secret in `Rotation / Work`
-(`rotation/<credential id>/<occurrence>/staging`), mint again with the row's `abilities`, and
-retry the unit.
+minted with the wrong abilities is staged and then refused by verify-new, which fails the `store`
+unit. A requeue alone fails it again, because staging still holds that token. To recover:
+
+1. Revoke the wrongly minted token in Coolify.
+2. In `Rotation / Work`, delete the staging secret `rotation/<credential id>/<occurrence>/staging`.
+3. Requeue the unit (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, or retry
+   it on `/review` once they're spent (the "Alerts" table). It then waits, unclaimed, until a
+   value is staged.
+4. Mint again with the row's `abilities`, and paste the token into the inbox.
 
 ### The registry rows
 

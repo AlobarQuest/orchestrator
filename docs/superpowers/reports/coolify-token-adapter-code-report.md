@@ -3,7 +3,7 @@ Outcome: done
 # Report: the Coolify API token rotation adapter (ADR-0055 Amendment 33 item 10, D-82)
 
 Worker W-319, branch `hq/coolify-token-adapter-code`, based on `9caad335`.
-PR: https://github.com/AlobarQuest/orchestrator/pull/820 (code head `ee79a31b`; this report's commit follows it). Not merged: the merge waits on the dev
+PR: https://github.com/AlobarQuest/orchestrator/pull/820 (head: the commit that carries this report's final version; see `gh pr view 820`). Not merged: the merge waits on the dev
 Coolify measurement (D-82 item 14).
 
 ## What I built
@@ -19,7 +19,7 @@ unset (false), with no `rotate_requested`.
 | Item 10 entry | Change |
 |---|---|
 | `src/rotation_worker/adapters/coolify_api_token.py` | New. `NAME = "coolify-api-token"`, `PROVIDER = "coolify"`, `PLAN = derive(TYPES[NAME].capabilities, (), "", "bws-secret")` as `postgres_role.py` builds its own. Probe `GET /api/v1/version` (live exactly 200, `dead_statuses = {401}`), control `<digits>\|<random>` built at run time, `same_identity` by `GET /api/v1/teams/current`'s `id`, `check_scope` for item 4 and 13 C, `check_row` refusing a row without valid `abilities`, and `mint`, `host`, `consumer_loaded`, `revoke` raising `ContractError`. The `ConfinedClient` permits exactly five requests (the next table). |
-| `adapters/__init__.py` | Import, an `ADAPTERS` entry with `capabilities=TYPES[...]`, `check_row`, `revoke_may_come_first=True`, and the context field `coolify_token_canary_application`. |
+| `adapters/__init__.py` | Import, an `ADAPTERS` entry with `capabilities=TYPES[...]`, `check_row`, `revoke_may_come_first=True`, and the context field `coolify_canary_application`. |
 | `types.py` | `TYPES["coolify-api-token"]` with `Capabilities(machine_mint=False, machine_revoke=False)`, and `CLASS_TYPES["coolify-api-token"]`. |
 | `tests/architecture/test_rotation_agreement.py` | `coolify-api-token` leaves `UNTYPED`. |
 | `tests/architecture/test_rotation_edges.py` | A `PROVIDER_EDGES["coolify-api-token"]` row (base `COOLIFY_URL`, five routes), the five paths in `ROUTES`, the module in `_WORKER_CLIENTS` (one client), `coolify` in `NO_ADMIN_SECRET`, and the new config field in `NOT_IDENTITIES`. |
@@ -28,7 +28,7 @@ unset (false), with no `rotate_requested`.
 | `src/orchestrator/factory-policy.toml` | `coolify-api-token` in both `rotation_adapters` lists that name `bitbucket` (the `live_estate` and `external_system` rotation patterns), and one rationale sentence in each saying it has Bitbucket's shape. |
 | `.cred-consumers.toml` | `abilities` on each row (`["read", "write", "deploy"]`, `["read"]`, `["read", "write", "deploy"]`), the Mac paths removed from two notes, the estate lander's note naming the carried gap (D-82 item 15 A), and each row's comment saying why it isn't `rotated_by_sds` yet. |
 | intent-packages | No change, as the handoff says. |
-| `docs/operations/rotation-executor.md` | A "Coolify API tokens" section: the mint steps (tick `deploy` first), the revoke, the early-revoke path, the scope probes' table, the canary, and what a green ping proves per row. The config sample and its notes name `coolify_token_canary_application`, commented out until the canary exists. |
+| `docs/operations/rotation-executor.md` | A "Coolify API tokens" section: the mint steps (tick `deploy` first), the revoke, the early-revoke path, the scope probes' table, the canary, and what a green ping proves per row. The config sample and its notes name `coolify_canary_application`, commented out until the canary exists. |
 
 The five requests the confined client permits, all to `coolify_url` with the probed value as the
 bearer:
@@ -49,7 +49,7 @@ bearer:
   so a dead value's 401 is never read as scope. Its note joins any shape note. This doesn't change
   what the adapter does, so the stop point didn't apply. No other adapter implements it.
 - **`config.py`, `worker.py`, `cli.py`: the canary setting**, following `coolify_url`'s path:
-  `Config.coolify_token_canary_application` (in `VM_ONLY`), `Setup`, `build_setup`, `_provider`,
+  `Config.coolify_canary_application` (in `VM_ONLY`), `Setup`, `build_setup`, `_provider`,
   `AdapterContext`. The VM config is host-local (`/etc/rotation-worker/config.toml`), and the
   install script writes no configuration, so no install or deploy file changes.
 - **`tests/architecture/test_external_content_observes_only.py`:** the four new Coolify paths
@@ -61,7 +61,7 @@ bearer:
   `BY_PERSON`, Bitbucket's.
 - **`tests/rotation_worker/test_estate_landing_rows.py`:** the docstring no longer names a Mac
   reader.
-- **New tests:** `tests/rotation_worker/test_coolify_api_token.py` (32 tests) and
+- **New tests:** `tests/rotation_worker/test_coolify_api_token.py` (33 tests) and
   `tests/rotation_worker/test_coolify_api_token_rows.py` (14 tests).
 
 ## How D-82's five answers show in the code
@@ -75,9 +75,9 @@ bearer:
   `value` or `real_value`. It also refuses an empty list, a non-list, an entry that isn't an
   object, and any non-200 status, naming the status, because an empty list can't tell a `root`
   token from a correct one. The canary UUID is the executor setting
-  `coolify_token_canary_application`, checked against `^[a-z0-9]{8,64}$` before it enters a path.
+  `coolify_canary_application`, checked against `^[a-z0-9]{8,64}$` before it enters a path.
   With it unset, the provider still builds (the inbox's bind and `confirm` need no canary), and
-  only verify-new refuses: `no coolify_token_canary_application is configured, so the new
+  only verify-new refuses: `no coolify_canary_application is configured, so the new
   token's lack of read:sensitive can't be proved`. The answer is checked in memory; no log line,
   evidence or refusal carries it (`test_no_evidence_or_refusal_carries_a_value`).
 - **14 yes:** every answer is a source reading, tested against a simulated Coolify that answers
@@ -126,7 +126,7 @@ In production Coolify: one application, used only by this probe, holding exactly
 variable whose value is no secret (for example `SDS_CANARY=canary`). Nothing else may read or
 deploy from it, and it needn't run. Coolify stores the variable twice (`is_preview` false and
 true), which is fine. Its application uuid goes in the VPS host executor's
-`/etc/rotation-worker/config.toml` as `coolify_token_canary_application = "<uuid>"`; no repository
+`/etc/rotation-worker/config.toml` as `coolify_canary_application = "<uuid>"`; no repository
 file holds it. The variable must stay: an empty env list refuses every verify-new.
 
 ## Mac notes: what I found
@@ -152,7 +152,27 @@ So I removed the Mac path from both rows' notes. `test_no_note_names_a_mac_reade
 - `make check` against `orchestrator_test_hq_w_319`: **14890 items collected; 14889 passed, 1
   skipped, 0 failed**; ruff and pyright clean. That run was on `f43e9c28`. After the review fixes
   (`abc1bbfd`), I reran the rotation, architecture and services tests touching the change: 2672
-  passed. The final `make check` on `ee79a31b` (every code change, before this report's PR fields): **14890 collected; 14889 passed, 1 skipped, 0 failed**, ruff and pyright clean.
+  passed. A follow-up after the advisor's review (the next bullet list) changed code again, and
+  the final `make check` on that tree: **14891 collected; 14890 passed, 1 skipped, 0 failed**,
+  ruff and pyright clean. `/code-review` and the vendor review ran on the earlier diff, before
+  that follow-up.
+- Follow-up changes:
+  - Renamed the setting `coolify_token_canary_application` to `coolify_canary_application`. The
+    old name is 32 characters, and the orchestrator's rotation-evidence scan
+    (`rotation_evidence.LONG_RUN`, `[A-Za-z0-9_+/=]{32,}`) refuses any evidence string holding
+    it. Failure reasons leave through `commands/fail`, which that scan doesn't read, but a note
+    naming the setting would have been refused.
+  - Added `test_the_configured_canary_reaches_the_built_provider`, from the config file through
+    `cli.build_setup` and `worker._provider` to the adapter. Mutation check: deleting the
+    setting's line in each of `config.py`, `cli.py`, `worker.py` and `adapters/__init__.py`
+    fails the test, four of four.
+  - Rewrote the operations page's wrong-scope recovery as numbered steps, using the requeue route
+    in its "Alerts" table: nothing requeues a failed unit by itself.
+  - Confirmed `worker._other_keepers` sees only these three rows: no other registry
+    (infraops-mcp-server, change-manager, factory-runner) has a `provider = "coolify"` row, and it
+    counts only `rotated_by_sds` rows whose keeper the instance reads. Confirmed
+    `revoke_may_come_first` reaches `contract._verify_consumers`, which then takes either answer
+    for the old value.
 - `code-standards risk`: `high-risk` (auth: the adapter and its two test files).
 - `/code-review` (high): five findings. Fixed three: the config sample's placeholder (an operator
   copying it got the malformed-UUID refusal, not the named one), the latent note overwrite in
@@ -199,8 +219,9 @@ and this report.
 ## Concerns
 
 - **A wrong-scope mint binds from the inbox.** The inbox's identity check is the team only, so a
-  token minted with the wrong abilities is written to staging, and verify-new then refuses it on
-  every attempt until a person deletes the staging secret and mints again. It fails closed; the
+  token minted with the wrong abilities is written to staging, and verify-new then fails the
+  `store` unit. A requeue alone fails it again until a person deletes the staging secret and mints
+  again. It fails closed; the
   cost is attempts and a manual step. My own vendor-review seat raised it. I left the code as
   amendment 33 places the check (verify-new), documented the recovery on the operations page, and
   name it here for HQ. Moving a scope check into the inbox's bind would be a design change.
