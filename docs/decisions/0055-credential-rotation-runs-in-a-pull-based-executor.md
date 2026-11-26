@@ -6264,8 +6264,8 @@ in `~/.claude/bin` and in `~/Library/LaunchAgents` finds these files and nothing
   a value.
 - **sds-hq:** handoffs, a gate and progress records in `state/`, which read no value.
 - **Nothing on the Mac** names it. The Mac's `com.devon.change-window` job read the shared key
-  `b74bf8b3-…`, not this one (ADR-0059, lines 822 and 4203-4205), and it was taken out at G-89 (sds-hq
-  `state/history/progress-2026-11.md`, line 6175).
+  `b74bf8b3-…`, not this one (ADR-0059, lines 822 and 4203-4205), and it was taken out at G-89
+  (sds-hq `state/history/progress-2026-11.md`, line 6175).
 
 So the row's consumer set is complete, and the lane is the key's only reader.
 
@@ -6318,8 +6318,8 @@ What they say:
   Admin API has three key routes: `GET /v1/organizations/api_keys` (list, filterable by
   `workspace_id` and `status`), `GET /v1/organizations/api_keys/{api_key_id}` and
   `POST /v1/organizations/api_keys/{api_key_id}`, whose body takes only `name` and `status`
-  (`active`, `inactive` or `archived`) (B, C, D). A key's scope is "chosen when the key is created"
-  (K), and no route moves a key between workspaces.
+  (`active`, `inactive` or `archived`) (B, C, D). "A single-workspace key always runs in the
+  workspace chosen when it was created" (K), and no route moves a key between workspaces.
 - **Disable and Delete.** In the Console, "**Disable** is reversible (the Admin API reports the
   key's `status` as `"inactive"`, and **Re-enable** returns it to `"active"`)", and "**Delete** is
   permanent: the key is archived and still appears in List API Keys with `status: "archived"`"
@@ -6340,7 +6340,7 @@ What they say:
 - **Errors.** "401 - `authentication_error`: There's an issue with your API key (for example, it's
   malformed, revoked, or expired...)"; 403 is `permission_error`; 429, 500 and 529 are a rate limit,
   an internal error and an overload (I).
-- **A regular key's workspace is named in every authenticated response.** J's response-header
+- **A regular key's workspace is named in API responses.** J's response-header
   table: `anthropic-workspace-id` is "The `wrkspc_`-prefixed ID of the workspace that the API key
   or access token resolved to ... Absent when the credential doesn't resolve to a workspace (for
   example, on Admin API requests) or the request fails before authentication completes." K: "Claude
@@ -6348,6 +6348,10 @@ What they say:
   `anthropic-organization-id` response headers", and "The same accessors read the header from other
   Claude API endpoints too". No page lists endpoints one by one, so none confirms that
   `GET /v1/models` sends it.
+- **Scoped and unscoped keys.** "A single-workspace key always runs in the workspace chosen when it
+  was created. A key that isn't scoped to a workspace runs in the workspace named by each request's
+  `anthropic-workspace-id` header" (K), and such a request without the header gets 400
+  `invalid_request_error` (K). Only an unscoped key can call the Admin API (A, K).
 - **Unmeasured:** what status a disabled or deleted key gets, and how soon it stops
   authenticating. Only expiry is stated ("requests made with it return a `401
   authentication_error`", F), and I's 401 entry says "revoked" without defining it.
@@ -6371,7 +6375,9 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
    From the row's destinations (a keeper and one `runtime-fetch` reader, so no `distribute`),
    `plans.derive` gives Bitbucket's plan, as amendment 33 item 1 does:
    1. **mint** (person): in the Console, in workspace `sds-change-window`, Devon creates a key
-      and pastes it into the inbox (`Rotation / Inbox`; `inbox.pasted`).
+      scoped to that one workspace and pastes it into the inbox (`Rotation / Inbox`;
+      `inbox.pasted`). A key not scoped to a workspace can call the Admin API (Context), so the
+      mint note says single-workspace scope, and item 3 refuses an unscoped key.
    2. **store** (machine): `verify_new` (items 2 and 3), then `store`, which writes the keeper and
       reads it back.
    3. **verify** (machine): `verify_consumers`. The unit waits unclaimed until the reader has a
@@ -6391,18 +6397,25 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
    `https://api.anthropic.com` with the value as `Authorization: Bearer` and an
    `anthropic-version` header. Live is exactly 200. The control is a random value of the key's
    shape: the documented regular-key prefix followed by random characters of the subject's length
-   and alphabet, generated in memory and discarded. Anthropic documents 401 `authentication_error` for a key
-   that is "malformed, revoked, or expired" (I). The control is none of those in words, only a
-   key Anthropic never issued, so `dead_statuses` is `{401}` and exit check 1 records the
-   control's measured status. The control and the subject go
-   through the same probe, so a refused control proves the 200 came from the key (amendment 5's
+   and alphabet, generated in memory and discarded. Anthropic documents 401
+   `authentication_error` for a key that is "malformed, revoked, or expired" (I). The control is
+   none of those in words, only a key Anthropic never issued, so `dead_statuses` is `{401}` and
+   exit check 1 records the control's measured status. The control and the subject go through
+   the same probe, so a refused control proves the 200 came from the key (amendment 5's
    rule, lines 852-854). A 429, 5xx or transport failure is indeterminate and fails the step (item
    9). `probe_before_revoke` is the same request.
 3. **The identity check.** `same_identity` holds when both values answer 200 and each response's
    `anthropic-workspace-id` header equals the row's declared `workspace_id` (item 8). A missing
    header refuses: the value isn't bound, and nothing is stored. Unlike amendment 33's team check,
-   this tells the lane's workspace from every other one in the organization, so a key pasted from
-   another workspace never binds, which holds ADR-0059's "key of its own" by machine. The inbox's
+   this tells the declared workspace from every other one in the organization, so a key pasted
+   from another workspace never binds. The probe sends no `anthropic-workspace-id` request header,
+   so an unscoped key, which needs one, gets 400 and never answers live (Context). That 400 is
+   documented for requests in general, not measured for `GET /v1/models`, and no exit check can
+   measure it without minting an unscoped key. **Carried gap**, which the mint note's
+   single-workspace scope covers. The declared `workspace_id` is read from the current key (exit
+   check 1), so by machine this proves "the same workspace as the key minted at G-88"; that the
+   workspace is `sds-change-window` rests on Devon confirming the id at exit check 1, which holds
+   ADR-0059's "key of its own" from then on. The inbox's
    rules still apply (`inbox.other_mints`, `src/rotation_worker/inbox.py` lines 12 and 120; the
    other-keeper check, lines 20 and 172), but with one row of the type the other-keeper check
    compares against nothing, so it isn't what tells keys apart here. The header is documented for
@@ -6426,8 +6439,9 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
    reader states what a green ping proves.
 5. **The revoke and confirm-dead.** After the `verify` unit's alert, Devon deletes the old key in
    the Console. Delete, not Disable: a disabled key can be re-enabled (F), so it isn't revoked. The
-   alert names the key to delete by the creation date and name the Console shows, and says to
-   delete every other key in the workspace too. `confirm_dead` probes the old value from the
+   alert says to delete every key in the workspace except the one created for this rotation,
+   and names that rotation's mint date. The executor can't read a key's Console name without an
+   admin credential. `confirm_dead` probes the old value from the
    quarantine and passes on 401 beside the control's 401 and a 200 from the new value. The status a
    deleted key gets and how soon it applies aren't documented (Context), so item 11 decides how
    they are measured, and `confirm_dead` fails closed on any other answer. The executor can't list
@@ -6445,8 +6459,11 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
    process on the VPS host already calls public HTTPS providers (`https://openrouter.ai/api/v1`,
    `adapters/openrouter.py` line 62; `https://api.github.com`, `github_actions.py` line 43), and
    `docs/operations/rotation-executor.md` documents no egress filter on the host. The lane's
-   container on the same host reaches the Anthropic API (ADR-0059, lines 4366-4370; the lane's
-   compose, line 4), but that is the container's reach, not the executor's. So the network route
+   container reached `https://api.anthropic.com/` at the G-89 cut-over (an unauthenticated
+   request answered 404, reach only; sds-hq `state/history/progress-2026-11.md`, line 6172, the
+   probe ADR-0059 lines 4366-4370 planned). Its resource runs on production Coolify, whose one
+   server is its own host (amendment 29 item 2, line 4115). That is the container's reach, not
+   the executor's process. So the network route
    is there, and the new thing is the executor's process sending a key to a host it doesn't call
    today. Options:
    - **A.** Accept it. The adapter's confined client (`estate_clients.confined.ConfinedClient`)
@@ -6458,9 +6475,11 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
 8. **The row fields that change.** The row gains `workspace_id`, the `wrkspc_`-prefixed id of
    `sds-change-window`, which isn't a secret. Exit check 1 reads it from the current key. Today the
    workspace is named only in prose (`provider_identity`). `check_row` refuses a row without it,
-   one whose consumers aren't a keeper and `runtime-fetch` readers each with a
-   `healthchecks_check`, or one whose keeper isn't in `Rotation / Keepers`. The block comment's
-   "No adapter rotates this class" (lines 1831-1832) states the route instead. `disposition`, the
+   or one whose consumers aren't a keeper and `runtime-fetch` readers each with a
+   `healthchecks_check`. `check_row` sees only the row (`check_row(credential)`, for example
+   `adapters/postgres_role.py` line 185), so it can't read a keeper's project; the consumer-kind
+   refusal is what excludes factory-runner's row. The block comment's "No adapter rotates this
+   class" (lines 1831-1832) states the route instead. `disposition`, the
    consumers and `created` keep their form, and no `[[credential.exposure]]` is added. The row
    becomes `rotated_by_sds = true`, with a `rotate_requested` date, only when the route is built,
    its exit checks pass, and items 7 and 11 are answered.
@@ -6553,8 +6572,9 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
     1. **The probe on the current key, without a mint**: a one-off run of items 2 and 3 by the
        executor against the keeper's current value. It records, as statuses and the header's
        value only, the 200, the control's 401 and the `anthropic-workspace-id` value that becomes
-       the row's `workspace_id`. If the header is absent, the adapter doesn't merge, and the
-       identity check comes back as its own amendment.
+       the row's `workspace_id`. Devon confirms that id is `sds-change-window`'s in the Console
+       (a one-off, before the row declares it). If the header is absent, the adapter doesn't
+       merge, and the identity check comes back as its own amendment.
     2. **One real rotation** is the proof: the bind, `verify_new`, the reader's green ping,
        Devon's deletion and `confirm_dead`, with the deleted key's status recorded (item 11 A).
 
