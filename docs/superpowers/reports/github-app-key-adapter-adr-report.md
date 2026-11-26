@@ -6,7 +6,7 @@ Worker W-318, branch `hq/github-app-key-adapter-adr`, based on orchestrator `d8d
 The diff changes `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md`
 (Amendment 35 appended) and adds this report.
 
-PR: filled in after `gh pr create` (see the PR's own page). Amendment commit: `b32eeba8`.
+PR: https://github.com/AlobarQuest/orchestrator/pull/818 (#818). Amendment commit: `b32eeba8`; the PR's head is the commit that adds this line, one after `db03c85f`.
 
 ## What I built
 
