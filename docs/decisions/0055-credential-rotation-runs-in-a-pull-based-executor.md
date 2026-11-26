@@ -6409,11 +6409,12 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
    header refuses: the value isn't bound, and nothing is stored. Unlike amendment 33's team check,
    this tells the declared workspace from every other one in the organization, so a key pasted
    from another workspace never binds. The probe sends no `anthropic-workspace-id` request header,
-   so an unscoped key, which needs one, gets 400 and never answers live (Context). That 400 is
-   documented for requests in general, not measured for `GET /v1/models`, and no exit check can
-   measure it without minting an unscoped key. **Carried gap**, which the mint note's
-   single-workspace scope covers. The declared `workspace_id` is read from the current key (exit
-   check 1), so by machine this proves "the same workspace as the key minted at G-88"; that the
+   so an unscoped key, which needs one, gets 400 (Context). That 400 is documented for requests in
+   general and unmeasured for `GET /v1/models`, but the route doesn't rest on it: `same_identity`
+   requires a 200 and an `anthropic-workspace-id` header equal to the row's `workspace_id`, so an
+   unscoped key, or any key that doesn't resolve to the declared workspace, fails the bind whatever
+   status it gets. A 400 isn't live, and a missing or mismatched header refuses. The declared
+   `workspace_id` is read from the current key (exit check 1), so by machine this proves "the same workspace as the key minted at G-88"; that the
    workspace is `sds-change-window` rests on Devon confirming the id at exit check 1, which holds
    ADR-0059's "key of its own" from then on. The inbox's
    rules still apply (`inbox.other_mints`, `src/rotation_worker/inbox.py` lines 12 and 120; the
