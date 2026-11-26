@@ -149,7 +149,7 @@ The following test changes follow batch 2's:
   gain unset and empty refusals, a refusal when the variable names a regular file, and a full pass
   on the socket with `bws` never run. The rest cover a refused secret (`bws_failed` and
   `not_allowed`) that fails the pass, and a dead socket that fails the pass without falling back to
-  `bws`. change-proposer and rotation-decomposer also gain a dry run on the socket.
+  `bws`. All three also gain a dry run on the socket.
 - **Text pins:** `tests/rotation_decomposer/test_launcher.py` pins the new `unset` line.
   `test_sds_cred_registries.py` reads the shared git stub's extra `socket=` field.
 
@@ -216,6 +216,9 @@ placeholder strings (`a-lane-token`, `value-of-<uuid>`).
 - **Security scan** from the worktree root: 0 BLOCK, 2 WARN, 1 INFO. Both WARNs were there before
   this branch, as batches 1 and 2 recorded: `*-migration/` gitignore coverage, and the undeclared
   UUID `aaff45ca-…`, which isn't in the diff.
+- **CI on #821:** every check passed at `3a5c2556`. Quality ran `14912 passed, 14 skipped` (CI
+  skips the tests that need local tools). `Rollout transcription currency` and `Runner consumer
+  compatibility` passed too.
 
 ## Files changed
 
@@ -251,9 +254,9 @@ I didn't change ADR-0055 or anything under `src/rotation_worker/`.
   every existing test, since those tests run with a token. The rotation proposer would then have
   exited 0 on every broker pass while doing nothing. Mutation 4 shows the broker tests catch that.
 - **Ordering for HQ.** The release follows the G-106 grants and the broker directories, which the
-  handoff records as done. Within the batch, each lane still takes its own steps 5 to 8: the
-  broker's move to the release with its `listening` line for each lane, the `--tag` conversion,
-  `lane-run --read` over each table, and the revoke sitting later.
+  handoff records as done. The batch shares one release and one broker move (step 5, with a
+  `listening` line for each lane). Each lane then takes its own steps 6 to 8: the `--tag`
+  conversion, `lane-run --read` over its table, and, later, the revoke sitting.
 - **The dead-socket path.** With a dead socket, each lane's ping-URL read fails too, so no `/fail`
   is sent and the check goes down after its grace. That's the documented behavior for a key a lane
   can't read (`scripts/CLAUDE.md`). The pass itself exits 1.
