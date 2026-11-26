@@ -6209,3 +6209,410 @@ This amendment edits none of them.
 | Amendment 34 item 5, the broker token's bind on declared reach (line 5579) | Its `reach_secrets` and `reach_projects` change with the keepers' move under Open item 8 A. |
 | `src/rotation_worker/inbox.py`, `other_mints` (lines 12 and 120-136) | Stands, or gains item 6's exemption under HQ's answer B. |
 | `tests/architecture/test_rotation_agreement.py`, `UNTYPED` (line 33) | Changes with the code pull request (item 15). |
+
+## Amendment 36 — A rotation adapter for Anthropic API keys: a person mints and deletes, the executor proves (2026-11-26)
+
+**Status: Proposed (2026-11-26).** Accepted on merge, as amendment 31 is, except the items marked
+"Open, for Devon", which stay open until he answers. **Relates to:** amendment 32 item 1 ("The
+missing adapters"), amendments 33 and 35 (the Coolify token and GitHub App key adapters, whose
+shape this follows), amendment 15 (a type is only its provider), amendment 29 (the executor on the
+VPS host), amendment 30 (the lane secrets broker), and ADR-0059 amendment 14 (the change-window
+lane's own Anthropic key).
+
+Amendment 32 item 1 puts the design's six missing adapters in Phase C, each "its own amendment,
+which states the provider's API and the adapter's proof" (lines 4651-4664; every line number in
+this amendment is at `9caad335` unless it names another file or commit). Amendments 33 and 35
+decided the `coolify-api-token` and `github-app-private-key` classes. This amendment covers the
+sixth adapter, the `anthropic-api-key` class's one row in this repository. It changes nothing that
+runs: no registry row, adapter, type, compose, launcher, grant, key or package. The code pull
+request that builds the adapter cites it.
+
+### Context
+
+#### The row
+
+`anthropic-change-window-key` (`.cred-consumers.toml`, lines 1833-1852; its block comment, lines
+1828-1832) is an API key in the Anthropic workspace `sds-change-window` (`provider_identity`, line
+1837), created by Devon at HQ gate G-88 on 2026-11-22 (`created`, line 1839). ADR-0059 gave the
+lane "a key of its own, separately revocable", in place of the shared key the Mac job read
+(ADR-0059, lines 4203-4205). The row has `disposition = "reissue"` (line 1840), no `rotated_by_sds`
+field, no `[[credential.exposure]]` entry and no recorded fingerprint ("no session has read the
+value", line 1831). So it falls to the manual checklist (`src/rotation_worker/registry.py`, line
+57: only `true` counts), `tests/architecture/test_rotation_agreement.py` lists the class in
+`UNTYPED` (lines 26 and 29), and the rotation proposer reports it as `legacy` and proposes no
+package (`src/rotation_proposer/cli.py`, lines 502-504).
+
+Its two consumers:
+
+- **The keeper**, `0e9ebf2d-…` (`change-window-anthropic-key`), in `Rotation / Keepers` (lines
+  1842-1845; `.bws-secrets.toml`, lines 658-662).
+- **One `runtime-fetch` reader**, `scripts/run-change-window.sh`, with `healthchecks_check =
+  "Change Manager OPs Check"` (lines 1847-1852). It reads the key on `--submit` passes only, as
+  `ANTHROPIC_API_KEY`, through the lane secrets broker (launcher lines 72-73 and 128-134). The
+  broker serves it from the lane's allowlist (`lanes/secrets-broker/allowlist.toml`, line 60), and
+  the broker's account reads it by a single-secret grant (the broker row's comment,
+  `.cred-consumers.toml` lines 1474-1477; the row's comment, line 1830).
+
+#### Every reader, found by grep
+
+A grep for the keeper's UUID in this worktree, in every repository under `~/Projects` (main trees),
+in `~/.claude/bin` and in `~/Library/LaunchAgents` finds these files and nothing else:
+
+- **This repository:** `.cred-consumers.toml`, `.bws-secrets.toml`, the launcher, the broker's
+  allowlist, two tests (`tests/scripts/test_run_change_window.py` and
+  `tests/rotation_worker/test_secrets_broker_row.py`) and a build report. Only the launcher reads
+  a value.
+- **sds-hq:** handoffs, a gate and progress records in `state/`, which read no value.
+- **Nothing on the Mac** names it. The Mac's `com.devon.change-window` job read the shared key
+  `b74bf8b3-…`, not this one (ADR-0059, lines 822 and 4203-4205), and it was taken out at G-89
+  (sds-hq `state/history/progress-2026-11.md`, line 6175).
+
+So the row's consumer set is complete, and the lane is the key's only reader.
+
+#### What the reader proves when it passes
+
+- **The read is fatal.** An empty or unreadable key exits 1 with `FATAL`
+  (`run-change-window.sh`, lines 132-134), and a `--submit` pass pings `/fail` on anything but 0
+  (lines 34-38). So a green ping proves that the pass read a non-empty key from the keeper.
+- **A green ping doesn't prove Anthropic accepted the key.** The launcher exits 0 when "the window
+  ran ... whatever each item's outcome" (line 26). The lane runs infraops' bundle at the pinned
+  commit `8dc4d43e` (`lanes/Dockerfile`, line 26). At that commit, each approved item gets its own
+  agent call (`src/cli/change-mgr-cli.ts`, lines 153-155), and a failed agent call becomes that
+  item's `failed` outcome (`src/change-manager/run-window.ts`, lines 70-80). A window with no
+  approved item makes no Anthropic call.
+- **The schedule is on.** The lane runs daily at 04:00 New York (`lanes/change-window/crontab`,
+  line 10) only while `LANE_SCHEDULE_ENABLED` is `true` (crontab, line 9). It was turned on at the
+  G-89 cut-over on 2026-11-22 (sds-hq `state/history/progress-2026-11.md`, line 6174). If it is
+  turned off, the `verify` unit waits (item 4).
+
+#### The executor's reach to the keeper
+
+The keeper is already where a rotated keeper belongs. The root has write on `Rotation / Keepers`
+(decision 4, lines 215-217; `docs/operations/rotation-executor.md`, line 677, the freshest list of
+the root's projects), and the broker reads the keeper by a single-secret grant there, as decision
+4 requires of a consumer account (lines 205-210). So no keeper moves and no grant changes.
+
+#### The provider's API
+
+Everything in this subsection is a reading of Anthropic's documentation on 2026-11-26, not a
+measurement. No Anthropic API was called. Each `docs.anthropic.com` URL redirected to the same page
+on `platform.claude.com`, which is cited. The pages:
+
+- (A) the Admin API overview, `https://platform.claude.com/docs/en/api/administration-api`;
+- (B), (C) and (D) the List, Retrieve and Update API Key references,
+  `https://platform.claude.com/docs/en/api/admin-api/apikeys/list-api-keys`, `.../get-api-key` and
+  `.../update-api-key`;
+- (F) Authentication, `https://platform.claude.com/docs/en/manage-claude/authentication`;
+- (G) Create an Admin API key, `https://platform.claude.com/docs/en/manage-claude/admin-api-keys`;
+- (H) List Models, `https://platform.claude.com/docs/en/api/models-list`;
+- (I) Errors, `https://platform.claude.com/docs/en/api/errors`;
+- (J) the API overview, `https://platform.claude.com/docs/en/api/overview`;
+- (K) Workspaces, `https://platform.claude.com/docs/en/manage-claude/workspaces`;
+- the rate-limits and pricing pages, `https://platform.claude.com/docs/en/api/rate-limits` and
+  `https://platform.claude.com/docs/en/about-claude/pricing`.
+
+What they say:
+
+- **No API creates or deletes an API key.** A's FAQ: "No. You create API keys in the Claude
+  Console. The Admin API can only read, rename, and change the status of existing keys." The
+  Admin API has three key routes: `GET /v1/organizations/api_keys` (list, filterable by
+  `workspace_id` and `status`), `GET /v1/organizations/api_keys/{api_key_id}` and
+  `POST /v1/organizations/api_keys/{api_key_id}`, whose body takes only `name` and `status`
+  (`active`, `inactive` or `archived`) (B, C, D). "A single-workspace key always runs in the
+  workspace chosen when it was created" (K), and no route moves a key between workspaces.
+- **Disable and Delete.** In the Console, "**Disable** is reversible (the Admin API reports the
+  key's `status` as `"inactive"`, and **Re-enable** returns it to `"active"`)", and "**Delete** is
+  permanent: the key is archived and still appears in List API Keys with `status: "archived"`"
+  (F).
+- **The Admin API needs an admin credential.** A names "An **Admin API key** ... Only organization
+  members with the admin role can provision one", an OAuth token with `org:admin`, or a personal or
+  service-account key "that isn't scoped to a specific workspace". Keys "scoped to a single
+  workspace ... don't work there" (K). Besides API keys, A names organization members and roles,
+  invites, workspaces and their members, usage and cost reports, rate limits (including setting
+  workspace limits) and organization webhooks among what the Admin API reaches.
+- **The probe route.** `GET /v1/models` answers 200 with the model list (H), on the host
+  `https://api.anthropic.com` ("The Claude API is a RESTful API at `https://api.anthropic.com`", J).
+  H's example authenticates with `Authorization: Bearer`. J marks `anthropic-version` required and
+  H marks it optional, so the probe sends it. No page says whether the route is billed or counts
+  against a rate limit. The rate-limits page scopes its token limits to the Messages API, and the
+  pricing page charges per token. The route sends no prompt, so it spends no tokens, but that is an
+  inference.
+- **Errors.** "401 - `authentication_error`: There's an issue with your API key (for example, it's
+  malformed, revoked, or expired...)"; 403 is `permission_error`; 429, 500 and 529 are a rate limit,
+  an internal error and an overload (I).
+- **A regular key's workspace is named in API responses.** J's response-header
+  table: `anthropic-workspace-id` is "The `wrkspc_`-prefixed ID of the workspace that the API key
+  or access token resolved to ... Absent when the credential doesn't resolve to a workspace (for
+  example, on Admin API requests) or the request fails before authentication completes." K: "Claude
+  API responses include an `anthropic-workspace-id` header alongside the `request-id` and
+  `anthropic-organization-id` response headers", and "The same accessors read the header from other
+  Claude API endpoints too". No page lists endpoints one by one, so none confirms that
+  `GET /v1/models` sends it.
+- **Scoped and unscoped keys.** "A single-workspace key always runs in the workspace chosen when it
+  was created. A key that isn't scoped to a workspace runs in the workspace named by each request's
+  `anthropic-workspace-id` header" (K), and such a request without the header gets 400
+  `invalid_request_error` (K). Only an unscoped key can call the Admin API (A, K).
+- **Unmeasured:** what status a disabled or deleted key gets, and how soon it stops
+  authenticating. Only expiry is stated ("requests made with it return a `401
+  authentication_error`", F), and I's 401 entry says "revoked" without defining it.
+- **The key's shape.** A regular key is a static secret that starts with the documented
+  regular-key prefix (F), followed by a long random string. An Admin API key starts with a
+  different, admin prefix (G). G also notes that one admin-scoped key form shares the regular
+  prefix, so a prefix alone can't tell an admin key from a regular one.
+
+So no API mints or deletes a key, and the shape is amendment 33's unless Devon gives the executor
+an admin credential (item 10): a person mints into the inbox, the executor proves and stores, and a
+person deletes the old key after the executor's proof (`src/rotation_worker/adapters/bitbucket.py`;
+its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
+`src/rotation_worker/types.py` line 39).
+
+### Decision
+
+1. **The type.** `anthropic-api-key` becomes a credential type named `anthropic-key` with
+   `Capabilities(machine_mint=False, machine_revoke=False)`: not hosted, with an overlap (Anthropic
+   holds both keys at once until one is deleted), no issue plan, no `env_at_distribute`. Its
+   keeper is a BWS secret (`store_kind` `bws-secret`), so the VPS host executor takes its units.
+   From the row's destinations (a keeper and one `runtime-fetch` reader, so no `distribute`),
+   `plans.derive` gives Bitbucket's plan, as amendment 33 item 1 does:
+   1. **mint** (person): in the Console, in workspace `sds-change-window`, Devon creates a key
+      scoped to that one workspace and pastes it into the inbox (`Rotation / Inbox`;
+      `inbox.pasted`). A key not scoped to a workspace can call the Admin API (Context), so the
+      mint note says single-workspace scope, and item 3 refuses an unscoped key.
+   2. **store** (machine): `verify_new` (items 2 and 3), then `store`, which writes the keeper and
+      reads it back.
+   3. **verify** (machine): `verify_consumers`. The unit waits unclaimed until the reader has a
+      successful run since the keeper's revision date (`worker._gates_retire`,
+      `src/rotation_worker/worker.py` line 954), up to a day. Its completion sends the revoke
+      alert.
+   4. **revoke** (person): Devon deletes the old key in the Console (item 5).
+   5. **confirm** (machine): `confirm_dead`.
+
+   The type applies by class (`CLASS_TYPES`, `types.py` line 67), so it also types factory-runner's
+   shared `anthropic-api-key` row (factory-runner `.cred-consumers.toml`, lines 112-118 at
+   `280b641`). That row's keeper is in `Ops / Platform`, its consumers are Actions secrets, it is
+   "INCOMPLETE BY DESIGN" (line 103), and it has no `rotated_by_sds`, so the proposer still reports
+   it `legacy`. `check_row` (item 8) refuses it, as amendment 35 item 1 does for localops' row. It
+   stays Devon's by hand.
+2. **The probe and its known-bad control.** `probe` sends `GET /v1/models` to
+   `https://api.anthropic.com` with the value as `Authorization: Bearer` and an
+   `anthropic-version` header. Live is exactly 200. The control is a random value of the key's
+   shape: the documented regular-key prefix followed by random characters of the subject's length
+   and alphabet, generated in memory and discarded. Anthropic documents 401
+   `authentication_error` for a key that is "malformed, revoked, or expired" (I). The control is
+   none of those in words, only a key Anthropic never issued, so `dead_statuses` is `{401}` and
+   exit check 1 records the control's measured status. The control and the subject go through
+   the same probe, so a refused control proves the 200 came from the key (amendment 5's
+   rule, lines 852-854). A 429, 5xx or transport failure is indeterminate and fails the step (item
+   9). `probe_before_revoke` is the same request.
+3. **The identity check.** `same_identity` holds when both values answer 200 and each response's
+   `anthropic-workspace-id` header equals the row's declared `workspace_id` (item 8). A missing
+   header refuses: the value isn't bound, and nothing is stored. Unlike amendment 33's team check,
+   this tells the declared workspace from every other one in the organization, so a key pasted
+   from another workspace never binds. The probe sends no `anthropic-workspace-id` request header,
+   so an unscoped key, which needs one, gets 400 (Context). That 400 is documented for requests in
+   general and unmeasured for `GET /v1/models`, but the route doesn't rest on it: `same_identity`
+   requires a 200 and an `anthropic-workspace-id` header equal to the row's `workspace_id`, so an
+   unscoped key, or any key that doesn't resolve to the declared workspace, fails the bind whatever
+   status it gets. A 400 isn't live, and a missing or mismatched header refuses. The declared
+   `workspace_id` is read from the current key (exit check 1), so by machine this proves "the same workspace as the key minted at G-88"; that the
+   workspace is `sds-change-window` rests on Devon confirming the id at exit check 1, which holds
+   ADR-0059's "key of its own" from then on. The inbox's
+   rules still apply (`inbox.other_mints`, `src/rotation_worker/inbox.py` lines 12 and 120; the
+   other-keeper check, lines 20 and 172), but with one row of the type the other-keeper check
+   compares against nothing, so it isn't what tells keys apart here. The header is documented for
+   API responses (J, K) but not confirmed for `GET /v1/models`. Exit check 1 measures it on the
+   current key before the adapter merges.
+4. **The consumers' proof, and rule R10.** The reader fetches the keeper fresh on every `--submit`
+   pass, and nothing keeps the value between passes: the broker caches and writes nothing
+   (amendment 30 item 4, lines 4386-4389; `scripts/secrets_broker.py`, lines 16-19), and each pass's
+   container process ends with the pass. So the reader can't stay on the old key past a pass that
+   started after the store. The proof is the existing route for a scheduled `runtime-fetch` reader
+   ("How each consumer kind is verified", line 342): the keeper readback in `store`, then
+   `Change Manager OPs Check` reporting a successful run that began after the keeper's revision
+   date. Because the read is fatal (Context), that run read the new key. No revoke alert is sent
+   before it, which meets R10 and Infra Brain 1032 by machine evidence. Amendment 29's `loaded`
+   fingerprint doesn't apply: the lane keeps no value.
+
+   **Carried gap:** the green run doesn't prove Anthropic accepted the key in use (Context). That
+   isn't a revoke risk, because no consumer can be left on the old key, and `verify_new` proved
+   the value itself live in the right workspace. A key that Anthropic later refuses shows as the
+   window's items failing in its digest, not as a failed ping. The code pull request's test for the
+   reader states what a green ping proves.
+5. **The revoke and confirm-dead.** After the `verify` unit's alert, Devon deletes the old key in
+   the Console. Delete, not Disable: a disabled key can be re-enabled (F), so it isn't revoked. The
+   alert says to delete every key in the workspace except the one created for this rotation,
+   and names that rotation's mint date. The executor can't read a key's Console name without an
+   admin credential. `confirm_dead` probes the old value from the
+   quarantine and passes on 401 beside the control's 401 and a 200 from the new value. The status a
+   deleted key gets and how soon it applies aren't documented (Context), so item 11 decides how
+   they are measured, and `confirm_dead` fails closed on any other answer. The executor can't list
+   the workspace's keys without an admin credential, so a stray key Devon made by hand and never
+   pasted is outside its proof. **Carried gap**, stated in the revoke alert. After an exposure,
+   Devon may delete first (decision 6; Infra Brain 1032; D-26, amendment 19 item 10), so the
+   adapter sets `revoke_may_come_first`, and the probe before the revoke takes either answer.
+6. **The keeper's project: no change.** The keeper is in `Rotation / Keepers`, which the root
+   writes, and its one reading account has its single-secret grant there (Context). The `store`
+   step writes it where it is. `.bws-secrets.toml` and the broker row's `reach_secrets` keep their
+   form.
+7. **Open, for Devon: the executor calling Anthropic.** Neither the executor's code nor its
+   architecture tests name an Anthropic host today: a grep of `src/rotation_worker` and
+   `tests/architecture/test_rotation_edges.py` for "anthropic" finds nothing. The executor's
+   process on the VPS host already calls public HTTPS providers (`https://openrouter.ai/api/v1`,
+   `adapters/openrouter.py` line 62; `https://api.github.com`, `github_actions.py` line 43), and
+   `docs/operations/rotation-executor.md` documents no egress filter on the host. The lane's
+   container reached `https://api.anthropic.com/` at the G-89 cut-over (an unauthenticated
+   request answered 404, reach only; sds-hq `state/history/progress-2026-11.md`, line 6172, the
+   probe ADR-0059 lines 4366-4370 planned). Its resource runs on production Coolify, whose one
+   server is its own host (amendment 29 item 2, line 4115). That is the container's reach, not
+   the executor's process. So the network route
+   is there, and the new thing is the executor's process sending a key to a host it doesn't call
+   today. Options:
+   - **A.** Accept it. The adapter's confined client (`estate_clients.confined.ConfinedClient`)
+     permits exactly `GET https://api.anthropic.com/v1/models`, and sends the key nowhere else.
+   - **B.** Leave the row by hand.
+
+   **Recommendation: A.** It's the OpenRouter adapter's existing pattern for an LLM provider's key,
+   and the request reads nothing but the model list. **Blocks:** the row's `rotated_by_sds`.
+8. **The row fields that change.** The row gains `workspace_id`, the `wrkspc_`-prefixed id of
+   `sds-change-window`, which isn't a secret. Exit check 1 reads it from the current key. Today the
+   workspace is named only in prose (`provider_identity`). `check_row` refuses a row without it,
+   or one whose consumers aren't a keeper and `runtime-fetch` readers each with a
+   `healthchecks_check`. `check_row` sees only the row (`check_row(credential)`, for example
+   `adapters/postgres_role.py` line 185), so it can't read a keeper's project; the consumer-kind
+   refusal is what excludes factory-runner's row. The block comment's "No adapter rotates this
+   class" (lines 1831-1832) states the route instead. `disposition`, the
+   consumers and `created` keep their form, and no `[[credential.exposure]]` is added. The row
+   becomes `rotated_by_sds = true`, with a `rotate_requested` date, only when the route is built,
+   its exit checks pass, and items 7 and 11 are answered.
+9. **Logging and failure.** The adapter logs through the executor's existing structured logging
+   and logs nothing of a value: evidence carries only fingerprints (the sha256 prefix and length,
+   `rotation_worker/values.py`, line 17) through `contract.py`, as every adapter's does. The key,
+   the control and the `Authorization` header appear in no log line, exception message or evidence
+   field, and a failure names its status only, never a response body. The workspace id isn't a
+   secret and may appear in a refusal. A transport failure returns no answer, so the step is
+   indeterminate and fails the unit, which a requeue retries (amendment 5). An unexpected status,
+   a missing or mismatched workspace header, or a control that isn't refused fails the step with
+   that named. Nothing is swallowed.
+10. **Open, for Devon: an Admin API key for the executor.** An Admin API key could do two things
+    the plan leaves to a person: revoke by machine (`POST /v1/organizations/api_keys/{id}` with
+    `status: "archived"`), and list the workspace's keys, so a stray key is seen. It is an admin
+    credential: it reaches every key in every workspace of the organization, and members, invites,
+    workspaces and rate limits (Context, A). Decision 4 puts every admin credential in
+    `Rotation / Admin` and in the hand-rotated set (lines 211-214 and 221-222), and the D-84
+    standing answer leaves "an admin credential" to Devon (sds-hq `standing-answers.md`, lines
+    300-323, at `b2460b34`). Options:
+    - **A.** No. A person mints and deletes, as item 1 plans.
+    - **B.** Devon mints an Admin API key into `Rotation / Admin`, read by UUID only while an
+      `anthropic-key` unit revokes, as the OpenRouter management key is
+      (`docs/operations/rotation-executor.md`, line 674). The type becomes
+      `Capabilities(machine_mint=False, machine_revoke=True)`, GitHub PAT's shape (`types.py`, line
+      38). The revoke picks the old key by an id the executor derives and confirms, never one taken
+      from evidence (T8), which needs its own design: Anthropic exposes only a `partial_key_hint`
+      for a key (B, C), so matching the quarantined value to an id is unmeasured.
+
+    **Recommendation: A.** The gain is one Console deletion per rotation, and B adds an
+    organization-wide admin credential and an id-matching design for it. It's re-askable.
+    **Blocks:** nothing in item 1.
+11. **Open, for Devon: the measurement.** Items 2, 3 and 5 rest on unmeasured answers: the
+    control's status, whether `GET /v1/models` sends the workspace header, and a deleted key's
+    status and lag. The D-82 standing answer covers a canary Coolify application and throwaway
+    tokens on `dev-coolify` only (sds-hq `standing-answers.md`, lines 257-276), so it covers no
+    Anthropic key. Options:
+    - **A.** No new key. Exit check 1 measures the control and the header against the current key,
+      with no mint. The first real rotation measures the deleted key: `confirm_dead` records the old
+      key's status and, if it isn't 401, fails with the status named, and the person's deletion is
+      already done.
+    - **B.** A throwaway key Devon mints in `sds-change-window` and deletes, which a session
+      probes before and after the deletion, recording both statuses and the lag. That's a new
+      probe credential.
+
+    **Recommendation: A**, as Devon chose for the GitHub App key (D-84 (14) A, sds-hq
+    `state/decisions.md`, line 16). A failed `confirm_dead` revokes nothing by machine and leaves
+    the unit to a person. **Blocks:** nothing under A. Under B, the code pull request's merge.
+12. **What the 2026-11-26 standing answers cover.** Each covers only what it names (sds-hq
+    `standing-answers.md`, lines 257-323, at `b2460b34`):
+    - **D-82** (one canary application, three `dev-coolify` probe tokens): nothing here. It is
+      Coolify's proof pattern.
+    - **D-83** rule 2 (fix forward when a route proves before it switches): applies. `verify_new`
+      proves the key before the keeper changes, and the old key keeps working until Devon deletes
+      it, so a failed rotation needs no restore: Devon mints again. Rule 1 (reach through another
+      identity's token) doesn't apply: the root reads this keeper by its own grant.
+    - **D-84** (the root holding a rotated key by its own grant, in development): applies. Its
+      condition 1 already holds (item 6). The key writes nothing the executor trusts, so its
+      condition 2 doesn't arise. Its condition 3, the reach in T1, is recorded by the code pull
+      request. Its exceptions, an admin credential and a measurement choice, are items 10 and 11.
+
+    Item 7's network path is in none of them.
+13. **What the code pull request changes.** Named here, none changed by this amendment:
+    - `src/rotation_worker/adapters/anthropic_key.py`, the provider: `NAME` (`anthropic-key`) and
+      `PROVIDER` (`anthropic`, the row's `provider`), a `PLAN` from `derive(...)`, the probe,
+      control and identity check (items 2 and 3), `check_row` (item 8), and `mint`, `host`,
+      `consumer_loaded` and `revoke` raising `ContractError`, as `bitbucket.py` does.
+    - `src/rotation_worker/adapters/__init__.py`: the import and an `ADAPTERS` entry with
+      `capabilities=TYPES[...]`, `check_row` and `revoke_may_come_first=True`.
+    - `src/rotation_worker/types.py`: a `TYPES` entry and `CLASS_TYPES["anthropic-api-key"]`.
+    - `tests/architecture/test_rotation_agreement.py`: `anthropic-api-key` leaves `UNTYPED`.
+    - `tests/architecture/test_rotation_edges.py`: a `PROVIDER_EDGES` entry for
+      `https://api.anthropic.com`, beside `"openrouter"` (line 366).
+    - `tests/architecture/test_wsp21_invariant_scan.py`: the module in `OUTBOUND_ALLOWLIST`, with
+      its reason, beside `openrouter.py` (line 782).
+    - `layers.toml`, if no pattern there already names the module.
+    - `src/orchestrator/factory-policy.toml`: `anthropic-key` in the `rotation_adapters` lists
+      (lines 464 and 575).
+    - `.cred-consumers.toml`: item 8's fields. Another worker edits that file, so the pull request
+      rebases on it.
+    - intent-packages: one `rotation-anthropic-change-window-key` package, which the rotation
+      proposer generates. It isn't a first issue, so no standing approval covers it, and every
+      revision is Devon's to approve by name.
+    - `docs/operations/rotation-executor.md`: a section for the type, with item 1's mint note and
+      item 5's deletion note.
+    - The threat model's T1 note (D-84 condition 3).
+    - A test for the reader that states what its green ping proves (item 4).
+
+    **Exit checks**, each before the row's `rotated_by_sds = true`:
+    1. **The probe on the current key, without a mint**: a one-off run of items 2 and 3 by the
+       executor against the keeper's current value. It records, as statuses and the header's
+       value only, the 200, the control's 401 and the `anthropic-workspace-id` value that becomes
+       the row's `workspace_id`. Devon confirms that id is `sds-change-window`'s in the Console
+       (a one-off, before the row declares it). If the header is absent, the adapter doesn't
+       merge, and the identity check comes back as its own amendment.
+    2. **One real rotation** is the proof: the bind, `verify_new`, the reader's green ping,
+       Devon's deletion and `confirm_dead`, with the deleted key's status recorded (item 11 A).
+
+### What it grants, and nothing more
+
+Nothing. No BWS identity, project, grant or scope, no Anthropic key, Admin API key, workspace or
+permission, no network path and no proof setup is added or widened. The keeper doesn't move. Items
+7, 10 and 11 are Devon's, named and not given. No endpoint is added, so the HTTPS rule for public
+FQDNs (Infra Brain 212) doesn't apply. Nothing here declares a credential exposed, and no rotation
+age changes.
+
+### Consequences
+
+- **The change window's Anthropic key can rotate by machine once the adapter merges** and items 7
+  and 11 are answered. No keeper moves first.
+- **Each rotation still needs two Console acts from Devon**, a key creation and a deletion, because
+  Anthropic has no key-creation API and item 10 recommends no admin credential. The keeper write,
+  the proofs, the workspace check and the deletion's timing become the executor's.
+- **The deletion follows machine evidence** from the lane's green `--submit` pass, by the existing
+  `runtime-fetch` route. A green pass proves the read, not Anthropic's acceptance in use (item 4).
+- **Factory-runner's shared key stays by hand**: the type applies to its row, and `check_row`
+  refuses it.
+- **Stale until the code pull request:** the row's comment, `UNTYPED`, and amendment 15's
+  "not yet measured" for Anthropic keys (lines 1779-1784), which this amendment answers from
+  Anthropic's documentation: mint is a person's, and revoke is a person's unless item 10 is
+  answered B.
+
+### Passages it governs
+
+This amendment edits none of them.
+
+| Passage | Disposition |
+|---|---|
+| Amendment 32 item 1, "The missing adapters" (lines 4651-4664) | The `anthropic-api-key` class is decided here, the last of the design's six. |
+| Amendment 15, the mint and revoke table's "Anthropic and OpenAI keys" row (line 1784) | Anthropic's half is answered from documentation (Context): a person mints; a person revokes unless Open item 10 is answered B. OpenAI's half stays unmeasured. |
+| ADR-0059 amendment 14, "One Anthropic API key held by this lane only" (ADR-0059, lines 4203-4205) | Stands, and item 3's workspace check holds it on each rotation. |
+| Decision 4, the keepers in `Rotation / Keepers` and admin credentials in `Rotation / Admin` and the hand-rotated set (lines 205-225) | Stand. The keeper is already there (item 6). An Admin API key under Open item 10 B would join `Rotation / Admin` and the hand-rotated set. |
+| "How each consumer kind is verified", the scheduled `runtime-fetch` row (line 342) | Stands, and is the reader's proof (item 4). |
+| Amendment 29 item 3, a lane token's revoke waits on the loaded fingerprint | Stands for lane tokens. It doesn't apply to this row, whose reader keeps no value (item 4). |
+| `tests/architecture/test_rotation_agreement.py`, `UNTYPED` (lines 26 and 29) | Changes with the code pull request (item 13). |
