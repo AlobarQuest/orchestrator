@@ -111,7 +111,7 @@ project path. Each request's expected answer:
 | `GET /api/v1/version` | 401 | 200 | 200 | 200 |
 | `GET /api/v1/teams/current` | 401 | 200, same `id` (an integer) | 200, same `id` | 200, same `id` |
 | `PATCH /api/v1/projects/<random UUID>`, `Content-Type: application/json`, body `{"sds_scope_probe": true}` | 401 | 403 `Missing required permissions: write` | 422 `Validation failed.` | 403 |
-| `GET /api/v1/deploy`, no query | 401 | 403 `Missing required permissions: deploy` | 400 `You must provide uuid or tag.` | 403 |
+| `GET /api/v1/deploy`, no query | 401 | 403 `Missing required permissions: deploy` | 400 `You must provide uuid or tag.` on `4.0.0-beta.473` (source); 405 `This endpoint has changed to a POST request.` on `4.7.6` (measured, Round 1) | 403 |
 | `GET /api/v1/applications/<dev canary uuid>/envs` | 401 | 200, a list of at least one entry, none with `value` or `real_value` | the same as R | 200, entries carrying `value` and `real_value` |
 
 Also check that the project the PATCH names still doesn't exist afterward, and that no deployment
@@ -261,3 +261,106 @@ and this report.
 The worktree `.worktrees/hq-W-319` and the database `orchestrator_test_hq_w_319` stay in place:
 the PR is unmerged, and HQ resumes here after the measurement. Remove both, and the branch, once
 #820 merges.
+
+## Round 1
+
+Fix round 1 of 2, on Devon's session's dev measurement (D-82 item 14, 2026-11-26 about 19:30
+UTC, PR #820 comment 7203058301). Versions: `dev-coolify` `4.7.6`, `prod-coolify`
+`4.0.0-beta.473`.
+
+### The measured table
+
+Statuses and messages only; no token or fingerprint.
+
+| Request | Control | R (`read`) | RWD (`read` + `write` + `deploy`) | RS (`read` + `read:sensitive`) |
+|---|---|---|---|---|
+| `GET /api/v1/version` | 401 | 200 | 200 | 200 |
+| `GET /api/v1/teams/current` | 401 | 200, team `id` 0 | 200, team `id` 0 | 200, team `id` 0 |
+| `PATCH /api/v1/projects/<random UUID>` | 401 | 403 `Missing required permissions: write` | 422 `Validation failed.` | 403, the write message |
+| `GET /api/v1/deploy`, no query | 401 | 403 `Missing required permissions: deploy` | **405 `This endpoint has changed to a POST request.`** | 403, the deploy message |
+| `GET /api/v1/applications/<canary>/envs` | 401 | 200, no `value` or `real_value` | 200, no `value` or `real_value` | 200, both fields |
+
+The measurement had no side effect. Only the RWD deploy cell differs from the expected table,
+which said 400; the expected table's cell is corrected in the preceding section.
+
+### What Coolify's source says, per version
+
+Read with `gh api repos/coollabsio/coolify/contents/<path>?ref=<tag>`, read-only, nothing run.
+
+| | `v4.0.0-beta.473` | `v4.7.6` |
+|---|---|---|
+| The `/deploy` route | `routes/api.php` 76: `Route::match(['get', 'post'], '/deploy', [DeployController::class, 'deploy'])->middleware(['api.ability:deploy'])` | `routes/api.php` 161: `Route::get('/deploy', [OtherController::class, 'post_required'])->middleware(['api.ability:deploy'])`; 162: `Route::post('/deploy', [DeployController::class, 'deploy'])`, same middleware |
+| Its group's middleware | `routes/api.php` 38-41: `auth:sanctum`, `ApiAllowed`, `api.sensitive` | `routes/api.php` 69-72: `auth:sanctum`, `api.token.team`, `ApiAllowed`, `api.sensitive` |
+| What a GET reaches past the ability check | `DeployController.php` `deploy()` (351): with no `uuid` and no `tag`, 384 answers 400 `You must provide uuid or tag.` | `OtherController.php` `post_required()` (14-19): 405 `This endpoint has changed to a POST request.`, `Allow: POST` |
+| The ability check | `app/Http/Middleware/ApiAbility.php` 9-26: `root` passes; otherwise Sanctum's `CheckForAnyAbility`, whose refusal becomes 403 `Missing required permissions: deploy` | The same file, 30-72: a token limited to some projects is refused 403 on routes outside `SCOPED_ACCESS_ROUTES` (`deploy` is inside it), then the same `root` pass and 403 refusal |
+
+So on both tags the route-level `api.ability:deploy` runs before the GET's handler, which agrees
+with the measurement (R got 403, RWD got 405). The group middleware ahead of it answers only 401
+(`auth:sanctum`, and on `4.7.6` `EnsureTokenBelongsToCurrentTeamMember` 26 and 34) or 403
+(`ApiAllowed` "API is disabled." on both tags, beta.473's "not allowed to access the API" at 32,
+and `4.7.6`'s `EXCEEDS_ACCESS_MESSAGE` at 57). Neither 400 nor 405 can reach a token without
+`deploy` on either version. `invalidTokenResponse()` (a 400, `bootstrap/helpers/api.php` 41-44)
+is called only inside the handler, past the ability check. A `root` token passes the ability
+check and gets 400 or 405, as before; the canary probe is what refuses it.
+
+### The change
+
+- `DEPLOY_ANSWERS` is `{True: frozenset({400, 405}), False: frozenset({403})}` and
+  `WRITE_ANSWERS` is `{True: frozenset({422}), False: frozenset({403})}`
+  (`src/rotation_worker/adapters/coolify_api_token.py` 67-68); `check_scope` tests membership, and
+  `_mismatch` names the set ("must answer 400 or 405; it answered HTTP 404"). The probe is still
+  `GET /api/v1/deploy`; nothing sends `POST`. The module docstring says which version answers
+  which.
+- Tests (`tests/rotation_worker/test_coolify_api_token.py`): the simulated Coolify's held-deploy
+  answer is a field (`deploy_get`, default 400). Added a held-deploy test for 400 and 405, a
+  held-deploy answer outside the set (404) refused with its status named, an absent-deploy token
+  refused and a read-only token passing with 403 on either version, a row that doesn't declare
+  `deploy` refused when its token holds it and answers 400 or 405, and a team `id` 0 bind test.
+  The existing 400 path (the full rotation's note "deploy held (400)") is kept. Because the source
+  lets no token without `deploy` reach 400 or 405, the absent-deploy case stays a 403 test.
+
+### The checks, no code change
+
+- **Team `id` 0.** `_team` (193-205) returns the `id` when it is an `int` and not a `bool`, so 0
+  comes back as 0; `same_identity` tests `new_team is not None` and then `==`. No other code reads
+  the team. `test_team_id_zero_is_an_identity_not_a_missing_one` binds two team-0 values, and the
+  simulated Coolify's default team was already 0 (`TEAM = 0`).
+- **RS's PATCH 403 carries the write message.** The probe compares the status only
+  (`_scope_status` returns `status_code`; the body is never read), so the message doesn't matter
+  and RS's 403 is what a token without `write` must answer.
+
+### Head and checks
+
+- Fix commit `19fc2273`, fast-forward on `b1ba573e`; this report's commit follows it on
+  `hq/coolify-token-adapter-code`.
+- `make check` on the worktree with its own database (`orchestrator_test_hq_w_322`): lint and
+  types clean, **14896 passed, 1 skipped**, 398.90s. The adapter's two test files alone: 53
+  passed.
+- Token-shape grep of the added lines of `git diff 9caad335..HEAD`
+  (`grep '^+' | grep -nE '[0-9]+\|[A-Za-z0-9_-]{20,}|0\.[0-9a-f]{8}-[0-9a-f]{4}-|ghp_|github_pat_|sk-ant-|xox[bp]-'`):
+  one hit, the original report's own grep pattern text; no token or token-shaped literal.
+- `rotated_by_sds` stays unset (false) on `coolify-estate-lander-token`,
+  `coolify-revision-watcher-read-token` and `coolify-change-window-token`; `.cred-consumers.toml`
+  is unchanged in this round.
+
+### Standards followed (Round 1)
+
+- **Code Brain 3** (logging): no logging added; the adapter's notes and refusals go through the
+  executor's existing evidence path.
+- **Code Brain 4** (error handling): a transport failure stays an indeterminate step
+  (`_scope_status` raises `ContractError` naming the error type); an answer outside a probe's set
+  fails `verify_new` with the status named. No `except …: pass` added.
+- **Code Brain 5** (security): refusals and notes name abilities and statuses only; no token,
+  header or body is logged or kept.
+- **Infra Brain 591, 592, 593**: no token or token-shaped literal added; test tokens are drawn
+  at run time with `secrets` (the grep above).
+- **Infra Brain 1032**: no row's exposure or consumer fields changed; `.cred-consumers.toml` is
+  untouched this round.
+- **Infra Brain 212** (HTTPS for public FQDNs): not applicable; no endpoint added.
+
+### Follow-ups (not edits)
+
+- No one-off measurement script exists: the dev measurement was run by hand in Devon's session,
+  so a re-measurement on a later Coolify version is hand work too.
+- Production's held-deploy answer on `4.0.0-beta.473` (400) rests on source, not measurement.
+  Its first real rotation measures it, and fails closed on anything outside `{400, 405}`.
