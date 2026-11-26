@@ -18,16 +18,18 @@ executor's own `coolify_url`, the tailnet address, with the probed value as its 
   reaches a handler that refuses it without writing, or gets 403:
   - `write`: `PATCH /api/v1/projects/<a random UUID>` with only a field the handler doesn't
     allow. With `write`, 422 before any project is looked up; without, 403.
-  - `deploy`: `GET /api/v1/deploy` with no `uuid` and no `tag`. With `deploy`, 400 and nothing
-    deployed; without, 403.
+  - `deploy`: `GET /api/v1/deploy` with no `uuid` and no `tag`. With `deploy`, nothing
+    deployed and 400 on `4.0.0-beta.473` (the handler wants `uuid` or `tag`) or 405 on `4.7.6`
+    (the GET route only says to POST); without, 403 on both, from the route's ability middleware.
   - `read:sensitive` absent (D-82 item 13 C): `GET /api/v1/applications/<canary>/envs`, the
     env list of a canary application holding one non-secret variable. Without
     `read:sensitive`, no entry carries `value` or `real_value`. A `root` token passes the
     first two probes as `read` + `write` + `deploy` does, and only this one catches it. The
     answer is checked in memory and never logged or kept. With no canary configured, verify_new
     refuses by name.
-  These answers are read from Coolify's source at the tag and unmeasured until the dev Coolify
-  measurement (D-82 item 14) runs.
+  These answers are read from Coolify's source at both tags; the dev Coolify measurement (D-82
+  item 14, `4.7.6`) confirmed each one, and production's first rotation measures `4.0.0-beta.473`.
+  An answer outside a probe's set refuses.
 * **Mint, host, consumer_loaded and revoke** are never the executor's (D-82 item 12 A).
 """
 
@@ -61,9 +63,9 @@ TEAM_PATH: Final = "/api/v1/teams/current"
 DEPLOY_PATH: Final = "/api/v1/deploy"
 # A field `update_project` doesn't allow, so it answers 422 before it looks up a project.
 WRITE_PROBE_BODY: Final = {"sds_scope_probe": True}
-# What each scope probe answers, by whether the token holds the ability.
-WRITE_ANSWERS: Final = {True: 422, False: 403}
-DEPLOY_ANSWERS: Final = {True: 400, False: 403}
+# What each scope probe may answer, by whether the token holds the ability.
+WRITE_ANSWERS: Final = {True: frozenset({422}), False: frozenset({403})}
+DEPLOY_ANSWERS: Final = {True: frozenset({400, 405}), False: frozenset({403})}
 SENSITIVE_FIELDS: Final = ("value", "real_value")
 # A Coolify resource uuid: lowercase letters and digits.
 CANARY_UUID: Final = re.compile(r"^[a-z0-9]{8,64}$")
@@ -207,10 +209,10 @@ class CoolifyApiTokenProvider:
         note verify_new files, which names abilities and statuses only."""
         holds_write, holds_deploy = "write" in self._abilities, "deploy" in self._abilities
         write = self._scope_status("write", new, "PATCH", self._project_path, json=WRITE_PROBE_BODY)
-        if write != WRITE_ANSWERS[holds_write]:
+        if write not in WRITE_ANSWERS[holds_write]:
             raise ContractError(_mismatch("write", holds_write, write))
         deploy = self._scope_status("deploy", new, "GET", DEPLOY_PATH)
-        if deploy != DEPLOY_ANSWERS[holds_deploy]:
+        if deploy not in DEPLOY_ANSWERS[holds_deploy]:
             raise ContractError(_mismatch("deploy", holds_deploy, deploy))
         self._check_not_sensitive(new)
         return (
@@ -257,7 +259,10 @@ class CoolifyApiTokenProvider:
 
 
 def _mismatch(ability: str, held: bool, status: int) -> str:
-    expected = (WRITE_ANSWERS if ability == "write" else DEPLOY_ANSWERS)[held]
+    expected = " or ".join(
+        str(status)
+        for status in sorted((WRITE_ANSWERS if ability == "write" else DEPLOY_ANSWERS)[held])
+    )
     declared = "declares" if held else "doesn't declare"
     return (
         f"the row {declared} {ability}, so its probe must answer {expected}; "

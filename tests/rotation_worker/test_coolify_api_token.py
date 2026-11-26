@@ -61,6 +61,8 @@ class Coolify:
     requests: list[httpx.Request] = field(default_factory=list)
     down: bool = False
     canary_missing: bool = False
+    # The held-deploy answer: 400 on `4.0.0-beta.473`, 405 on `4.7.6` (measured on dev Coolify).
+    deploy_get: int = 400
 
     def add(self, *abilities: str, team: int = TEAM) -> Value:
         value = _token()
@@ -91,7 +93,11 @@ class Coolify:
             return httpx.Response(422, json={"message": "Validation failed."})
         if path == "/api/v1/deploy":
             assert not request.url.query
-            return httpx.Response(400, json={"message": "You must provide uuid or tag."})
+            message = {
+                400: "You must provide uuid or tag.",
+                405: "This endpoint has changed to a POST request.",
+            }.get(self.deploy_get, "Not found.")
+            return httpx.Response(self.deploy_get, json={"message": message})
         if self.canary_missing:
             return httpx.Response(404, json={"message": "Application not found"})
         if not isinstance(self.canary_envs, list):
@@ -209,7 +215,7 @@ def test_no_evidence_or_refusal_carries_a_value() -> None:
         (
             EVERY,
             ["read", "write"],
-            "declares deploy, so its probe must answer 400; it answered HTTP 403",
+            "declares deploy, so its probe must answer 400 or 405; it answered HTTP 403",
         ),
         (["read"], ["read", "write"], "doesn't declare write, so its probe must answer 403"),
         (["read"], ["read", "deploy"], "doesn't declare deploy, so its probe must answer 403"),
@@ -236,6 +242,28 @@ def test_the_read_only_token_passes_with_both_probes_refused() -> None:
     new = coolify.add("read")
     note = _provider(coolify, ["read"]).check_scope(new)
     assert note.startswith("scope: write absent (403), deploy absent (403)")
+
+
+@pytest.mark.parametrize("held_answer", [400, 405])
+def test_a_held_deploy_passes_on_either_coolify_version(held_answer: int) -> None:
+    coolify = Coolify(deploy_get=held_answer)
+    note = _provider(coolify).check_scope(coolify.add(*EVERY))
+    assert f"deploy held ({held_answer})" in note
+
+
+def test_a_held_deploy_answering_outside_the_set_is_refused_by_status() -> None:
+    coolify = Coolify(deploy_get=404)
+    with pytest.raises(ContractError, match="must answer 400 or 405; it answered HTTP 404"):
+        _provider(coolify).check_scope(coolify.add(*EVERY))
+
+
+@pytest.mark.parametrize("held_answer", [400, 405])
+def test_an_absent_deploy_is_refused_on_either_coolify_version(held_answer: int) -> None:
+    coolify = Coolify(deploy_get=held_answer)
+    with pytest.raises(ContractError, match="declares deploy, so its probe must answer 400 or 405"):
+        _provider(coolify).check_scope(coolify.add("read", "write"))
+    note = _provider(coolify, ["read"]).check_scope(coolify.add("read"))
+    assert "deploy absent (403)" in note
 
 
 def test_scope_is_checked_only_after_the_value_answers_live() -> None:
@@ -309,6 +337,13 @@ def test_identity_is_the_team_and_both_values_must_answer() -> None:
     # After an early revoke the old value no longer answers, so the value is staged by hand.
     del coolify.tokens[old.reveal()]
     assert not provider.same_identity(new, old)
+
+
+def test_team_id_zero_is_an_identity_not_a_missing_one() -> None:
+    # Coolify's root team has `id` 0 (measured on dev Coolify, D-82 item 14).
+    coolify = Coolify()
+    old, new = coolify.add(*EVERY, team=0), coolify.add(*EVERY, team=0)
+    assert _provider(coolify).same_identity(new, old)
 
 
 def test_the_client_permits_only_the_five_requests() -> None:
