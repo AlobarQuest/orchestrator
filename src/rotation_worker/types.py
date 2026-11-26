@@ -60,6 +60,8 @@ TYPES: Final[dict[str, CredentialType]] = {
         ),
         verify_by_shape=True,
     ),
+    # ADR-0055 amendment 33: Coolify has no token API, so a person mints and revokes in its UI.
+    "coolify-api-token": CredentialType(Capabilities(machine_mint=False, machine_revoke=False)),
 }
 
 # A registry row's `class`, mapped to its type (increment 4). A class with no entry is a type the
@@ -69,6 +71,7 @@ CLASS_TYPES: Final[dict[str, str]] = {
     "bws-lane-token": "bws-lane-token",
     "bws-machine-token": "bws-machine-token",
     "change-manager-m2m-bearer": "change-manager",
+    "coolify-api-token": "coolify-api-token",
     "github-pat-fine-grained": "github-pat",
     "healthchecks-ping-url": "healthchecks-ping-url",
     "openrouter-key": "openrouter",

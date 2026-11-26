@@ -623,7 +623,9 @@ rotated_by_sds = true
 # Landing Part 3b (ADR-0019 amendment 3). Minted by Devon in Coolify on 2026-10-30 with
 # read, write and deploy, never read:sensitive (probed in-process that day: env values come
 # back hidden). The lander's client bounds it to one repository's member-record applications.
-# sha256[:8] computed in-process 2026-10-30.
+# sha256[:8] computed in-process 2026-10-30. The coolify-api-token adapter (ADR-0055 amendment 33)
+# types this class, but the row is not rotated_by_sds: the executor can't write its keeper in
+# `SDS Operator` until Devon moves it to `Rotation / Keepers` (D-82 item 11 A).
 [[credential]]
 id = "coolify-estate-lander-token"
 class = "coolify-api-token"
@@ -633,6 +635,7 @@ provider_identity = "Coolify API token sds-estate-lander (prod; read, write, dep
 bws_uuid = "f9f59233-0794-4ea8-9806-b4f3011e6147"
 created = "2026-10-30"
 disposition = "reissue"
+abilities = ["read", "write", "deploy"]
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -644,14 +647,16 @@ disposition = "reissue"
   repo = "orchestrator"
   ref = "scripts/run-estate-landing.sh"
   healthchecks_check = "sds-estate-landing"
-  note = "reads it on --submit passes only, as ESTATE_LANDING_COOLIFY_TOKEN, not fatal if unreadable (re-points and restores are refused by name): in the sds-lane-estate-landing container through the lane secrets broker, on the Mac with the narrow sds-operator identity; pings sds-estate-landing every pass"
+  note = "reads it on --submit passes only, as ESTATE_LANDING_COOLIFY_TOKEN, not fatal if unreadable (re-points and restores are refused by name): in the sds-lane-estate-landing container through the lane secrets broker; pings sds-estate-landing every pass. A green pass proves a pass began after the keeper changed, not that the read succeeded: that gap is carried (ADR-0055 amendment 33 item 5, D-82 item 15 A)"
 
 # ── The revision watcher's read-only Coolify token ───────────────────────────────
 # Created by Devon in Coolify on 2026-11-15 (HQ gate G-62) as `revision-watcher-read`, with `read`
 # only, never read:sensitive, and stored as `prod-coolify-read-token` in `Ops / Platform`. It
 # replaces `prod-coolify-api-token` (infraops-mcp-server's, which can write envs) for the lane's one
-# call, listing applications. No fingerprint: no session has read the value. No adapter rotates
-# this class, so it is not rotated_by_sds and falls to the manual checklist.
+# call, listing applications. No fingerprint: no session has read the value. The coolify-api-token
+# adapter (ADR-0055 amendment 33) types this class, but the row is not rotated_by_sds: the executor
+# can't write its keeper in `Ops / Platform` until Devon moves it to `Rotation / Keepers` (D-82
+# item 11 A), so it falls to the manual checklist.
 [[credential]]
 id = "coolify-revision-watcher-read-token"
 class = "coolify-api-token"
@@ -660,6 +665,7 @@ provider_identity = "Coolify API token revision-watcher-read (prod; read)"
 bws_uuid = "0bf066e9-28c1-4aa7-8c3d-b50300d492a6"
 created = "2026-11-15"
 disposition = "reissue"
+abilities = ["read"]
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -671,7 +677,7 @@ disposition = "reissue"
   repo = "orchestrator"
   ref = "scripts/run-revision-watcher.sh"
   healthchecks_check = "sds-revision-watcher"
-  note = "reads it every pass as REVISION_WATCHER_PLATFORM_TOKEN: in the lane's container with the lane's own token, on the Mac with the broad identity; pings sds-revision-watcher"
+  note = "reads it every pass as REVISION_WATCHER_PLATFORM_TOKEN: in the lane's container with the lane's own token; pings sds-revision-watcher"
 
 # ── The orchestrator's alert-hub sender token ────────────────────────────────────
 # Platform layer Part 2. alert-hub source `sds-orchestrator` (id 74885df2-cd25-494f-a13d-050cb3a0e67c),
@@ -1802,8 +1808,10 @@ rotated_by_sds = false
 # ADR-0059 increment 8, Amendment 15 (D-68 B, D-70 A). Created by Devon in production Coolify
 # (4.0.0-beta.473) at HQ gate G-88 (2026-11-22), team-wide read, write and deploy, never
 # read:sensitive, and stored in `Rotation / Keepers` with a single-secret read grant for
-# `lane-secrets-broker`. No fingerprint: no session has read the value. No adapter rotates this
-# class, so it is not rotated_by_sds and falls to the manual checklist.
+# `lane-secrets-broker`. No fingerprint: no session has read the value. The coolify-api-token
+# adapter (ADR-0055 amendment 33) types this class, but the row is not rotated_by_sds until the dev
+# Coolify measurement (D-82 item 14) and the canary application (item 13 C) exist, so it falls to
+# the manual checklist.
 [[credential]]
 id = "coolify-change-window-token"
 class = "coolify-api-token"
@@ -1812,6 +1820,7 @@ provider_identity = "Coolify API token change-window (prod; read, write, deploy)
 bws_uuid = "3d41395a-06c3-47d5-ac85-b50a00dfbc2f"
 created = "2026-11-22"
 disposition = "reissue"
+abilities = ["read", "write", "deploy"]
 
   [[credential.consumer]]
   kind = "bws-secret"

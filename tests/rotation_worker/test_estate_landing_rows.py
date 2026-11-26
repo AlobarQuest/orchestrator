@@ -137,10 +137,9 @@ def test_the_read_app_key_row_lists_the_lane_s_container_reader(
 def test_the_coolify_token_row_lists_the_lane_s_container_reader(
     mirror: RepoMirror, origins: Origins
 ) -> None:
-    """The container reads the lander's Coolify token through the broker on `--submit` passes, and
-    the Mac with the narrow identity. Both run the one launcher, so the hand-rotated row names them
-    in one reader: a second consumer would repeat its destination. The broker's allowlist entry for
-    the lane lists the id."""
+    """The container reads the lander's Coolify token through the broker on `--submit` passes. No
+    scheduled job on the Mac runs the launcher, so the row names the container alone (ADR-0055
+    amendment 33 item 5). The broker's allowlist entry for the lane lists the id."""
     _commit_registry(origins)
     token = credentials(mirror)["coolify-estate-lander-token"].credential
     readers = [

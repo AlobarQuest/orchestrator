@@ -40,6 +40,7 @@ VM_ONLY: Final = (
     "coolify_url",
     "orchestrator_application",
     "change_manager_application",
+    "coolify_token_canary_application",
     "github_app_id",
     "github_app_key_id",
     "pg_helper_key_id",
@@ -79,6 +80,10 @@ class Config:
     # change-manager's Coolify application uuid: the one application the change-manager adapter
     # may write, whatever a package names.
     change_manager_application: str | None = None
+    # The canary Coolify application whose env list a new Coolify API token reads, to prove it
+    # lacks read:sensitive (ADR-0055 amendment 33, D-82 item 13 C). Absent, that adapter's
+    # verify_new refuses by name.
+    coolify_token_canary_application: str | None = None
     # The read-only Healthchecks key in `Rotation / Healthchecks`, read only when a scheduled
     # reader's check is (ADR-0055 amendment 9, decision 5).
     healthchecks_key_id: str | None = None
@@ -155,6 +160,7 @@ def load(path: Path) -> Config:
         coolify_url=_optional_string(raw, "coolify_url"),
         orchestrator_application=_optional_string(raw, "orchestrator_application"),
         change_manager_application=_optional_string(raw, "change_manager_application"),
+        coolify_token_canary_application=_optional_string(raw, "coolify_token_canary_application"),
         healthchecks_key_id=healthchecks_key,
         healthchecks_management_key_id=_optional_uuid(raw, "healthchecks_management_key_id"),
         github_app_id=app_id,

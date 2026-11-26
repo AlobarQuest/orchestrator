@@ -51,6 +51,7 @@ from rotation_worker.adapters import (
     bitbucket,
     bws_machine_token,
     change_manager,
+    coolify_api_token,
     github_pat,
     openrouter,
     orchestrator_bearer,
@@ -359,6 +360,8 @@ def _hosted(kind: str, resource: str, key: str, last: str) -> str:
 
 
 _change_manager_variable, _change_manager_entry = next(iter(change_manager.VARIABLES.items()))
+CANARY_APPLICATION = "canaryapp0000000000000001"
+ABSENT_PROJECT = "5f0c6a2e-8d1b-4c3a-9e7f-0a1b2c3d4e5f"
 
 # One row per credential type: what its adapter sends to the service the credential belongs to.
 # Its writes to a hosted service are the Coolify rows above.
@@ -450,6 +453,30 @@ PROVIDER_EDGES: dict[str, Reach] = {
         frozenset({"https://change-mgr.alobar.net"}),
         frozenset({("GET", "/api/landing-policy")}),
     ),
+    # The probed value is its bearer, sent only to the executor's tailnet `coolify_url`.
+    "coolify-api-token": Reach(
+        tuple(
+            built_clients(
+                coolify_api_token,
+                lambda: coolify_api_token.build_provider(
+                    credential={"abilities": ["read", "write", "deploy"]},
+                    coolify_url=COOLIFY_URL,
+                    canary_application=CANARY_APPLICATION,
+                    absent_project=ABSENT_PROJECT,
+                ),
+            )
+        ),
+        frozenset({COOLIFY_URL}),
+        frozenset(
+            {
+                ("GET", "/api/v1/version"),
+                ("GET", "/api/v1/teams/current"),
+                ("PATCH", f"/api/v1/projects/{ABSENT_PROJECT}"),
+                ("GET", "/api/v1/deploy"),
+                ("GET", f"/api/v1/applications/{CANARY_APPLICATION}/envs"),
+            }
+        ),
+    ),
     # No client: a fresh login in a child process (`PROCESSES`).
     "bws-machine-token": Reach((), frozenset(), frozenset()),
     # No client of its own: its login is the machine-token provider's child process, and its one
@@ -518,6 +545,7 @@ _WORKER_CLIENTS = {
     "src/rotation_worker/adapters/github_pat.py": 2,
     "src/rotation_worker/adapters/bitbucket.py": 1,
     "src/rotation_worker/adapters/change_manager.py": 1,
+    "src/rotation_worker/adapters/coolify_api_token.py": 1,
     "src/rotation_worker/adapters/postgres_role.py": 1,
 }
 NETWORK: dict[str, dict[str, int]] = {
@@ -669,6 +697,7 @@ LAUNCHERS: dict[str, str] = {
 NOT_IDENTITIES = frozenset(
     {
         "change_manager_application",
+        "coolify_token_canary_application",
         "coolify_url",
         "github_app_id",
         "keepers_project_id",
@@ -689,7 +718,7 @@ ADMIN_SECRET_PROVIDERS = frozenset(
     {"openrouter", "orchestrator", "change-manager", "postgres-role", "bws-lane-token"}
 )
 NO_ADMIN_SECRET = frozenset(
-    {"bitbucket", "bitwarden-sm", "fake", "github", "healthchecks-ping-url"}
+    {"bitbucket", "bitwarden-sm", "coolify", "fake", "github", "healthchecks-ping-url"}
 )
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
@@ -732,6 +761,11 @@ ROUTES = frozenset(
         "/api/v1/applications/u1/restart",
         "/api/v1/services/u1/envs",
         "/api/v1/services/u1/restart",
+        "/api/v1/version",
+        "/api/v1/teams/current",
+        "/api/v1/deploy",
+        f"/api/v1/projects/{ABSENT_PROJECT}",
+        f"/api/v1/applications/{CANARY_APPLICATION}/envs",
         "/api/v3/checks/",
         _CHECK_PATH,
         "/health",

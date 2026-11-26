@@ -20,6 +20,7 @@ from rotation_worker.adapters import (
     bws_lane_token,
     bws_machine_token,
     change_manager,
+    coolify_api_token,
     fake,
     github_pat,
     healthchecks_ping_url,
@@ -55,6 +56,9 @@ class AdapterContext:
     orchestrator_application: str | None = None
     executor_key_id: str | None = None
     change_manager_application: str | None = None
+    # The canary application whose env list proves a new Coolify API token lacks read:sensitive
+    # (ADR-0055 amendment 33, D-82 item 13 C).
+    coolify_token_canary_application: str | None = None
     mirror: RepoMirror | None = None
     healthchecks: Healthchecks | None = None
     # The Management key's check listing, which a ping URL's mint reads (ADR-0055 amendment 23).
@@ -249,6 +253,18 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         ),
         capabilities=TYPES[healthchecks_ping_url.NAME].capabilities,
         check_row=healthchecks_ping_url.check_row,
+    ),
+    coolify_api_token.NAME: Adapter(
+        coolify_api_token.PROVIDER,
+        coolify_api_token.PLAN,
+        lambda context: coolify_api_token.build_provider(
+            credential=context.credential,
+            coolify_url=context.coolify_url,
+            canary_application=context.coolify_token_canary_application,
+        ),
+        capabilities=TYPES[coolify_api_token.NAME].capabilities,
+        check_row=coolify_api_token.check_row,
+        revoke_may_come_first=True,
     ),
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager

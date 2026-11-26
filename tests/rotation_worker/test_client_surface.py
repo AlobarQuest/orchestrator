@@ -172,8 +172,9 @@ def test_an_unusable_url_is_refused_at_construction(url: str) -> None:
 
 def test_only_the_client_spells_an_orchestrator_path() -> None:
     for source in sorted(PROGRAM.rglob("*.py")):
-        # coolify.py spells Coolify's API paths, which share the `/api/v1/` prefix.
-        if source.name in ("orchestrator_client.py", "coolify.py"):
+        # coolify.py and the Coolify API token adapter spell Coolify's API paths, which share the
+        # `/api/v1/` prefix.
+        if source.name in ("orchestrator_client.py", "coolify.py", "coolify_api_token.py"):
             continue
         assert re.findall(r"/api/v1/", source.read_text()) == [], source
 
@@ -198,6 +199,9 @@ HTTP_CLIENTS = frozenset(
         "notify.py",
         # The one health URL its registry row names, with no credential.
         "adapters/postgres_role.py",
+        # Production Coolify's tailnet address, with the token being rotated (ADR-0055
+        # amendment 33).
+        "adapters/coolify_api_token.py",
     }
 )
 
