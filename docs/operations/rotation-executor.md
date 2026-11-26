@@ -1116,6 +1116,12 @@ it. The canary is one application holding one variable with no secret, used by n
 uuid is the executor's `coolify_token_canary_application`. An empty env list proves nothing, so
 the canary must keep its variable.
 
+The inbox checks only that a pasted token answers for the same team, not its scope, so a token
+minted with the wrong abilities is staged and then refused by verify-new on every attempt. To
+recover, revoke that token in Coolify, delete the rotation's staging secret in `Rotation / Work`
+(`rotation/<credential id>/<occurrence>/staging`), mint again with the row's `abilities`, and
+retry the unit.
+
 ### The registry rows
 
 Each row declares `abilities`, always with `read` and never `read:sensitive` or `root`; a row
