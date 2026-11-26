@@ -10,7 +10,10 @@ Docs only. I made no live call, changed no code, and took no production action.
 1. **The root already reaches the SYSTEM and VERIFIER bearers through the broker's keeper.** The
    broker's token reads project `SDS Operator` by a project grant. That project holds
    `orchestrator-system-bearer` (`221a48d5-…`) and `orchestrator-verifier-bearer` (`660d5846-…`)
-   (`.bws-secrets.toml` lines 28-30 and 66-68). The broker's keeper is in `Rotation / Keepers`,
+   (`.cred-consumers.toml` lines 176-181 and 214-219; `.bws-secrets.toml` lines 28-30, where the
+   SYSTEM secret's name is `ORCHESTRATOR_M2M_CREDENTIALS`, and 66-68). At `8b326f2d` four Phase B
+   broker lanes read the SYSTEM bearer through the broker, and none reads the VERIFIER bearer yet;
+   the project grant reaches both regardless. The broker's keeper is in `Rotation / Keepers`,
    which the executor's root writes and reads (ADR-0055 decision 4, lines 215-217). So whoever holds
    the root can read the broker's token, and with it both bearers. This has been true since Devon
    stored the keeper on 2026-11-20. Four passages say those bearers are outside the root's reach,
@@ -28,16 +31,21 @@ Docs only. I made no live call, changed no code, and took no production action.
    non-empty `reach_projects`. I made this item 5, "Open, for HQ", because it concerns the form of
    a check and grants no authority. My recommendation is to measure first.
 3. **The first rotation would take the issue plan as the row stands.** The row has no `created`,
-   so infraops serves a null `last_rotated` and the proposer picks the issue plan. The issue would
-   stall at `store`, because the keeper holds Devon's real token and not the empty marker. Item 3
+   so infraops serves a null `last_rotated` and the proposer picks the issue plan. The issue's mint
+   would wait. Once Devon's token is staged, `_check_issue_fact` refuses the unit, because the keeper
+   holds Devon's hand-pasted token and not the empty marker (`checks.py` lines 184-198). The issue
+   fails closed, and the mint sitting is wasted. Item 3
    plans `created = "2026-11-20"`. With that, the rotation plan runs and each revision is Devon's
    to approve by name, because the standing approval covers only the issue plan.
-4. **Container-name stability is still unverified.** No record at `8b326f2d` closes amendment 29's
+4. **A revoke-first after a leak stops every broker lane for up to a day in operation.** The
+   `store` claim asks the `live_estate` window. Item 7 says so, and leaves the hand route to Devon
+   at the time.
+5. **Container-name stability is still unverified.** No record at `8b326f2d` closes amendment 29's
    verify item, and I made no live call. Exit checks 1 and 2 in item 9 close it for the broker.
-5. **Two concerns fall outside the standards in the handoff.** Neither Code Brain nor Infra Brain
+6. **Two concerns fall outside the standards in the handoff.** Neither Code Brain nor Infra Brain
    has a rule on transitive reach through a stored token (concern 1). Neither has one on rollback
    for a shared service's credential (Open item 12). Both rest on this ADR's threat model.
-6. **The header list in ADR-0055 is still stale.** I left it unchanged, as amendments 32 and 33 did.
+7. **The header list in ADR-0055 is still stale.** I left it unchanged, as amendments 32 and 33 did.
 
 ## What I built
 
@@ -61,11 +69,13 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
 2. **The route (D-81 (2) B).** It uses the rotation plan derived in-process at `8b326f2d`, with
    these units and acts:
    1. The mint (Devon).
-   2. `store`: `verify_new`, then `store`, then `distribute` (one service `PATCH`, no restart).
-   3. The session's restart.
-   4. `verify`: the `loaded` match.
-   5. The revoke (Devon).
-   6. `confirm`.
+   2. The inbox's bind, before the claim.
+   3. `store`: `verify_new`, then `store`, then `distribute` (one service `PATCH`, no restart). Its
+      claim asks the `live_estate` window.
+   4. The session's restart.
+   5. `verify`: the `loaded` match.
+   6. The revoke (Devon).
+   7. `confirm`.
 3. **The row's anchor, and who approves.** The row gets `created = "2026-11-20"`, so the proposer
    picks the rotation plan. The standing approval refuses it, so each revision is Devon's to
    approve by name.
@@ -82,7 +92,9 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
    through `restart`. It holds the restart while any broker lane's check shows `started`, and
    avoids the 04:00 change-window pass. The cost is one possible missed read per broker lane.
 7. **A leak revokes first.** If Devon revokes first, every broker lane's reads fail until `store`
-   completes and the session restarts the broker.
+   completes and the session restarts the broker. Because the `store` claim waits for the window,
+   that can be until the next 02:00 once the window narrows. The hand route stays Devon's call at
+   the time.
 8. **Logging and failure.** Evidence holds fingerprints only, and every step fails closed. No
    revoke alert is sent before `verify`.
 9. **The code pull request.** It lists the file changes and one root act on the host, then four
@@ -94,6 +106,7 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
 10. **Open, for Devon: the root's reach to SYSTEM and VERIFIER through the keeper.**
 11. **Open, for Devon: whether the unlock tier also names the root token.**
 12. **Open, for Devon: rollback after a failed broker start.**
+13. **Open, for Devon: the credential for item 5's measurement.**
 
 ### Each "Open" item, with options and recommendation
 
@@ -109,7 +122,8 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
   - A: accept as found, and have T1 state it. This follows the D-65 precedent.
   - B: move the keeper out of the root's reach. D-81 (2) B can't then be built, and the token
     rotates by hand.
-  - C: keep both bearers off the broker. That reverses amendment 32 for three lanes.
+  - C: narrow the broker's `SDS Operator` grant to single secrets. That removes the project's
+    other secrets, but not the two bearers, which broker lanes read or will read.
 
   **Recommendation:** A for the development phase, reopened in D-64's security phase.
 - **Item 11 (Devon): whether the tier names the root token.**
@@ -118,19 +132,40 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
 
   **Recommendation:** B. D-81 (1)'s option text says "any other key that mints or reads for others".
 - **Item 12 (Devon): rollback after a failed start.**
-  - A: no rollback; fix forward.
-  - B: a restore verb that re-`PATCH`es the old keeper revision. That is a new executor ability.
+  - A: no machine rollback; fix forward.
+  - B: a restore verb for this adapter, like `pg-restore`, that `PATCH`es from the quarantine. That
+    is a new executor ability.
+  - C: Devon copies the quarantined value into the variable by hand.
 
-  **Recommendation:** A. The bind proves the token works before the `PATCH`.
+  **Recommendation:** A, with C as Devon's choice at the time.
+- **Item 13 (Devon): the credential for item 5's measurement.**
+  - A: the first real rotation measures it, at the cost of one mint and one revoke.
+  - B: a throwaway project-granted token Devon mints and revokes, as in amendment 33 item 14.
+  - C: the broker's own token from the keeper, which needs a new executor verb or a person.
+
+  **Recommendation:** B, before the code PR merges.
 
 ## Checks run
 
-- **Line-number check.** I printed every cited range at `8b326f2d` with `git show 8b326f2d:<file> |
-  sed -n`. This covered the ADR, `.cred-consumers.toml`, `generate.py`, `standing_approval.py`,
-  `rotation-executor.md`, `deploy_orchestrator.py`, `sds-pg-rotate`, `factory-policy.toml`, and the
-  D-81 question file. I found and fixed seven ranges that were off: decision 4's hand-rotated set,
-  `generate.py`'s rotation return, `standing_approval.py`'s condition, the helper's `docker exec`
-  line, its empty-fingerprint lines, the D-81 option text, and amendment 33 item 7.
+- **Line-number check.** I read every cited file at `8b326f2d` while drafting; the worktree's
+  copies were unchanged from the base. I then printed about 30 of the cited ranges with
+  `git show 8b326f2d:<file> | sed -n`, covering the ADR, `.cred-consumers.toml`, `checks.py`,
+  `contract.py`, `generate.py`, `standing_approval.py`, `rotation-executor.md`,
+  `deploy_orchestrator.py`, `sds-pg-rotate`, `secrets_broker.py`, `factory-policy.toml`, and the
+  D-81 question file. Those prints found eight ranges that were off, and I fixed them: decision
+  4's hand-rotated set, `generate.py`'s rotation return, `standing_approval.py`'s condition, the
+  helper's `docker exec` line, its empty-fingerprint lines, the D-81 option text, amendment 33
+  item 7, and the SYSTEM bearer's row start (176, not 175). The ranges I didn't print are cited
+  from those full-file reads.
+- **Review round.** A review of the first push found claims that weren't supported. I fixed them
+  in a second commit:
+  - who reads the SYSTEM and VERIFIER bearers through the broker today;
+  - the issue plan's failure mode;
+  - where the old value rests, and that no restore verb exists for this adapter;
+  - item 5's "no other identity" claim, narrowed to lane-token rows, and its measurement credential
+    (new Open item 13);
+  - the window bound on a revoke-first outage;
+  - the unlock tier's "only named" claim, narrowed to this repository and sds-hq's `state/` files.
 - **Plan derivation.** I ran `plans.candidates` in-process on the row's two destinations. It gave
   the rotation plan with units `store`, `verify` and `confirm`, and the issue plan with one unit,
   `store`, as quoted.
@@ -145,6 +180,8 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
   control in words only.
 - **Layer manifest.** `tests/architecture/test_layer_manifest.py`, run after the commit: 3 passed. The
   report path is covered by an existing pattern.
+- **Risk verdict.** `uv run --project ~/Developer/code-standards code-standards risk --repo .`
+  returned `normal`, so no vendor review is required.
 - I didn't run `make check`, because this is a docs-only change and the gate needs Postgres. The
   only check docs affect is the layer manifest's.
 
@@ -156,9 +193,10 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
 
 ## Self-review
 
-- **No false claims.** Each code claim cites its file and line at `8b326f2d`, and each range was
-  printed. Unmeasured things are labelled unmeasured: the SDK listing, the container name, and the
-  helper's behaviour after a rename beyond the code path. No authority is claimed.
+- **No false claims.** Each code claim cites its file and line at `8b326f2d`; the "Line-number
+  check" says which ranges were printed. Unmeasured things are labelled unmeasured: the SDK
+  listing, the container name, the helper's answer after a rename, and whether a `coolify_deploy`
+  loads the broker's `PATCH`ed variable. No authority is claimed.
 - **No unapproved authority.** "What it grants" says nothing is granted. The `targets.toml` entry
   is a root act that D-81 (2)'s option text names, and it reads a fingerprint only. The restart
   uses the existing move route and gate pass.
@@ -188,4 +226,4 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
 
 ## PR
 
-https://github.com/AlobarQuest/orchestrator/pull/816, opened against `main` and not merged. Its amendment commit is `c499c90d`; this report line is added in the commit after it, which is the PR head.
+https://github.com/AlobarQuest/orchestrator/pull/816, opened against `main` and not merged. Commits: `c499c90d` (the amendment), `306c018e` (the PR link), and a third that applies the review round's fixes. The head is that third commit, the branch's last; `gh pr view 816 --json headRefOid` reads it.

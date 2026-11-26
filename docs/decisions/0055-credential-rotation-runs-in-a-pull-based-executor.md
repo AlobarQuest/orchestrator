@@ -5428,12 +5428,16 @@ broker reads it from its environment at start and refuses to start without it
    null `last_rotated` (`docs/operations/rotation-executor.md`, lines 1606-1612). The proposer
    then reads a first issue (`src/rotation_proposer/cli.py`, lines 436-441) and `plan_for` picks
    the issue plan (`src/rotation_proposer/generate.py`, lines 149-150). The keeper holds Devon's
-   hand-pasted token, not the inbox's empty marker. An issue's `store` writes only after reading
-   the marker there (`src/rotation_worker/checks.py`, lines 178-190), so the issue would wait
-   on a mint that can never bind, and it would waste a mint sitting. The standing approval also
+   hand-pasted token, not the inbox's empty marker. With nothing staged, the executor's checks let
+   the issue's mint wait (`src/rotation_worker/checks.py`, lines 184-196). Once Devon's new token
+   is staged, `_check_issue_fact` refuses the unit, because the keeper holds neither the marker nor
+   the staged value (lines 197-198). The issue's `store` would refuse it too
+   (`src/rotation_worker/contract.py`, lines 710-724). So the issue fails closed after Devon's
+   mint, and the mint sitting is wasted. The standing approval also
    covers only the issue plan (`src/rotation_proposer/standing_approval.py`, lines 160-180).
    Item 3 settles this.
-2. **The bind on a project grant.** `bind_refusal` passes only when the pasted token's reach equals
+2. **The bind on a project grant.** The inbox binds a pasted token before the mint's unit is
+   claimed (`worker.py`, lines 12-13; `inbox.py`), through `bind_refusal`, which passes only when the pasted token's reach equals
    the row's declared reach (`bws_lane_token.py`, lines 270-283). The live side lists every project
    and every secret the token can see and digests them all (`_REACH`,
    `src/rotation_worker/adapters/bws_machine_token.py`, lines 101-117 and 175-182). The declared side
@@ -5456,11 +5460,15 @@ broker reads it from its environment at start and refuses to start without it
 
 The broker's token reads the project `SDS Operator` (the row's `reach_projects`, line 1495;
 amendment 30's "Project by project"). That project holds the SYSTEM bearer
-(`orchestrator-system-bearer`, `221a48d5-…`, `.bws-secrets.toml` lines 28-30;
-`.cred-consumers.toml` lines 175-181) and the VERIFIER bearer (`orchestrator-verifier-bearer`,
-`660d5846-…`, `.bws-secrets.toml` lines 66-68; `.cred-consumers.toml` lines 214-219). Lanes read
-both through the broker: unit-verifier the VERIFIER bearer, and rotation-decomposer and work-carrier
-the SYSTEM bearer (amendment 32 item 2's table, lines 4693-4694).
+(row `orchestrator-system-bearer`, `221a48d5-…`, `.cred-consumers.toml` lines 176-181; in
+`.bws-secrets.toml`, lines 28-30, the secret's name is `ORCHESTRATOR_M2M_CREDENTIALS`) and the
+VERIFIER bearer (`orchestrator-verifier-bearer`, `660d5846-…`, `.bws-secrets.toml` lines 66-68;
+`.cred-consumers.toml` lines 214-219). At `8b326f2d`, four broker lanes read the SYSTEM bearer
+through the broker: inert landing, estate landing, the bump driver and follow-up minting
+(`lanes/secrets-broker/allowlist.toml`, lines 23, 32, 40 and 52). No broker lane reads the VERIFIER
+bearer yet. Amendment 32 moves unit-verifier (the VERIFIER bearer) and rotation-decomposer and
+work-carrier (the SYSTEM bearer) onto the broker in batches 2 to 4 (item 2's table, lines 4693-4694).
+The reach that follows doesn't depend on those lanes: the project grant already reads both bearers.
 
 The executor's root reads every keeper in `Rotation / Keepers`, the broker's among them. Since
 Devon stored that keeper on 2026-11-20 (amendment 30's Context, lines 4360-4364), whoever holds
@@ -5481,10 +5489,12 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
      read for any lane" (lines 4408-4409). The tier is about who acts, not about how a rotation
      runs. A credential in it can still rotate through the executor (item 2), and each use of it
      stays Devon's act in the provider's web app.
-   - **Which credentials are in it.** The broker's token, `secrets-broker-bws-token`. It is the only
-     credential any record names as unlock-tier: the row's comment (`.cred-consumers.toml`, line
-     1467), amendment 30 item 8, and `docs/operations/secrets-broker.md` (lines 140-142). D-81 (1)'s
-     option A text also says "and any other key that mints or reads for others"
+   - **Which credentials are in it.** The broker's token, `secrets-broker-bws-token`. In this
+     repository and in sds-hq's `state/` files, it is the only credential named as unlock-tier: the
+     row's comment (`.cred-consumers.toml`, line 1467), amendment 30 item 8, and
+     `docs/operations/secrets-broker.md` (lines 140-142). D-81 (1)'s option A says "the registry
+     marks" each unlock-tier key; the row's comment is that mark, and no field is added. Its text
+     also says "and any other key that mints or reads for others"
      (`broker-phase-c-adr-question-answered.md`, lines 11-13). The executor's root token reads
      every keeper, and so reads for others. It is in decision 4's hand-rotated set (lines
      220-221), and every use of it is already Devon's or the executor's own. Whether the tier also
@@ -5511,17 +5521,21 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
    move route (item 6), its proof reads the broker's own container (item 4), and its bind reads a
    project grant (item 5).
    1. **Mint** (Devon): he mints the token in the BWS web app and pastes it into the inbox.
-   2. **`store`** (executor): `verify_new` and the bind, `store` (keeper write and readback), and
+   2. **The bind** (executor, before the claim): the inbox binds the pasted token (item 5).
+   3. **`store`** (executor): `verify_new`, `store` (keeper write and readback), and
       `distribute`, one `PATCH` of `SECRETS_BROKER_BWS_ACCESS_TOKEN` on service
       `wogvks6obmvv9fdotlgnw7r3` with no restart. The broker keeps running on the old token,
-      which stays live.
-   3. **Restart** (session, item 6): `coolify_deploy` on the broker at its current tag. The broker
-      starts on the new token.
-   4. **`verify`** (executor): it waits unclaimed until the helper's `loaded` for target
+      which stays live. The unit writes a hosted service (`plans.py`, lines 215 and 218-231), so
+      its claim asks the `live_estate` window.
+   4. **Restart** (session, item 6): `coolify_deploy` on the broker at its current tag. A lane's
+      `--token` run relies on the same thing: a `coolify_deploy` after the executor's `PATCH`
+      starts the container on the written variable (`docs/operations/deploy.md`, lines 203-205 and
+      289-291). For the broker this is unmeasured until the first rotation's `loaded` read.
+   5. **`verify`** (executor): it waits unclaimed until the helper's `loaded` for target
       `secrets-broker` equals the keeper's fingerprint, then claims and reads once more
       (amendment 29 item 3, lines 4175-4182). Its completion sends the revoke alert.
-   5. **Revoke** (Devon): in the BWS web app.
-   6. **`confirm`** (executor): `confirm_dead` on the old token.
+   6. **Revoke** (Devon): in the BWS web app.
+   7. **`confirm`** (executor): `confirm_dead` on the old token.
 3. **The row's anchor, and who approves.** The code pull request adds `created = "2026-11-20"`, the
    date the row's comment gives for Devon's paste. infraops reads it as the rotation anchor and
    serves it as `last_rotated` (`rotation-executor.md`, lines 1606-1611). The proposer then reads
@@ -5565,21 +5579,21 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
 5. **Open, for HQ: the bind on a project grant** (Context, "What the adapter doesn't yet do",
    point 2). This is a check's form, not an authority, so HQ settles it under build-mode rule 2
    (construction-mode ruling, `~/docs/software-delivery-system/2026-07-30-construction-mode-ruling.md`).
-   The code pull request first measures whether a project-granted token's listing includes the
-   project's secrets, and reads how many there are, using ids and counts only.
-   - **A.** If it doesn't, nothing changes.
+   It turns on one measurement: whether a project-granted token's listing includes the project's
+   secrets, read as ids and counts only. The credential for that measurement is Open item 13.
+   - **A.** If the listing doesn't include them, nothing changes.
    - **B.** If it does, `reach_secrets` lists every secret in both projects. Any secret Devon adds
      to either project then makes every bind refuse until the row is updated. It fails closed, but
      it costs a mint sitting each time.
    - **C.** If it does, a row with a non-empty `reach_projects` binds when the listed projects equal
-     the declared ones exactly and every declared secret is listed. Only this row has project
-     reach. The inbox's other-keeper check and `sharing_reach` still apply. That's weaker than an
-     exact match: a token with one extra single-secret grant would bind.
+     the declared ones exactly and every declared secret is listed. The inbox's other-keeper check
+     and `sharing_reach` still apply. That's weaker than an exact match: a token with one extra
+     single-secret grant would bind.
 
-   **Recommendation: measure first, then A if it holds, otherwise C.** No other identity holds the
-   broker's two project grants, so the project set alone tells its token from every lane's. The
-   change is to `_REACH` or `bind_refusal`, and it never prints or digests a value. **Blocks:** the
-   row's `rotated_by_sds`.
+   **Recommendation: measure first, then A if it holds, otherwise C.** Among the registry's
+   lane-token rows, only this one declares project reach (Context), so the project set tells its
+   token from every lane token's. The change is to `_REACH` or `bind_refusal`, and it never prints
+   or digests a value. **Blocks:** the row's `rotated_by_sds`.
 6. **The restart, and what it costs each broker lane.**
    - **Who.** The session, as for lane tokens (D-63 C, amendment 29 item 3). The executor keeps
      `restarts=False`. The command is the second call of the broker's move route,
@@ -5600,18 +5614,29 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
      (`secrets-broker.md`, lines 52-55; amendment 30's Consequences, lines 4440-4442). After the
      restart the session checks for one `listening` line per allowlisted lane and runs one lane's
      `lane-run --read`, as the move route asks.
-   - **A failed start.** If the new token is wrong, the broker exits 2 and every broker lane's reads
-     fail. The executor's bind has proven the token logs in and sees the declared reach before the
-     `PATCH`, so a failed start is the token's revocation or a Coolify fault. The rollback is a
-     `PATCH` back to the old value, which only the executor holds, so it is a new rotation, not a
-     hand edit. Open item 12 puts the gap to Devon.
+   - **A failed start.** If the broker can't read with the new token, it exits 2 or answers
+     `bws_failed`, and every broker lane's reads fail. The bind has already proven that the token
+     logs in and sees the declared reach, so a failed start means the token was revoked since, or
+     a Coolify fault. Between `store` and `confirm`, the old value is in the rotation's quarantine
+     secret in `Rotation / Work` (`contract.py`, lines 15-16 and 399-400; decision 4, line 210).
+     This adapter has no verb that writes it back: the executor's one restore verb, `pg-restore`,
+     serves only `postgres-role` rows (`src/rotation_worker/cli.py`, lines 483-489). Open item 12
+     puts the rollback to Devon.
 7. **A leak revokes first, and costs every broker lane.** After an exposure Devon may revoke first
    (amendment 19 item 10; D-26; Infra Brain 1032), and the adapter accepts the old token refused
    (`bws_lane_token.py`, lines 33-35). For the broker, the running token is then dead, so every
    broker lane's reads fail (`bws_failed`, amendment 30 item 4) until `store` completes and the
-   session restarts the broker. Devon's mint and paste in the same sitting, and a restart as soon
-   as `store` completes, keep the outage short. The `verify` wait and the window then follow as
-   usual.
+   session restarts the broker. The bound is set by three things:
+   - **The executor's pass:** a systemd timer every five minutes (`rotation-executor.md`, line 10)
+     picks up the paste.
+   - **The window:** the `store` claim waits for the `live_estate` window (item 2, step 3). Once
+     the window narrows to 02:00-06:00 (amendment 29 item 3, lines 4183-4189), a revoke-first in
+     the day leaves every broker lane without reads until the next 02:00, plus the restart.
+   - **Devon's mint:** the outage lasts at least until he mints and pastes the new token.
+
+   An exposure response may therefore need the hand route of D-81 (2) option A for the broker's
+   token, outside the window. That is Devon's call at the time, as exposure response is
+   (decision 6).
 8. **Logging and failure.** The route adds no logging of its own. Every step logs through the
    executor's structured logging and `contract.py`, whose evidence holds fingerprints only, the
    sha256 prefix and length (`rotation_worker/values.py`). The `loaded` answer is a fingerprint,
@@ -5626,7 +5651,7 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
      (item 4); `created = "2026-11-20"` (item 3); `reach_secrets` as item 5's answer needs; the
      comment's "stays manual" text rewritten to state the route and that the token is still in the
      unlock tier. `rotated_by_sds = true` and a `rotate_requested` date are set only when every
-     exit check passes and Open items 10 and 12 are answered. Another worker edits that file, so
+     exit check passes and Open items 10, 12 and 13 are answered. Another worker edits that file, so
      the pull request rebases on it. The exposure and consumer fields keep their form: no
      `[[credential.exposure]]` is added, and the two consumers are unchanged.
    - `tests/rotation_worker/test_lane_token_helper_targets.py`:
@@ -5679,9 +5704,12 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
       Devon reads. The executor can't then store the token, so D-81 (2) B can't be built, and the
       token rotates by hand (D-81 (2) option A). This also ends today's reach, which exists
       without the route.
-    - **C. Keep both bearers off the broker.** The three lanes that read them through the broker
-      keep a token of their own. That reverses amendment 32's plan for unit-verifier,
-      rotation-decomposer and work-carrier, and keeps three lane tokens alive.
+    - **C. Narrow the broker's `SDS Operator` grant to single secrets.** This reverses Devon's
+      "Project by project" for that project. It removes the project's other secrets from the reach,
+      but not the two bearers: four broker lanes read the SYSTEM bearer today, and unit-verifier
+      needs the VERIFIER bearer from batch 2. Keeping both bearers out would also keep
+      unit-verifier, rotation-decomposer, work-carrier and the four Phase B lanes on tokens of their
+      own, which reverses amendment 32 and amendment 30's Phase B.
 
     **Recommendation: A for the development phase**, with T1 saying so, and the question reopened
     in the security phase that D-64 already names (amendment 29, lines 4075-4076). B and C each
@@ -5695,17 +5723,33 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
 
     **Recommendation: B**, because D-81 (1)'s option text names "any other key that mints or reads
     for others", and the root reads every keeper. It is a name only. **Blocks:** nothing in item 2.
-12. **Open, for Devon: the rollback after a failed broker start** (item 6). Only the executor holds
-    the old value between `store` and the revoke, and the executor never writes a value back.
-    - **A.** No rollback. A failed start is fixed forward: Devon mints again and the rotation is
-      retried, and every broker lane's reads fail until it completes.
-    - **B.** A restore verb on the executor that re-`PATCH`es the variable from the old keeper
-      revision. That's a new executor ability, and the old value stays retrievable in BWS
-      history.
+12. **Open, for Devon: the rollback after a failed broker start** (item 6). The old value is in
+    the rotation's quarantine secret until `confirm`, and this adapter has no verb that writes it
+    back.
+    - **A.** No machine rollback. A failed start is fixed forward: Devon mints again and the
+      rotation is retried, and every broker lane's reads fail until it completes.
+    - **B.** A restore verb for this adapter, like `pg-restore`, that `PATCH`es the variable from
+      the quarantine. That's a new executor ability.
+    - **C.** Devon copies the quarantined value into the Coolify variable by hand, and a session
+      restarts the broker. That's a browser act on the tier's credential, as item 1 describes,
+      and the keeper then disagrees with the variable until the rotation is retried.
 
-    **Recommendation: A.** The bind proves the token works before the `PATCH`, so a failed start
-    needs the token revoked or Coolify at fault, and a restore can't help with the first. **Blocks:**
-    the row's `rotated_by_sds`.
+    **Recommendation: A, with C as Devon's choice at the time.** The bind proves the token works
+    before the `PATCH`, so a failed start means the token was revoked since or Coolify is at fault.
+    A restore can't help with the first. **Blocks:** the row's `rotated_by_sds`.
+13. **Open, for Devon: the credential for item 5's measurement.** Listing what a project-granted
+    token sees needs a login with such a token. Options:
+    - **A.** The first real rotation is the measurement. If the bind refuses, nothing is written:
+      the unit waits, and Devon revokes the unused token. That costs one mint and one revoke.
+    - **B.** A throwaway token that Devon mints on a machine account with a project grant on a
+      project holding no secret of value, stored where the measuring session reads it, and
+      revoked after the run. This follows amendment 33 item 14's measurement tokens.
+    - **C.** A session uses the broker's own token from the keeper. Only the root reads it, so
+      this means a new executor verb, or a person reading the keeper, for a listing.
+
+    **Recommendation: B**, before the code pull request merges. It measures the SDK's behaviour
+    without the broker's reach, and the result decides item 5 before the first rotation.
+    **Blocks:** item 5.
 
 ### What it grants, and nothing more
 
@@ -5713,7 +5757,7 @@ Nothing. No BWS identity, project, grant or scope, no Coolify token, user or abi
 path and no executor ability is added or widened. The executor writes the broker's variable through
 the client and path it already uses for lane tokens, and the session restarts the broker through
 the move route that already exists. The helper target in item 4 lets the executor read one more
-fingerprint, never a value. Open items 10 to 12 are Devon's, named and not given. Item 5 is HQ's and
+fingerprint, never a value. Open items 10 to 13 are Devon's, named and not given. Item 5 is HQ's and
 grants nothing. No endpoint is added, so the HTTPS rule for public FQDNs (Infra Brain 212) doesn't
 apply. Nothing here declares a credential exposed, and no rotation age changes.
 
