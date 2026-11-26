@@ -87,14 +87,14 @@ governs" sections.
 
 ## The pull request
 
-The PR's URL and head are in the PR itself. HQ reads them from `gh pr list --head
-hq/anthropic-key-adapter-adr`, because this report is committed in the PR and can't name its own
-head.
+https://github.com/AlobarQuest/orchestrator/pull/819. The amendment's text is final at `f918ddfa`,
+which was the head when the PR opened. The PR's head is one commit later: the commit that adds
+this paragraph changes only this report.
 
 ## Checks run
 
-- **The stop point:** `git fetch`, then `git log 9caad335..origin/main -- <ADR-0055>`. It was empty
-  at the start and before the push.
+- **The stop point:** I ran `git fetch`, then `git log 9caad335..origin/main -- <ADR-0055>`, at the
+  start and again just before the push. Both were empty.
 - **Each repository claim** was read at `9caad335` in this worktree with `sed -n` or `grep -n`, and
   each line number was re-checked after writing. Five numbers were corrected in a second pass:
   - factory-runner's row is lines 112-118, and its comment is line 103.
@@ -131,10 +131,13 @@ head.
   - A deleted or disabled key's status and lag.
   - The header on `/v1/models`.
   - Whether `/v1/models` is billed.
-- **Token-shape grep of the diff:** I grepped the added lines for Anthropic's key prefix, BWS
-  token shapes and runs of 40 or more key characters. It found nothing. Only the diff's file-name
-  line matched the long-run pattern. The amendment describes key prefixes in words and quotes no
-  workspace id.
+- **Token-shape grep of the diff:** I grepped the added lines of `git diff 9caad335..HEAD`, both
+  files, for Anthropic's key prefix, BWS token shapes, a `wrkspc_` id and runs of 40 or more key
+  characters, after the last edit. There were 15 matches. Each is a file path or documentation
+  URL that matched the long-run pattern, and none is a key or token. The amendment describes key
+  prefixes in words and quotes no workspace id.
+- **Risk check:** `uv run --project ~/Developer/code-standards code-standards risk --repo .`
+  returned `normal`, so `vendor-review` isn't required.
 - **Not run:** `make check`, which needs Postgres and a migrated database. The change is one ADR
   and this report, and no test reads ADR-0055's text: a grep of `tests/`, both exit manifests and
   `layers.toml` finds none. `docs/superpowers/**` is in `layers.toml` (line 730).
