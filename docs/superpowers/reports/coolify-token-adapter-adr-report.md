@@ -67,15 +67,19 @@ None of them blocks this docs pull request.
 ## Tests and checks
 
 - `make check` in the worktree against `orchestrator_test_hq_w_314`: green, exit 0. Ruff check and format, and pyright, report no errors. Pytest: 14,788 collected, 14,787 passed and 1 skipped, in 399 seconds.
-- Every line number the amendment cites at `7af40971` was read in this session. The Coolify
-  citations were read from files fetched at the tag into a scratch directory.
+- Every line number the amendment cites at `7af40971` was read in this session. The
+  `registry.py` line 57 citation was first copied from Amendment 32, then read in round 1 (line 57
+  is `rotated_by_sds`'s `is True` test). The Coolify citations were read from files fetched at the
+  tag into a scratch directory.
+- `code-standards risk --repo .`: verdict `normal`, so no vendor review is needed.
 
 ## Files changed
 
 - `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md`: Amendment 33 appended
   (docs only).
 - `docs/superpowers/reports/coolify-token-adapter-adr-report.md`: this report.
-- `docs/superpowers/reports/coolify-token-adapter-adr-question.md`: the five open items.
+- `docs/superpowers/reports/coolify-token-adapter-adr-question.md`: the five open items (HQ has
+  since renamed it `-question-answered.md`; I left that rename to HQ and didn't commit it).
 
 Pull request: #815 (https://github.com/AlobarQuest/orchestrator/pull/815), opened against `main` and not merged.
 
@@ -128,3 +132,33 @@ Pull request: #815 (https://github.com/AlobarQuest/orchestrator/pull/815), opene
 - **Infra Brain 212 (HTTPS for public FQDNs):** not applicable. No endpoint is added, and the
   adapter calls Coolify only at the executor's existing tailnet address. The amendment's "What it
   grants" section says so.
+
+## Round 1 (fix round after HQ's Opus whole-branch review of #815 at `e26db2f0`)
+
+HQ's answer keeps Open items 11 to 15 open for Devon, and their substance is unchanged. Commit
+`8901ec20` makes these docs-only fixes to Amendment 33:
+
+- **Blocking, item 10:** the intent-packages bullet no longer says `approval-policy.toml` lists
+  adapters as it lists `bitbucket`. That file names no `bitbucket`. Its only by-name type list is
+  `grant.types.*`, the standing first-issue approval (`bws-lane-token`, `healthchecks-ping-url`).
+  The bullet now says the file needs no entry, because the type has no issue plan and every
+  revision stays Devon's by name. The `rotation-<row id>` package part stays.
+- **The revision-watcher row's cite** is 649-674, not 649-670.
+- **Item 3:** the inbox's `other_mints` rule and other-keeper check tell same-ability rows apart,
+  not item 4 (`inbox.py` lines 12, 20, 120 and 145-172).
+- **Item 13:** a `root` mint passes item 4's probes, and only B or C catches it.
+- **Item 15 A:** `landing-not-pointed-back` fires only when a bad landing needs re-pointing. The
+  Blocks line says that the estate lander's `rotated_by_sds` doesn't wait on item 15; it waits on
+  item 11.
+- **Item 11 A:** lists decision 4's same-change updates: `.bws-secrets.toml` lines 173 and 324, and
+  the broker row's `reach_secrets`.
+- **Item 6:** revoke-first rests on decision 6's exposure response, with D-26 cited only as
+  precedent.
+- **Item 5:** cites `scripts/run-revision-watcher.sh` lines 59-61, the container refusal.
+- **The mint note** (item 1, and the ops-page bullet in item 10): tick `deploy` first, because
+  `ApiTokens.php` lines 67-68 reset the selection to `deploy` alone.
+- **Item 10:** names the adapter's `PLAN` constant built with `derive(...)`, as `postgres_role.py`
+  builds its own (line 153).
+
+Checks at `8901ec20`: `make check` green, exit 0. Pytest collected 14,788 tests; 14,787 passed and
+1 was skipped, in 426 seconds. Ruff and pyright report no errors. Nothing is merged.
