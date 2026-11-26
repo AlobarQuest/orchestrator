@@ -60,6 +60,11 @@ SECRETS = frozenset(
         "1cfc8352-c960-4afc-bd49-b4ff00e8783e",  # unit-verifier-ping-url
         "5fc44897-b4df-44ae-8491-b5000129d9be",  # membership-check-ping-url
         "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875",  # deploy-watcher-ping-url
+        # Phase C's third batch (ADR-0055 Amendment 32, item 4), given at HQ gate G-106.
+        "acccb346-4baa-43ec-a1d4-b4a400c048ee",  # change-manager/M2M_TOKEN_PROPOSE
+        "7651ccc2-7e13-417b-86da-b50100c0d4b2",  # change-proposer-ping-url
+        "936bbbf2-dc3b-4343-979a-b501013afc87",  # rotation-decomposer-ping-url
+        "506a5436-4643-4040-8a8b-b50601312be2",  # rotation-proposer-ping-url
     }
 )
 

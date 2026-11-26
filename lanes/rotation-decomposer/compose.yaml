@@ -6,14 +6,18 @@
 # cut-over, before the first acting pass, or the alerts the Mac left firing never resolve and every
 # approval-wait clock restarts. Its registry mirrors aren't state: they sit under `lane-run`'s new
 # `HOME` and each pass refetches them, anonymously (ADR-0059 decision 1, "Lane state").
-# The lane's token is the resource's own `ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN` variable, which the
-# VM rotation executor writes; this file names it and never holds a value. With it the launcher
-# reads the orchestrator's SYSTEM bearer, the change-manager READ bearer and, on acting passes
-# only, the `sds-bridge` alert sender (`scripts/run-rotation-decomposer.sh`).
+# It holds no token: it reads the orchestrator's SYSTEM bearer, the change-manager READ bearer and,
+# on acting passes only, the `sds-bridge` alert sender through the lane secrets broker (ADR-0055
+# amendment 30), whose socket directory `/data/sds/broker/rotation-decomposer` it mounts read-only
+# at `/run/sds-broker`. `lane-run` names the socket to the launcher
+# (`scripts/run-rotation-decomposer.sh`), and the broker serves it only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
+# `ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN` variable until the lane tokens are revoked, and this file
+# maps it to nothing.
 # `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
 # `rotation-decomposer-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
-# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
-# the lane's own token on an acting pass (`scripts/sds-deadman.sh`); a `--dry-run` pass pings
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret
+# through the broker on an acting pass (`scripts/sds-deadman.sh`); a `--dry-run` pass pings
 # nothing. The VM rotation executor writes the URL there from its inbox; while the secret holds the
 # inbox's empty marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
@@ -22,12 +26,12 @@ services:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["rotation-decomposer"]
     environment:
-      BWS_ACCESS_TOKEN: ${ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       ROTATION_DECOMPOSER_STATE_DIR: /var/lib/sds/rotation-decomposer
       SDS_DEADMAN_PING_URL_UUID: 936bbbf2-dc3b-4343-979a-b501013afc87
     volumes:
       - sds-lanes-rotation-decomposer-state:/var/lib/sds/rotation-decomposer
+      - /data/sds/broker/rotation-decomposer:/run/sds-broker:ro
     restart: unless-stopped
 
 volumes:

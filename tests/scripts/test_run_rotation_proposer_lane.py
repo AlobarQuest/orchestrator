@@ -1,8 +1,9 @@
 """`scripts/run-rotation-proposer.sh` in the lane's container, and the lane's files.
 
 The real launcher runs under `env -i` from a throwaway tree with no `.git` (`/app` has none), with
-what `lane-run` passes it in the container: the lane's token as `BWS_ACCESS_TOKEN`, the state
-directory, infraops' two directory settings, `PATH` and `HOME`. `bws`, `git` and `curl` are stubs on
+what `lane-run` passes it in the container: the lane's token as `BWS_ACCESS_TOKEN`, or the secrets
+broker's socket as `SDS_SECRETS_SOCKET` (a stand-in broker, `conftest.py`'s), the state directory,
+infraops' two directory settings, `PATH` and `HOME`. `bws`, `git` and `curl` are stubs on
 PATH. In the venv, `rotation-proposer` and `sds-github-mint` are stubs that log what reached them,
 and `python` is the real interpreter (`sds-bws.sh` parses BWS's JSON with it). Nothing reads BWS,
 GitHub, change-manager, the orchestrator, alert-hub or Healthchecks. Outside the container it
@@ -21,6 +22,7 @@ import yaml
 
 from scripts import deploy_orchestrator as deploy
 from scripts import lane_run
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-rotation-proposer.sh")
@@ -32,6 +34,7 @@ PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
 PUSH_APP_KEY_UUID = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
+PING_URL_KEEPER = "506a5436-4643-4040-8a8b-b50601312be2"
 HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 SUBMIT_ONLY = (PROPOSE_UUID, OBSERVER_UUID, ALERT_UUID, PUSH_APP_KEY_UUID)
 
@@ -67,7 +70,7 @@ _GIT = """#!/bin/bash
 case " $* " in *" rev-parse "*) echo "fatal: not a git repository" >&2; exit 128 ;; esac
 echo "git $* | global=${GIT_CONFIG_GLOBAL:-} nosystem=${GIT_CONFIG_NOSYSTEM:-} \\
 prompt=${GIT_TERMINAL_PROMPT:-} count=${GIT_CONFIG_COUNT:-} value0=${GIT_CONFIG_VALUE_0:-} \\
-lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$GIT_LOG"
+lane_token=${BWS_ACCESS_TOKEN:+set} socket=${SDS_SECRETS_SOCKET:+set}" >> "$GIT_LOG"
 target="${@: -1}"
 case " ${FAKE_CLONE_FAILS:-} " in *" $(basename "$target") "*)
   echo "fatal: repository not found" >&2; exit 128 ;;
@@ -98,6 +101,7 @@ exit "${FAKE_PROPOSER_RC:-0}"
 _MINT = """#!/bin/bash
 key="$(cat)"
 echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "mint-child socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_PUSH_MINT_RC:-}" ] && exit "$FAKE_PUSH_MINT_RC"
 echo "%s"
 """
@@ -276,6 +280,7 @@ def test_no_token_reaches_an_argument_a_program_or_git(
     run = _run(tmp_path, *args)
     assert run.code == 0, run.output
     assert "BWS_ACCESS_TOKEN" not in run.env()
+    assert "SDS_SECRETS_SOCKET" not in run.env()
     assert all("lane_token=set" not in line for line in run.logs["lane"])
     assert all("lane_token=set" not in line for line in run.logs["git"])
     argvs = [
@@ -571,17 +576,128 @@ def test_the_container_reads_every_secret_with_the_lanes_token_and_logs_no_activ
     assert not any(f"token={NARROW_STANDIN} " in line for line in run.logs["bws"])
 
 
+@pytest.mark.parametrize("token", [None, ""], ids=["unset", "empty"])
 @pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry", "submit"])
 def test_outside_the_container_it_refuses_and_reads_and_runs_nothing(
-    tmp_path: Path, args: tuple[str, ...]
+    tmp_path: Path, args: tuple[str, ...], token: str | None
 ) -> None:
-    run = _run(tmp_path, *args, BWS_ACCESS_TOKEN=None)
+    run = _run(tmp_path, *args, BWS_ACCESS_TOKEN=token)
     assert run.code == 1, run.output
     assert (
-        "FATAL: no BWS_ACCESS_TOKEN: the rotation-proposer lane runs only in its container,"
-        " through lane-run" in run.result.stderr
+        "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the rotation-proposer lane runs only"
+        " in its container, through lane-run" in run.result.stderr
     )
-    assert run.logs["bws"] == [] and run.logs["ping"] == [] and run.logs["git"] == []
+    assert all(lines == [] for lines in run.logs.values()), run.logs
+
+
+def test_a_socket_variable_naming_no_socket_refuses_and_reads_nothing(tmp_path: Path) -> None:
+    """`SDS_SECRETS_SOCKET` alone isn't the container: it must name a socket."""
+    not_a_socket = tmp_path / "broker.sock"
+    not_a_socket.write_text("")
+    run = _run(tmp_path, "--submit", BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(not_a_socket))
+    assert run.code == 1, run.output
+    assert "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN" in run.result.stderr
+    assert all(lines == [] for lines in run.logs.values()), run.logs
+
+
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+# The ping-URL secret a broker pass names, so the dead-man helper reads by id through the socket and
+# never looks the check up by name with a broad identity.
+BROKER_PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
+
+
+def _brokered(tmp_path: Path, socket_path: Path, *args: str) -> Run:
+    """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
+    return _run(
+        tmp_path,
+        *args,
+        BWS_ACCESS_TOKEN=None,
+        BWS_ACCESS_TOKEN_BROAD=None,
+        SDS_SECRETS_SOCKET=str(socket_path),
+        SDS_DEADMAN_PING_URL_UUID=BROKER_PING_URL_UUID,
+    )
+
+
+def _served() -> dict[str, str | None]:
+    return {
+        **{uuid: value(uuid) for uuid in SUBMIT_ONLY},
+        BROKER_PING_URL_UUID: "https://hc.example/ping/rotation-proposer",
+    }
+
+
+def test_on_the_socket_without_a_token_a_submitting_pass_reads_every_secret_through_it(
+    tmp_path: Path, broker
+) -> None:
+    """The socket serves the ping URL and the four secrets; `bws` never runs, and neither git, the
+    mint nor the program gets the lane's token or the socket's marker."""
+    run = _brokered(tmp_path, broker(_served()), "--submit")
+    assert run.code == 0, run.output
+    assert run.logs["bws"] == []
+    env = run.env()
+    assert env["ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN"] == value(PROPOSE_UUID)
+    assert env["ORCHESTRATOR_API_TOKEN"] == value(OBSERVER_UUID)
+    assert env["SDS_BRIDGE_ALERT_TOKEN"] == value(ALERT_UUID)
+    assert "BWS_ACCESS_TOKEN" not in env and "SDS_SECRETS_SOCKET" not in env
+    assert run.lines("mint")[0].endswith(f"key={value(PUSH_APP_KEY_UUID)} lane_token=")
+    assert run.lines("mint-child") == ["mint-child socket="]
+    assert len(run.clone_lines()) == len(CLONED)
+    assert all(line.endswith("lane_token= socket=") for line in run.logs["git"]), run.logs["git"]
+    for uuid in SUBMIT_ONLY:
+        assert value(uuid) not in run.output
+
+
+def test_on_the_socket_a_dry_run_reads_no_secret_and_mints_nothing(
+    tmp_path: Path, broker
+) -> None:
+    served = {BROKER_PING_URL_UUID: "https://hc.example/ping/rotation-proposer"}
+    run = _brokered(tmp_path, broker(served))
+    assert run.code == 0, run.output
+    assert run.logs["bws"] == []
+    assert run.lines("mint") == []
+    # The program ran, on no secret.
+    assert "proposer args=" in run.logs["lane"]
+    assert "SDS_SECRETS_SOCKET" not in run.env()
+
+
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [
+        (PROPOSE_UUID, "bws_failed"),
+        (OBSERVER_UUID, "not_allowed"),
+        (ALERT_UUID, "not_allowed"),
+        (PUSH_APP_KEY_UUID, "not_allowed"),
+    ],
+    ids=[
+        "propose-read-failed",
+        "observer-not-on-the-allowlist",
+        "sender-not-on-the-allowlist",
+        "push-key-not-on-the-allowlist",
+    ],
+)
+def test_a_secret_the_socket_refuses_fails_the_pass_before_the_program(
+    tmp_path: Path, broker, refused: str, reason: str
+) -> None:
+    served = _served()
+    if reason == "bws_failed":
+        served[refused] = None
+    else:
+        del served[refused]
+    run = _brokered(tmp_path, broker(served), "--submit")
+    assert run.code == 1, run.output
+    assert f"the secrets broker gave no value for {refused}: {reason}" in run.result.stderr
+    assert run.logs["bws"] == []
+    assert run.lines("proposer") == []
+
+
+def test_a_dead_socket_fails_the_pass_and_never_falls_back_to_bws(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    run = _brokered(tmp_path, dead_socket, "--submit")
+    assert run.code == 1, run.output
+    assert f"the secrets broker gave no value for {PROPOSE_UUID}: no_reply" in run.result.stderr
+    assert "FATAL: could not read the propose-scoped change-manager credential" in run.result.stderr
+    assert run.logs["bws"] == []
     assert run.lines("proposer") == [] and run.lines("mint") == []
 
 
@@ -604,22 +720,30 @@ def test_the_container_always_turns_on_the_findings_for_credentials_not_handed_o
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "rotation-proposer")
-    assert deploy.add_refusals(service, "rotation-proposer") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "rotation-proposer", allowlist)
+    assert deploy.add_refusals(service, "rotation-proposer", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "rotation-proposer") == []
+    assert allowlist["rotation-proposer"] == {*SUBMIT_ONLY, PING_URL_KEEPER}
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["rotation-proposer"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${ROTATION_PROPOSER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "ROTATION_PROPOSER_STATE_DIR": "/var/lib/sds/rotation-proposer",
             # The BWS secret id of `rotation-proposer-ping-url`: not a secret, not the ping URL.
-            "SDS_DEADMAN_PING_URL_UUID": "506a5436-4643-4040-8a8b-b50601312be2",
+            "SDS_DEADMAN_PING_URL_UUID": PING_URL_KEEPER,
             # The list's directory, which the launcher fills each pass beside its clones, and the
             # state file's, on the lane's volume (ADR-0059 Amendment 12 decision 1).
             "INFRADRIFT_CONFIG_DIR": "/var/tmp/sds-rotation-proposer/infra-drift",
             "SECURITY_DRIFT_STATE_DIR": "/var/lib/sds/rotation-proposer/security-drift",
         },
-        "volumes": ["sds-lanes-rotation-proposer-state:/var/lib/sds/rotation-proposer"],
+        "volumes": [
+            "sds-lanes-rotation-proposer-state:/var/lib/sds/rotation-proposer",
+            "/data/sds/broker/rotation-proposer:/run/sds-broker:ro",
+        ],
         "restart": "unless-stopped",
     }
     document = yaml.safe_load(COMPOSE.read_text())
@@ -660,7 +784,7 @@ def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
     ping-URL secret. The launcher names each secret it reads, except the ping-URL secret, whose id
     reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
-    ping_url_secret = "506a5436-4643-4040-8a8b-b50601312be2"
+    ping_url_secret = PING_URL_KEEPER
     secrets = deploy.lane_secrets(manifest, "rotation-proposer")
     assert sorted(secrets) == sorted([*SUBMIT_ONLY, ping_url_secret])
     launcher = LAUNCHER.read_text()

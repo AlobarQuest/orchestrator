@@ -27,10 +27,15 @@
 #     report and never changes the exit code;
 #   - the change-manager READ bearer (BWS `314f276d-…`), on every pass.
 #
-# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4). `lane-run` passes the lane's own token as its
-# one secret as `BWS_ACCESS_TOKEN`, and all three secrets are read with it, in the environment,
-# never as a process argument. The BWS token is unset before the program runs, which needs none.
-# Outside the container the launcher refuses. No GitHub credential: the program calls no GitHub
+# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4). `sds_in_lane_container` means the lane's
+# container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET` (ADR-0055
+# amendment 30), or passes a lane's own token as its one secret. All three secrets are read with
+# `sds_bws_value` and one argument, through the socket or with that token in the environment, never
+# as a process argument; the broker serves this lane only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` are unset
+# before the program runs, which needs neither; the socket itself stays reachable, as the design
+# accepts. Without a socket or a token the launcher refuses with exit 1, before the outcome alarm
+# begins. No GitHub credential: the program calls no GitHub
 # API, and its registry mirrors fetch the four public registry repositories anonymously
 # (`rotation_worker/git_mirror.py`, ADR-0059 decision 1). They sit under `lane-run`'s new `HOME`,
 # so each pass refetches them.
@@ -46,10 +51,15 @@ SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"       # sds-bridge 
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
-# armed here, the switch would ping the production check.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the rotation-decomposer lane runs only in its container, through lane-run" >&2
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
+# Sourced first: the host test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# Outside the lane's container this refuses before the outcome alarm begins or anything is read:
+# begun here, the alarm would ping the production check.
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the rotation-decomposer lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -61,13 +71,11 @@ done
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" rotation-decomposer "$_acting"
 
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-# Each read takes the lane's one token from the environment (`sds_bws_value` with one argument), so
-# it never appears in a process argument.
+# Each read goes through the lane's socket, or takes the lane's one token from the environment
+# (`sds_bws_value` with one argument), so no credential appears in a process argument.
 _narrow_secret() { sds_bws_value "$1"; }
 _broad_secret() { sds_bws_value "$1"; }
-FROM=" (the lane's token)"
+FROM=" (the lane's socket or token)"
 CHANGE_MANAGER_TOKEN="$(_broad_secret "$CHANGE_MANAGER_READ_UUID")"
 [ -n "$CHANGE_MANAGER_TOKEN" ] || sds_outcome_fail \
     "FATAL: could not read the change-manager READ credential from BWS$FROM"
@@ -80,8 +88,8 @@ if [ "$_acting" -eq 1 ]; then
       "FATAL: could not read the sds-bridge alert sender token from BWS$FROM"
   export SDS_BRIDGE_ALERT_TOKEN
 fi
-# The program needs no BWS identity, so the lane's token never reaches it.
-unset BWS_ACCESS_TOKEN
+# The program needs no BWS identity, so neither the lane's token nor the socket's marker reaches it.
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-system"
 export CHANGE_MANAGER_TOKEN ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN

@@ -13,13 +13,17 @@
 # state: the launcher makes them each pass under `/var/tmp/sds-rotation-proposer` and discards them
 # (ADR-0059 decision 1). Both infraops settings come from this file alone; there is no default, and
 # the launcher refuses a pass with either unset or empty.
-# The lane's token is the resource's own `ROTATION_PROPOSER_BWS_ACCESS_TOKEN` variable, which the VM
-# rotation executor writes; this file names it and never holds a value. With it the launcher reads
-# every secret the pass needs (`scripts/run-rotation-proposer.sh`, "TWO HOSTS, ONE LAUNCHER").
+# It holds no token: the launcher reads every secret the pass needs through the lane secrets broker
+# (ADR-0055 amendment 30), whose socket directory `/data/sds/broker/rotation-proposer` it mounts
+# read-only at `/run/sds-broker`. `lane-run` names the socket to the launcher
+# (`scripts/run-rotation-proposer.sh`), and the broker serves it only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
+# `ROTATION_PROPOSER_BWS_ACCESS_TOKEN` variable until the lane tokens are revoked, and this file
+# maps it to nothing.
 # `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
 # `rotation-proposer-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
-# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
-# the lane's own token on every pass, the bare one included (`scripts/sds-deadman.sh`). The VM
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret
+# through the broker on every pass, the bare one included (`scripts/sds-deadman.sh`). The VM
 # rotation executor writes the URL there from its inbox; while the secret holds the inbox's empty
 # marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
@@ -28,7 +32,6 @@ services:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["rotation-proposer"]
     environment:
-      BWS_ACCESS_TOKEN: ${ROTATION_PROPOSER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       ROTATION_PROPOSER_STATE_DIR: /var/lib/sds/rotation-proposer
       SDS_DEADMAN_PING_URL_UUID: 506a5436-4643-4040-8a8b-b50601312be2
@@ -36,6 +39,7 @@ services:
       SECURITY_DRIFT_STATE_DIR: /var/lib/sds/rotation-proposer/security-drift
     volumes:
       - sds-lanes-rotation-proposer-state:/var/lib/sds/rotation-proposer
+      - /data/sds/broker/rotation-proposer:/run/sds-broker:ro
     restart: unless-stopped
 
 volumes:

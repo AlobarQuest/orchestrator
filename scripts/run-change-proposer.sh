@@ -48,10 +48,13 @@
 # do" would otherwise mint approved change records and authority-grant rows in the tamper-evident
 # chain. The lane's container passes `--submit` explicitly, in its compose, where it is visible.
 #
-# THE LANE'S CONTAINER ONLY (ADR-0059 increments 4 and 6). A set `BWS_ACCESS_TOKEN` means the lane's
-# container: `lane-run` passes the lane's own token as its one secret, and every secret is read with
-# it, in the environment, never as a process argument. Anywhere else the launcher refuses. The
-# container runs the image's own code:
+# THE LANE'S CONTAINER ONLY (ADR-0059 increments 4 and 6). `sds_in_lane_container` means the lane's
+# container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET` (ADR-0055
+# amendment 30), or passes a lane's own token as its one secret. Every secret is read with
+# `sds_bws_value` and one argument, through the socket or with that token in the environment, never
+# as a process argument; the broker serves this lane only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. Without a socket or a token the launcher refuses with
+# exit 1, before the outcome alarm begins. The container runs the image's own code:
 #   - the observer bearer (BWS `f793576f-…`), every run, which also derives the mint's repositories;
 #   - the change-manager PROPOSE bearer (BWS `acccb346-…`), only on `--submit`;
 #   - the read-only App `alobar-sds-lanes-read`'s key (BWS `314a966c-…`), piped straight into
@@ -59,8 +62,9 @@
 #     repositories `change-proposer repositories` prints and the three read permissions the
 #     program's calls use.
 # A repository list that can't be derived exits 2 before anything is minted (or the derivation's own
-# code when it fails otherwise). The BWS token is unset before the program runs, which needs
-# neither it nor the App's key.
+# code when it fails otherwise). `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` are removed from every
+# child and unset before the program runs, which needs neither nor the App's key; the socket itself
+# stays reachable, as the design accepts.
 #
 # Usage:
 #   scripts/run-change-proposer.sh              # dry run: reports, writes nothing
@@ -78,10 +82,17 @@ READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
-# armed here, the switch would ping the production check.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the change-proposer lane runs only in its container, through lane-run" >&2
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard: `--color no` and an
+# environment with the forcing variables removed, since FORCE_COLOR / CLICOLOR_FORCE make
+# `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe. Sourced first: the host
+# test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# Outside the lane's container this refuses before the outcome alarm begins or anything is read:
+# begun here, the alarm would ping the production check.
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the change-proposer lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -100,12 +111,6 @@ esac
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" change-proposer "$SUBMITTING"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
-# CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
-# pipe, which breaks the parse below.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would propose and sends nothing, so
 # it must not need -- or touch -- the credential that could write. Fetching unconditionally would
 # make the inspection path fail on a machine that cannot read the secret, which is precisely the
@@ -116,21 +121,24 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 # scope authority: which repositories this lane considers is read from it, so even a dry run needs
 # the read. Landing Part 3b reads the same bearer a second time, for `GET /api/v1/opened-reverts`:
 # which open pull requests are the SDS's own reverts, filed as `dependency-revert` and never as a
-# bump, so a dry run reports them truly too. It lives in `Rotation / Keepers`. The lane's token reads it. It is
-# exported only as `SDS_MEMBERS_OBSERVER_TOKEN`: this lane files no observation.
+# bump, so a dry run reports them truly too. It lives in `Rotation / Keepers`. The lane's socket or
+# token reads it. It is exported only as `SDS_MEMBERS_OBSERVER_TOKEN`: this lane files no
+# observation.
 OBSERVER_BEARER_UUID="${CHANGE_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
 
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-  # THE CONTAINER. Every secret is read with the lane's one token, already in the environment.
+if sds_in_lane_container; then
+  # THE CONTAINER. Every secret is read through the lane's socket, or with the lane's one token
+  # already in the environment.
+  FROM=" (the lane's socket or token)"
   if [ "$SUBMITTING" -eq 1 ]; then
     CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
     [ -n "$CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN" ] || sds_outcome_fail \
-        "FATAL: could not read the propose-scoped change-manager credential from BWS (the lane's token)"
+        "FATAL: could not read the propose-scoped change-manager credential from BWS$FROM"
     export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
   fi
   SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
   [ -n "$SDS_MEMBERS_OBSERVER_TOKEN" ] || sds_outcome_fail \
-      "FATAL: could not read the orchestrator observer bearer from BWS (the lane's token)"
+      "FATAL: could not read the orchestrator observer bearer from BWS$FROM"
   export SDS_MEMBERS_OBSERVER_TOKEN
 
   # THE REPOSITORIES ARE THE PROGRAM'S, NOT LISTED HERE: `change-proposer repositories` reads the
@@ -139,7 +147,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # NOTHING, AND SAYS SO: an unreadable record or an empty list exits 2 (the lane couldn't
   # establish its scope) with the pass not run. Any other non-zero code is the tool failing (1) or
   # not running at all (126, 127, 137), and is passed through verbatim.
-  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/change-proposer" repositories)"
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+    "$REPO_ROOT/.venv/bin/change-proposer" repositories)"
   derive_rc=$?
   if [ "$derive_rc" -ne 0 ] && [ "$derive_rc" -ne 2 ]; then
     sds_outcome_fail \
@@ -158,13 +167,13 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # THE GITHUB TOKEN IS MINTED EACH PASS, dry run or not, after the derivation, because the mint
   # names its repositories. The App's key goes from the BWS read straight to the mint's stdin in its
   # stored form, base64 of the PEM; it is never in a variable, an argument or a file, and the mint
-  # runs without the lane's token. The three permissions are what the program's GET calls use
-  # (`deploy_watcher/github.py`, through `change_proposer/cli.py`): the rollout workflow's bytes
-  # (`contents`), the open pull requests and one pull request's disposition (`pull_requests`), and
-  # `metadata`, which GitHub grants with every token. Any preset value is replaced, so the pass runs
-  # only on the token it minted.
+  # runs without the lane's token or the socket's marker. The three permissions are what the
+  # program's GET calls use (`deploy_watcher/github.py`, through `change_proposer/cli.py`): the
+  # rollout workflow's bytes (`contents`), the open pull requests and one pull request's disposition
+  # (`pull_requests`), and `metadata`, which GitHub grants with every token. Any preset value is
+  # replaced, so the pass runs only on the token it minted.
   CHANGE_PROPOSER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+    | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
         --permission metadata=read --permission contents=read --permission pull_requests=read)"
   mint_rc=$?
@@ -173,8 +182,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   fi
   export CHANGE_PROPOSER_GITHUB_TOKEN
 fi
-# The program needs no BWS identity, so the lane's token never reaches it.
-unset BWS_ACCESS_TOKEN
+# The program needs no BWS identity, so neither the lane's token nor the socket's marker reaches it.
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 "$REPO_ROOT/.venv/bin/change-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
 rc=$?

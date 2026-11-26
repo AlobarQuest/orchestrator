@@ -222,8 +222,8 @@ After Devon approves a rotation's change record and the work carrier registers i
 amendment 15, increment 5). The orchestrator approves it by policy as it is proposed when every unit
 is a rotation unit the rotation pattern recognises (amendment 16), so the package revision is a
 rotation's one click; a proposal it doesn't approve waits for a person on `/review`. The lane runs
-hourly in its container (`lanes/rotation-decomposer/`, ADR-0059 increment 4), with the lane's own
-BWS token. Its Healthchecks check, `sds-rotation-decomposer`, is an outcome alarm: every non-zero
+hourly in its container (`lanes/rotation-decomposer/`, ADR-0059 increment 4), reading its secrets
+through the lane secrets broker (ADR-0055 Amendment 32, item 4). Its Healthchecks check, `sds-rotation-decomposer`, is an outcome alarm: every non-zero
 exit pings `/fail` with the report.
 
 Each pass reads change-manager's `work` records with the READ bearer. For each approved record
@@ -1107,7 +1107,7 @@ adapter's first rotation.
 | Probe | Ability held | Ability absent |
 |---|---|---|
 | `PATCH /api/v1/projects/<a random UUID>` with only a field `update_project` doesn't allow | 422 | 403 |
-| `GET /api/v1/deploy` with no `uuid` and no `tag` | 400 | 403 |
+| `GET /api/v1/deploy` with no `uuid` and no `tag` | 400 (`4.0.0-beta.473`) or 405 (`4.7.6`) | 403 |
 | `GET /api/v1/applications/<canary>/envs` | `read:sensitive`: an entry carries `value` or `real_value` | no entry carries either |
 
 Any other status refuses the value, naming it, and a probe with no answer fails the unit. A `root`
@@ -1464,11 +1464,8 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    | Target | Container |
    |---|---|
    | `revision-watcher` | `revision-watcher-kmjkrhlmv6c7ee76g77a8491` |
-   | `change-proposer` | `change-proposer-w35r4jsmylloghoexdc18gfl` |
-   | `rotation-decomposer` | `rotation-decomposer-hcghb8xli5qqo6kl8enuu080` |
    | `work-carrier` | `work-carrier-am99g0klcsa7u8dpb4t19xjr` |
    | `bump-proposer` | `bump-proposer-dsmi1mj0xbjrsu8kamdxocp8` |
-   | `rotation-proposer` | `rotation-proposer-chyzh4utebg7ruouxxp42d0s` |
 3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
    run a short script as that user through `orb -m rotation-executor -u root runuser -u rotation --
    env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/python -`.

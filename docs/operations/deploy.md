@@ -528,16 +528,16 @@ one lane") still needs the following, in this order, each in its own change or a
    two commits explain isn't a cut-over failure; then the schedule and the Mac job's retirement.
 
 `change-proposer`'s tracked files (`lanes/change-proposer/compose.yaml` and `crontab`) don't
-register it either. It clones nothing and keeps no state, so its compose mounts no volume. Its
+register it either. It clones nothing and keeps no state, so its compose mounts no state volume. Its
 crontab runs `lane-run change-proposer --submit` hourly at minute 35, as the Mac job's
 `StartInterval` of 3600 runs it with `--submit` in its plist; 35 is a minute no other lane starts
 on. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager propose bearer, the
-read-only App's key and its ping-URL secret, all read with the lane's one token; the propose bearer
-is read only on a `--submit` pass. The bare run is the lane's dry run: it reads the observer bearer and mints
+read-only App's key and its ping-URL secret, all read through the broker; the propose bearer is
+read only on a `--submit` pass. The bare run is the lane's dry run: it reads the observer bearer and mints
 its read token, writes nothing, and pings nothing. The check is an outcome alarm that pings only on
 `--submit` passes: its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
-`change-proposer-ping-url`, which the container's dead-man helper reads the URL from with the lane's
-own token (`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch` reader for
+`change-proposer-ping-url`, which the container's dead-man helper reads the URL from through the
+broker (`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/change-proposer` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). The read-App key row's `runtime-fetch` reader for
 `scripts/run-change-proposer.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this
 order, each in its own change or act:
 
@@ -567,13 +567,13 @@ state: they sit under `lane-run`'s new `HOME`, so each pass refetches the four p
 repositories anonymously with the image's `git`. Its crontab runs `lane-run rotation-decomposer`
 hourly at minute 50, as the Mac job's `StartInterval` of 3600 runs it with no arguments; 50 is a
 minute no other lane starts on. Its `.bws-secrets.toml` secrets are the orchestrator SYSTEM bearer,
-the change-manager READ bearer, the `sds-bridge` alert sender and its ping-URL secret, all read with
-the lane's one token; the sender is read only on an acting pass (no `--dry-run`). It needs no GitHub token: it calls no GitHub API. `--dry-run` is the lane's
+the change-manager READ bearer, the `sds-bridge` alert sender and its ping-URL secret, all read
+through the broker; the sender is read only on an acting pass (no `--dry-run`). It needs no GitHub token: it calls no GitHub API. `--dry-run` is the lane's
 reporting mode: it reads the two bearers, proposes nothing, sends nothing and pings nothing. The
 check is an outcome alarm that pings only on acting passes: its compose names
 `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `rotation-decomposer-ping-url`, which the
-container's dead-man helper reads the URL from with the lane's own token
-(`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one lane") still needs the
+container's dead-man helper reads the URL from through the broker
+(`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/rotation-decomposer` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). Its cut-over (ADR-0059, "Cut-over for one lane") still needs the
 following, in this order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-rotation-decomposer` from the
@@ -836,10 +836,11 @@ open in the container (Amendment 12's verify item "an open exposure survives the
 exposure is declared in a registry the list names, and the cut-over copy carries the state that
 shows it unresolved.
 
-Its `.bws-secrets.toml` secrets are its ping-URL secret and the following four, all read with the
-lane's one token. The launcher reads the four on `--submit` only; a dry run reads none of them. Its
-compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `rotation-proposer-ping-url`, which
-the container's dead-man helper reads the URL from on every pass (`scripts/sds-deadman.sh`).
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following four, all read through
+the lane secrets broker. The launcher reads the four on `--submit` only; a dry run reads none of
+them. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`rotation-proposer-ping-url`, which the container's dead-man helper reads the URL from on every pass
+(`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/rotation-proposer` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`).
 
 - The change-manager PROPOSE bearer.
 - The orchestrator OBSERVER bearer.
@@ -847,8 +848,8 @@ the container's dead-man helper reads the URL from on every pass (`scripts/sds-d
 - The "SDS lanes" App's key (`lanes-push-app-private-key`).
 
 Each pass clones five public repositories anonymously, shallow at `main`, into
-`/var/tmp/sds-rotation-proposer`, with git given no credential and without the lane's token in its
-environment, and discards them when it's done: intent-packages and the four registries' repositories.
+`/var/tmp/sds-rotation-proposer`, with git given no credential and without the lane's token or the
+socket's marker in its environment, and discards them when it's done: intent-packages and the four registries' repositories.
 The infraops-mcp-server clone is also the checkout `cred-findings` runs from (its `dist/` is
 tracked). Its registry mirrors (`RepoMirror`) live in that directory too. The pass gathers these
 inputs before it reads any secret, so a pass that can't use them reads none. On `--submit` it mints

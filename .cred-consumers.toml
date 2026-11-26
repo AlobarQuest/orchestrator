@@ -370,7 +370,7 @@ rotated_by_sds = true
   repo = "orchestrator"
   ref = "scripts/run-change-proposer.sh"
   healthchecks_check = "sds-change-proposer"
-  note = "the sds-lane-change-proposer container, hourly at minute 35 (--submit), with the lane's own token (no Keychain item); Healthchecks check sds-change-proposer (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
+  note = "the sds-lane-change-proposer container, hourly at minute 35 (--submit), through the lane secrets broker (no Keychain item); Healthchecks check sds-change-proposer (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -419,7 +419,7 @@ rotated_by_sds = true
   repo = "orchestrator"
   ref = "scripts/run-rotation-proposer.sh"
   healthchecks_check = "sds-rotation-proposer"
-  note = "the sds-lane-rotation-proposer container, 06:31 New York time (--submit), with the lane's own token (no Keychain item); Healthchecks check sds-rotation-proposer"
+  note = "the sds-lane-rotation-proposer container, 06:31 New York time (--submit), through the lane secrets broker (no Keychain item); Healthchecks check sds-rotation-proposer"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -1088,8 +1088,9 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "141260f5-bc4b-44d8-8ac8-b50100c0d40a"
 rotated_by_sds = true
-helper_target = "change-proposer"
 rotate_requested = "2026-11-13"
+# The lane reads its secrets through the lane secrets broker (ADR-0055 amendment 30), not with this
+# token, which stays until the lane tokens are revoked (Amendment 32, item 5).
 # What the lane's account sees, exactly: .bws-secrets.toml's change-proposer secrets
 # (orchestrator-observer, change-manager/M2M_TOKEN_PROPOSE, lanes-read-app-private-key) and the
 # ping URL's keeper.
@@ -1108,7 +1109,7 @@ reach_projects = []
   uuid = "w35r4jsmylloghoexdc18gfl"
   key = "CHANGE_PROPOSER_BWS_ACCESS_TOKEN"
   redeploy = false
-  note = "the sds-lane-change-proposer service's variable; the lane phases redeploy it, never the executor"
+  note = "the sds-lane-change-proposer service's variable, which the lane's compose maps to nothing since the lane reads through the secrets broker; kept until the lane tokens are revoked; the lane phases redeploy it, never the executor"
 
 # No `created`, for the reason the landing ledger's block gives.
 [[credential]]
@@ -1125,7 +1126,7 @@ healthchecks_check = "sds-change-proposer"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "7651ccc2-7e13-417b-86da-b50100c0d4b2"
-  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane through its single-secret grant"
 
 # ── The rotation-decomposer lane's token and ping URL (ADR-0059 increment 4) ─────
 # ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
@@ -1141,8 +1142,9 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "623e61a6-d613-4e89-9626-b501013afbeb"
 rotated_by_sds = true
-helper_target = "rotation-decomposer"
 rotate_requested = "2026-11-23"
+# The lane reads its secrets through the lane secrets broker (ADR-0055 amendment 30), not with this
+# token, which stays until the lane tokens are revoked (Amendment 32, item 5).
 # What the lane's account sees, exactly: .bws-secrets.toml's rotation-decomposer secrets
 # (ORCHESTRATOR_M2M_CREDENTIALS, change-manager/M2M_TOKEN_READ, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE)
 # and the ping URL's keeper.
@@ -1161,7 +1163,7 @@ reach_projects = []
   uuid = "hcghb8xli5qqo6kl8enuu080"
   key = "ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN"
   redeploy = false
-  note = "the sds-lane-rotation-decomposer service's variable; the lane phases redeploy it, never the executor"
+  note = "the sds-lane-rotation-decomposer service's variable, which the lane's compose maps to nothing since the lane reads through the secrets broker; kept until the lane tokens are revoked; the lane phases redeploy it, never the executor"
 
 # No `created`, for the reason the landing ledger's block gives.
 [[credential]]
@@ -1178,7 +1180,7 @@ healthchecks_check = "sds-rotation-decomposer"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "936bbbf2-dc3b-4343-979a-b501013afc87"
-  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane through its single-secret grant"
 
 # ── The work-carrier lane's token and ping URL (ADR-0059 increment 4) ────────────
 # ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
@@ -1301,8 +1303,9 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "540f1cb7-2487-4b1a-8179-b50601312b40"
 rotated_by_sds = true
-helper_target = "rotation-proposer"
 rotate_requested = "2026-11-18"
+# The lane reads its secrets through the lane secrets broker (ADR-0055 amendment 30), not with this
+# token, which stays until the lane tokens are revoked (Amendment 32, item 5).
 # What the lane's account sees, exactly: .bws-secrets.toml's rotation-proposer secrets
 # (orchestrator-observer, change-manager/M2M_TOKEN_PROPOSE, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE,
 # lanes-push-app-private-key) and the ping URL's keeper.
@@ -1321,7 +1324,7 @@ reach_projects = []
   uuid = "chyzh4utebg7ruouxxp42d0s"
   key = "ROTATION_PROPOSER_BWS_ACCESS_TOKEN"
   redeploy = false
-  note = "the sds-lane-rotation-proposer service's variable; the lane phases redeploy it, never the executor"
+  note = "the sds-lane-rotation-proposer service's variable, which the lane's compose maps to nothing since the lane reads through the secrets broker; kept until the lane tokens are revoked; the lane phases redeploy it, never the executor"
 
 # No `created`, for the reason the landing ledger's block gives.
 [[credential]]
@@ -1338,7 +1341,7 @@ healthchecks_check = "sds-rotation-proposer"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "506a5436-4643-4040-8a8b-b50601312be2"
-  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the executor writes it, and the broker reads it for the lane through its single-secret grant"
 
 # ── The inert-landing lane's token and ping URL (ADR-0059 increment 5) ───────────
 # ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
@@ -1483,8 +1486,9 @@ healthchecks_check = "sds-follow-up-mint"
 #   change-window-coolify-token, change-manager/M2M_TOKEN_EXECUTE, change-window-anthropic-key,
 #   ALERT_HUB_SENDER_TOKEN_REPORT_CHANGE_WINDOW, change-window-ping-url, orchestrator-observer,
 #   execution-watch-ping-url, landing-ledger-ping-url, pin-watcher-ping-url,
-#   change-manager/M2M_TOKEN_OBSERVE, unit-verifier-ping-url, membership-check-ping-url and
-#   deploy-watcher-ping-url.
+#   change-manager/M2M_TOKEN_OBSERVE, unit-verifier-ping-url, membership-check-ping-url,
+#   deploy-watcher-ping-url, change-manager/M2M_TOKEN_PROPOSE, change-proposer-ping-url,
+#   rotation-decomposer-ping-url and rotation-proposer-ping-url.
 # - Brains - Contributor: CODE_BRAIN_CONTRIBUTOR_KEY and INFRA_BRAIN_CONTRIBUTOR_KEY.
 # - Factory Events: factory-events-read-password.
 # Devon gave the bump driver's four (bump-driver-ping-url, the two Brain keys and the read
@@ -1497,6 +1501,8 @@ healthchecks_check = "sds-follow-up-mint"
 # Phase C's second batch records change-manager/M2M_TOKEN_OBSERVE and the unit-verifier,
 # membership-check and deploy-watcher ping URLs; Devon gives those four at an HQ gate before the
 # release that moves those lanes onto the broker.
+# Devon gave change-manager/M2M_TOKEN_PROPOSE and the change-proposer, rotation-decomposer and
+# rotation-proposer ping URLs at HQ gate G-106, for Phase C's third batch.
 # Devon's choice: "Project by project", with single-secret grants in Rotation / Keepers so the
 # broker can't read every lane's keeper.
 [[credential]]
@@ -1505,7 +1511,7 @@ class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
 rotated_by_sds = false
-reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5", "3d41395a-06c3-47d5-ac85-b50a00dfbc2f", "aa7c76af-bd52-4796-9d13-b50a00e035de", "0e9ebf2d-5b62-4f81-a731-b50a00e0df18", "71616bf5-14ba-4888-b3f8-b50a00e13ed2", "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3", "f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "97802aac-5a7f-45e8-8185-b4fc00cd318e", "ebabdd63-2eff-4b8e-99b7-b4fd01754eae", "872684c0-899e-43b7-9c2d-b50000e88b21", "3b9503da-eb7e-401d-b4a7-b4a400c07efb", "1cfc8352-c960-4afc-bd49-b4ff00e8783e", "5fc44897-b4df-44ae-8491-b5000129d9be", "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875"]
+reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5", "3d41395a-06c3-47d5-ac85-b50a00dfbc2f", "aa7c76af-bd52-4796-9d13-b50a00e035de", "0e9ebf2d-5b62-4f81-a731-b50a00e0df18", "71616bf5-14ba-4888-b3f8-b50a00e13ed2", "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3", "f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "97802aac-5a7f-45e8-8185-b4fc00cd318e", "ebabdd63-2eff-4b8e-99b7-b4fd01754eae", "872684c0-899e-43b7-9c2d-b50000e88b21", "3b9503da-eb7e-401d-b4a7-b4a400c07efb", "1cfc8352-c960-4afc-bd49-b4ff00e8783e", "5fc44897-b4df-44ae-8491-b5000129d9be", "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875", "acccb346-4baa-43ec-a1d4-b4a400c048ee", "7651ccc2-7e13-417b-86da-b50100c0d4b2", "936bbbf2-dc3b-4343-979a-b501013afc87", "506a5436-4643-4040-8a8b-b50601312be2"]
 reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a157-b4fd01259df8"]
 
   [[credential.consumer]]
@@ -1546,9 +1552,10 @@ reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a1
 # landing's cut-over item 3); it reads through the secrets broker, whose account's grant is item 4.
 # The bump-driver lane's reader lands with its ping URL's row (deploy.md, the bump driver's cut-over
 # item 4); it reads through the secrets broker, whose account reads `SDS / Lane Apps`. The
-# landing-ledger, pin-watcher, unit-verifier, membership-check and deploy-watcher lanes read it
-# through the broker too (ADR-0055 Amendment 32, item 4); their accounts' grants stay until the lane
-# tokens are revoked.
+# landing-ledger, pin-watcher, unit-verifier, membership-check, deploy-watcher and change-proposer
+# lanes read it through the broker too (ADR-0055 Amendment 32, item 4), and the rotation-proposer
+# lane reads the push App's key through it; their accounts' grants stay until the lane tokens are
+# revoked.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -1611,7 +1618,7 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   repo = "orchestrator"
   ref = "scripts/run-change-proposer.sh"
   healthchecks_check = "sds-change-proposer"
-  note = "read in the sds-lane-change-proposer container with the lane's own token, each pass (dry run or not), and piped straight into sds-github-mint; pings sds-change-proposer on --submit passes only"
+  note = "read in the sds-lane-change-proposer container through the lane secrets broker, each pass (dry run or not), and piped straight into sds-github-mint; pings sds-change-proposer on --submit passes only"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -1675,7 +1682,7 @@ rotation_preconditions = ["rotate it with lanes-read-app-private-key in one sitt
   repo = "orchestrator"
   ref = "scripts/run-rotation-proposer.sh"
   healthchecks_check = "sds-rotation-proposer"
-  note = "read in the sds-lane-rotation-proposer container with the lane's own token, --submit passes only, and piped straight into sds-github-mint for intent-packages' contents: write; pings sds-rotation-proposer every pass"
+  note = "read in the sds-lane-rotation-proposer container through the lane secrets broker, --submit passes only, and piped straight into sds-github-mint for intent-packages' contents: write; pings sds-rotation-proposer every pass"
 
 # ── The factory-events chain's role passwords (ADR-0055 amendments 24 item 11, 25 and 26) ──────
 # One row per secret, listing every reader across the estate. Each BWS secret holds only its role's
