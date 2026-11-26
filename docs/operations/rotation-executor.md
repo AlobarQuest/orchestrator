@@ -854,7 +854,7 @@ It prints `switched`, `not yet` or `unreadable` for each reader, with the start 
 it found. It exits 2 when any reader is unreadable. When it prints nothing and exits 0, the
 credential's row names no scheduled reader: no `runtime-fetch` consumer with a read and no
 Actions-secret copy. A `bws-lane-token` row with `helper_target`, such as
-`deploy-watcher-bws-token`, is one: its lane is proved by the helper's `loaded` fingerprint
+`revision-watcher-bws-token`, is one: its lane is proved by the helper's `loaded` fingerprint
 ("Lane tokens and ping URLs"), which this command doesn't read.
 
 ### If a rotation stalls after host
@@ -1361,9 +1361,9 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    `container`, `role` or `database`, only the lane container and the variable it loads.
 
    ```toml
-   [target.deploy-watcher]
+   [target.revision-watcher]
 
-   [[target.deploy-watcher.consumer]]
+   [[target.revision-watcher.consumer]]
    container = "<the lane's container name>"
    env = "BWS_ACCESS_TOKEN"
    ```
@@ -1383,10 +1383,7 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
 
    | Target | Container |
    |---|---|
-   | `deploy-watcher` | `deploy-watcher-p12q9n6xcy5u8eib1m4gmvar` |
    | `revision-watcher` | `revision-watcher-kmjkrhlmv6c7ee76g77a8491` |
-   | `unit-verifier` | `unit-verifier-y144dc0981smrtzl587hqa4f` |
-   | `membership-check` | `membership-check-qb6f52pfvhcoh2w2sgrhii2z` |
    | `change-proposer` | `change-proposer-w35r4jsmylloghoexdc18gfl` |
    | `rotation-decomposer` | `rotation-decomposer-hcghb8xli5qqo6kl8enuu080` |
    | `work-carrier` | `work-carrier-am99g0klcsa7u8dpb4t19xjr` |
@@ -1677,10 +1674,11 @@ A reissue's `verify` proves that start one of two ways, chosen by the lane token
   (D-27).
 
 Every `rotated_by_sds` `bws-lane-token` row whose lane loads its own token names `helper_target`,
-the lane's name, so a reissue of those twelve tokens takes the `loaded` proof. Two rows name none
-and keep the `PATCH` proof: `inert-landing-bws-token`, a broker lane's, and
-`secrets-broker-bws-token`, which the SDS doesn't rotate. `tests/rotation_worker/
-test_lane_token_helper_targets.py` holds that rule on the real file.
+the lane's name, so a reissue of those tokens takes the `loaded` proof. The rows of the broker
+lanes (the tables in `lanes/secrets-broker/allowlist.toml`) name none and keep the `PATCH` proof,
+since their containers load no `BWS_ACCESS_TOKEN`, and so does `secrets-broker-bws-token`, which
+the SDS doesn't rotate. `tests/rotation_worker/test_lane_token_helper_targets.py` holds that rule
+on the real file.
 
 The rows gained the field at increment 7's cut-over, and the change merges only once both of the
 following hold:

@@ -67,10 +67,11 @@ def test_the_token_row_is_one_the_lane_token_adapter_acts_on(
     bws_lane_token.check_row(entry.credential)
     variable = bws_lane_token.lane_variable(entry.destinations, entry.keeper)
     assert variable["uuid"] == "p12q9n6xcy5u8eib1m4gmvar"
-    # The variable `lanes/deploy-watcher/compose.yaml` maps to the container's BWS_ACCESS_TOKEN.
+    # The resource's variable, kept until the lane tokens are revoked; the lane reads through the
+    # secrets broker, so `lanes/deploy-watcher/compose.yaml` maps it to nothing.
     assert variable["key"] == "DEPLOY_WATCHER_BWS_ACCESS_TOKEN"
     compose = (ROOT / "lanes" / LANE / "compose.yaml").read_text()
-    assert "BWS_ACCESS_TOKEN: ${DEPLOY_WATCHER_BWS_ACCESS_TOKEN}" in compose
+    assert "${DEPLOY_WATCHER_BWS_ACCESS_TOKEN}" not in compose
 
 
 def test_the_token_row_declares_the_lane_s_manifest_secrets_and_its_ping_url_keeper(

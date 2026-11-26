@@ -2,15 +2,20 @@
 # creates the resource from this file. It serves nothing: no port, no domain, so no Traefik labels
 # and no `networks:` entry, as `lanes/landing-ledger/compose.yaml`. It keeps no state (ADR-0059
 # decision 1, the lane-state bullet), so it mounts no volume: its one clone, of intent-packages, goes
-# in each pass's own `HOME`, which `lane-run` deletes after the pass. The lane's token is the
-# resource's own `MEMBERSHIP_CHECK_BWS_ACCESS_TOKEN` variable, which the VM rotation executor
-# writes; this file names it and never holds a value. With it the launcher reads the orchestrator's
-# observer bearer, the change-manager READ bearer and the read-only App's key, and mints the pass's
-# GitHub token (`scripts/run-membership-check.sh`).
+# in each pass's own `HOME`, which `lane-run` deletes after the pass, and its one mount is the
+# broker's socket directory.
+# It holds no token: it reads the orchestrator's observer bearer, the change-manager READ bearer and
+# the read-only App's key, and mints the pass's GitHub token, through the lane secrets broker
+# (ADR-0055 amendment 30), whose socket directory `/data/sds/broker/membership-check` it mounts
+# read-only at `/run/sds-broker`. `lane-run` names the socket to the launcher
+# (`scripts/run-membership-check.sh`), and the broker serves it only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
+# `MEMBERSHIP_CHECK_BWS_ACCESS_TOKEN` variable until the lane tokens are revoked, and this file maps
+# it to nothing.
 # `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
 # `membership-check-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
-# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
-# the lane's own token (`scripts/sds-deadman.sh`). The VM rotation executor writes the URL there
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret
+# through the broker (`scripts/sds-deadman.sh`). The VM rotation executor writes the URL there
 # from its inbox; while the secret holds the inbox's empty marker, the helper refuses it and pings
 # nothing, and the pass itself still runs. The schedule stays off (`LANE_SCHEDULE_ENABLED`) until
 # the cut-over turns it on.
@@ -19,7 +24,8 @@ services:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["membership-check"]
     environment:
-      BWS_ACCESS_TOKEN: ${MEMBERSHIP_CHECK_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       SDS_DEADMAN_PING_URL_UUID: 5fc44897-b4df-44ae-8491-b5000129d9be
+    volumes:
+      - /data/sds/broker/membership-check:/run/sds-broker:ro
     restart: unless-stopped

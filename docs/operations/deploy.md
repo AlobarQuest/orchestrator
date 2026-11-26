@@ -371,17 +371,17 @@ token entry and a table stays registered until both are gone.
 register it: its token entry lands with its cut-over. Its compose names
 `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of the lane's ping-URL secret; until the executor
 writes the URL there, that secret holds the inbox's empty marker and the container's dead-man
-helper pings nothing (`scripts/sds-deadman.sh`). The secrets a lane reads are listed in `.bws-secrets.toml` by each
+helper pings nothing (`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/execution-watch` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). The secrets a lane reads are listed in `.bws-secrets.toml` by each
 secret's `lanes` field, which `lane_secrets` reads for a `--token` run and the cut-over's identity
 proof uses.
 
 `landing-ledger`'s tracked files (`lanes/landing-ledger/compose.yaml` and `crontab`) don't register
-it either. It keeps no state, so its compose mounts no volume. Its crontab runs
+it either. It keeps no state, so its compose mounts no state volume. Its crontab runs
 `lane-run landing-ledger` daily at 07:30 New York time, as the Mac job does; the ledger has no
 scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer and the read-only
 App's key, plus its ping-URL secret. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret
-id of `landing-ledger-ping-url`, which the container's dead-man helper reads the URL from with the
-lane's own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one lane")
+id of `landing-ledger-ping-url`, which the container's dead-man helper reads the URL from through
+the broker (`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/landing-ledger` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). Its cut-over (ADR-0059, "Cut-over for one lane")
 still needs the following, each in its own change or act:
 
 1. The executor's token write.
@@ -391,13 +391,13 @@ still needs the following, each in its own change or act:
 4. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
 
 `deploy-watcher`'s tracked files (`lanes/deploy-watcher/compose.yaml` and `crontab`) don't
-register it either. It keeps no state, so its compose mounts no volume. Its crontab runs
+register it either. It keeps no state, so its compose mounts no state volume. Its crontab runs
 `lane-run deploy-watcher` hourly at minute 20, as the Mac job's `StartInterval` of 3600 does; the
 watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer,
-change-manager's `M2M_TOKEN_OBSERVE`, the read-only App's key and its ping-URL secret, all read with
-the lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
-`deploy-watcher-ping-url`, which the container's dead-man helper reads the URL from with the lane's
-own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one
+change-manager's `M2M_TOKEN_OBSERVE`, the read-only App's key and its ping-URL secret, all read
+through the broker. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`deploy-watcher-ping-url`, which the container's dead-man helper reads the URL from through the
+broker (`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/deploy-watcher` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). Its cut-over (ADR-0059, "Cut-over for one
 lane") still needs the following, in this order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-deploy-watcher` from the
@@ -460,10 +460,9 @@ runs `lane-run pin-watcher` daily at 07:25 New York time. The Mac job runs at 07
 is the deploy watcher's hourly start, and 25 keeps it clear of every other lane's start; the
 watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer, the
 `sds-bridge` alert sender (acting passes only), the read-only App's key and its ping-URL secret,
-all read with the lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret
-id of `pin-watcher-ping-url`,
-which the container's dead-man helper reads the URL from with the lane's own token
-(`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch`
+all read through the broker. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`pin-watcher-ping-url`, which the container's dead-man helper reads the URL from through the broker
+(`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/pin-watcher` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). The read-App key row's `runtime-fetch`
 reader for `scripts/run-pin-watcher.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over
 for one lane") still needs the following, in this order, each in its own change or act:
 
@@ -489,18 +488,18 @@ for one lane") still needs the following, in this order, each in its own change 
    firing never resolve), the paired reporting runs, the schedule, and the Mac job's retirement.
 
 `membership-check`'s tracked files (`lanes/membership-check/compose.yaml` and `crontab`) don't
-register it either. It keeps no state, so its compose mounts no volume. Its crontab runs
+register it either. It keeps no state, so its compose mounts no state volume. Its crontab runs
 `lane-run membership-check` daily at 07:47 New York time. The Mac job runs at 07:45, but minute 45
 is one of execution-watch's quarter-hours, and 47 keeps it clear of every other lane's start; the
 check has no flags. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager READ
-bearer, the read-only App's key and its ping-URL secret, all read with the lane's one token, never
-the Healthchecks API key. Each container pass also makes an anonymous shallow clone of intent-packages into the pass's
+bearer, the read-only App's key and its ping-URL secret, all read through the broker, never the
+Healthchecks API key. It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/membership-check` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). Each container pass also makes an anonymous shallow clone of intent-packages into the pass's
 `HOME` and points `BUMP_PROPOSER_PACKAGES_CHECKOUT` at it (ADR-0059 amendment 5); the report's first
 line names the clone's commit, or git's exit code and error, and a failed clone is the program's
 "packages checkout couldn't be read" gap (exit 3, or 2 beside a disagreement), never the launcher's
 exit 1. The check is an outcome alarm: its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret
-id of `membership-check-ping-url`, which the container's dead-man helper reads the URL from with the
-lane's own token (`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch` reader for
+id of `membership-check-ping-url`, which the container's dead-man helper reads the URL from through
+the broker (`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch` reader for
 `scripts/run-membership-check.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over for
 one lane") still needs the following, in this order, each in its own change or act:
 
@@ -606,9 +605,9 @@ runs `lane-run unit-verifier` every ten minutes at minutes 2, 12, 22, 32, 42 and
 (`2-52/10`), as the Mac job's `StartInterval` of 600 does; those minutes keep it clear of every
 other lane's start, and the verifier has no scheduled-pass flag. Its `.bws-secrets.toml` secrets
 are the VERIFIER bearer, the `sds-bridge` alert sender (every pass), the read-only App's key and
-its ping-URL secret, all read with the lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the
+its ping-URL secret, all read through the broker. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the
 BWS secret id of `unit-verifier-ping-url`, which the container's dead-man helper reads the URL from
-with the lane's own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one
+through the broker (`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/unit-verifier` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). Its cut-over (ADR-0059, "Cut-over for one
 lane") still needs the following, in this order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-unit-verifier` from the
@@ -951,8 +950,8 @@ is in the crontab line, so a scheduled pass asks for landings. The bare `lane-ru
 the reporting run, which asks for nothing, but this lane arms the dead-man switch, so a bare run
 pings its check (ADR-0059, "It pings the real check").
 
-Its `.bws-secrets.toml` secrets are its ping-URL secret and the following four, all read with the
-lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following four, all read through
+the lane secrets broker. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
 `inert-landing-ping-url`, which the container's dead-man helper reads the URL from on every pass
 (`scripts/sds-deadman.sh`).
 

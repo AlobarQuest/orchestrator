@@ -24,12 +24,17 @@
 # through a stated fact: the observation that settles it, or the later green rollout that retires
 # it (ADR-0022 amendment 1), with change-manager choosing the outcome.
 #
-# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3). `lane-run` passes the lane's own token
-# as `BWS_ACCESS_TOKEN`, its one secret, and both bearers are read with it, in the environment,
-# never as a process argument. The GitHub credential is an installation token minted each pass from
-# the read-only App `alobar-sds-lanes-read`, narrowed to the repositories `ROLLOUT_WORKFLOWS` names
-# and the four read permissions the watcher's calls use. The BWS token is unset before the watcher
-# runs, which needs neither it nor the App's key.
+# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret. Both bearers and the
+# App's key are read with `sds_bws_value` and one argument, through the socket or with that token in
+# the environment, never as a process argument; the broker serves this lane only the UUIDs its
+# entry in `lanes/secrets-broker/allowlist.toml` lists. The GitHub credential is an installation
+# token minted each pass from the read-only App `alobar-sds-lanes-read`, narrowed to the
+# repositories `ROLLOUT_WORKFLOWS` names and the four read permissions the watcher's calls use.
+# `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` are removed from every child and unset before the
+# watcher runs, which needs neither nor the App's key; the socket itself stays reachable, as the
+# design accepts. Without a socket or a token the launcher refuses with exit 1.
 #
 # Usage:
 #   scripts/run-deploy-watcher.sh [--dry-run]
@@ -52,8 +57,18 @@ READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
 READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the deploy-watcher lane runs only in its container, through lane-run" >&2
+
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard: `--color no` and an
+# environment with the forcing variables removed, since FORCE_COLOR / CLICOLOR_FORCE make
+# `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe. Sourced first: the host
+# test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
+# armed here, the switch would ping the production check.
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the deploy-watcher lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -64,14 +79,8 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-deploy-watcher --finding 2 "$@"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
-# CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
-# which breaks the parse below.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
-# ONE BWS IDENTITY: the lane's own token, already in the environment, reads both bearers
-# (ADR-0059 decision 2: one lane, one token).
+# ONE READ PATH: the lane's socket, or the lane's own token already in the environment, reads both
+# bearers (ADR-0059 decision 2; ADR-0055 amendment 30).
 _change_manager_secret() { sds_bws_value "$1"; }
 _observer_secret() { sds_bws_value "$1"; }
 
@@ -87,11 +96,13 @@ fi
 # through into the program's own "variable is not set" exit -- which reports the wrong cause. Name
 # each here, so the exit code means what this header says it means.
 if [ -z "${DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
-  echo "FATAL: could not read the change-manager credential from BWS" >&2
+  echo "FATAL: could not read the change-manager credential from BWS" \
+       "(the lane's socket or token)" >&2
   exit 1
 fi
 if [ -z "${DEPLOY_WATCHER_ORCHESTRATOR_TOKEN:-}" ]; then
-  echo "FATAL: could not read the orchestrator observer credential from BWS" >&2
+  echo "FATAL: could not read the orchestrator observer credential from BWS" \
+       "(the lane's socket or token)" >&2
   exit 1
 fi
 
@@ -101,7 +112,8 @@ fi
 # exits 3 with nothing on stdout, and the empty-list check below exits 3, so the hour reads as
 # incomplete rather than clean. Any other non-zero code is the tool failing (1) or not running at
 # all (126, 127, 137), and is passed through verbatim.
-REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/deploy-watcher" repositories)"
+REPOSITORIES="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+  "$REPO_ROOT/.venv/bin/deploy-watcher" repositories)"
 derive_rc=$?
 if [ "$derive_rc" -ne 0 ] && [ "$derive_rc" -ne 3 ]; then
   echo "the watcher's repositories could not be derived: deploy-watcher repositories" \
@@ -120,12 +132,12 @@ done <<< "$REPOSITORIES"
 # THE GITHUB TOKEN IS MINTED EACH PASS, after the derivation, because the mint names its
 # repositories. The App's key goes from the BWS read straight to the mint's stdin in its stored
 # form, base64 of the PEM; it is never in a variable, an argument or a file, and the mint runs
-# without the lane's token. The four permissions are what the watcher's GET calls use
-# (`src/deploy_watcher/github.py`): the repository, commits, compare and workflow file
+# without the lane's token or the socket's marker. The four permissions are what the watcher's GET
+# calls use (`src/deploy_watcher/github.py`): the repository, commits, compare and workflow file
 # (`metadata`, `contents`), pull requests (`pull_requests`), and workflows, runs and jobs
 # (`actions`). Any preset value is replaced, so the pass runs only on the token it minted.
 DEPLOY_WATCHER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-  | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+  | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
       --app-id "$READ_APP_ID" "${TARGETS[@]}" \
       --permission metadata=read --permission contents=read \
       --permission pull_requests=read --permission actions=read)"
@@ -135,7 +147,7 @@ if [ "$mint_rc" -ne 0 ] || [ -z "$DEPLOY_WATCHER_GITHUB_TOKEN" ]; then
   echo "FATAL: could not mint the watcher's GitHub token from the read-only App" >&2
   exit 1
 fi
-unset BWS_ACCESS_TOKEN
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 "$REPO_ROOT/.venv/bin/deploy-watcher" watch "$@"
 watch_rc=$?

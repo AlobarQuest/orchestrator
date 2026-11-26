@@ -20,12 +20,18 @@
 # read from branch protection. App-change units read the member record with the same VERIFIER
 # bearer.
 #
-# THE LANE'S CONTAINER ONLY (ADR-0059): `lane-run` passes the lane's own token as `BWS_ACCESS_TOKEN`,
-# its one secret, and every secret below is read with it, in the environment, never as a process
-# argument. The GitHub credential is an installation token minted each pass from the read-only App
-# `alobar-sds-lanes-read`, narrowed to the repositories `unit-verifier repositories` derives from
-# the member record and the two read permissions branch protection's required checks need, and `gh`
-# is never asked.
+# THE LANE'S CONTAINER ONLY (ADR-0059). `sds_in_lane_container` means the lane's container:
+# `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET` (ADR-0055 amendment
+# 30), or passes a lane's own token as its one secret. Every secret below is read with
+# `sds_bws_value` and one argument, through the socket or with that token in the environment, never
+# as a process argument; the broker serves this lane only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. The GitHub credential is an installation token
+# minted each pass from the read-only App `alobar-sds-lanes-read`, narrowed to the repositories
+# `unit-verifier repositories` derives from the member record and the two read permissions branch
+# protection's required checks need, and `gh` is never asked. `BWS_ACCESS_TOKEN` and
+# `SDS_SECRETS_SOCKET` are removed from every child and unset before the verifier runs, which
+# needs neither nor the App's key; the socket itself stays reachable, as the design accepts.
+# Without a socket or a token the launcher refuses with exit 1.
 #
 # Usage:
 #   scripts/run-unit-verifier.sh [--dry-run]
@@ -40,8 +46,12 @@ READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the unit-verifier lane runs only in its container, through lane-run" >&2
+# The shared BWS reader (`sds-bws.sh`), sourced first: the host test below is its
+# `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the unit-verifier lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -51,15 +61,12 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-unit-verifier --finding 2 "$@"
 
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-verifier"
 ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$VERIFIER_BEARER_UUID")"
 export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
 if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
-  echo "FATAL: could not read the verifier bearer from BWS" >&2
+  echo "FATAL: could not read the verifier bearer from BWS (the lane's socket or token)" >&2
   exit 1
 fi
 
@@ -68,7 +75,8 @@ fi
 SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" || true)"
 export SDS_BRIDGE_ALERT_TOKEN
 if [ -z "$SDS_BRIDGE_ALERT_TOKEN" ]; then
-  echo "WARNING: could not read the alert-hub sender credential from BWS" >&2
+  echo "WARNING: could not read the alert-hub sender credential from BWS" \
+       "(the lane's socket or token)" >&2
 fi
 
 # THE GITHUB TOKEN ONLY READS BRANCH PROTECTION, so a missing one fails closed on units with checks
@@ -82,7 +90,8 @@ ROTATION_VERIFIER_GITHUB_TOKEN=""
 # the record with this lane's VERIFIER bearer and prints those granted `dependency_updates` or
 # `app_changes`, the grants a check-filing unit's repository is held to, each once. An unreadable
 # record or no granted repository prints nothing and exits 3.
-REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/unit-verifier" repositories)"
+REPOSITORIES="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+  "$REPO_ROOT/.venv/bin/unit-verifier" repositories)"
 derive_rc=$?
 if [ "$derive_rc" -ne 0 ] || [ -z "$REPOSITORIES" ]; then
   echo "WARNING: the verifier's repositories could not be derived (exit $derive_rc);" \
@@ -95,12 +104,13 @@ else
   done <<< "$REPOSITORIES"
   # MINTED EACH PASS, after the derivation, because the mint names its repositories. The App's
   # key goes from the BWS read straight to the mint's stdin in its stored form, base64 of the PEM;
-  # it is never in a variable, an argument or a file, and the mint runs without the lane's token.
+  # it is never in a variable, an argument or a file, and the mint runs without the lane's token or
+  # the socket's marker.
   # `administration=read` is what `GET .../branches/main/protection/required_status_checks`
   # needs (`src/unit_verifier/required_checks.py`, ADR-0059 decision 2), and the mint requires
   # `metadata=read`, which GitHub grants with every token.
   ROTATION_VERIFIER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+    | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
         --permission metadata=read --permission administration=read)"
   mint_rc=$?
@@ -112,7 +122,7 @@ else
   fi
 fi
 export ROTATION_VERIFIER_GITHUB_TOKEN
-unset BWS_ACCESS_TOKEN
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 "$REPO_ROOT/.venv/bin/unit-verifier" "$@"
 rc=$?
