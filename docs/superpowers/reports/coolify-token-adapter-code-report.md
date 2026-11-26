@@ -3,7 +3,7 @@ Outcome: done
 # Report: the Coolify API token rotation adapter (ADR-0055 Amendment 33 item 10, D-82)
 
 Worker W-319, branch `hq/coolify-token-adapter-code`, based on `9caad335`.
-PR: PR_URL_PLACEHOLDER (head `PR_HEAD_PLACEHOLDER`). Not merged: the merge waits on the dev
+PR: https://github.com/AlobarQuest/orchestrator/pull/820 (code head `ee79a31b`; this report's commit follows it). Not merged: the merge waits on the dev
 Coolify measurement (D-82 item 14).
 
 ## What I built
@@ -152,7 +152,7 @@ So I removed the Mac path from both rows' notes. `test_no_note_names_a_mac_reade
 - `make check` against `orchestrator_test_hq_w_319`: **14890 items collected; 14889 passed, 1
   skipped, 0 failed**; ruff and pyright clean. That run was on `f43e9c28`. After the review fixes
   (`abc1bbfd`), I reran the rotation, architecture and services tests touching the change: 2672
-  passed. FINAL_CHECK_PLACEHOLDER
+  passed. The final `make check` on `ee79a31b` (every code change, before this report's PR fields): **14890 collected; 14889 passed, 1 skipped, 0 failed**, ruff and pyright clean.
 - `code-standards risk`: `high-risk` (auth: the adapter and its two test files).
 - `/code-review` (high): five findings. Fixed three: the config sample's placeholder (an operator
   copying it got the malformed-UUID refusal, not the named one), the latent note overwrite in
