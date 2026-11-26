@@ -331,14 +331,20 @@ check and gets 400 or 405, as before; the canary probe is what refuses it.
 
 ### Head and checks
 
-- Fix commit `19fc2273`, fast-forward on `b1ba573e`; this report's commit follows it on
-  `hq/coolify-token-adapter-code`.
-- `make check` on the worktree with its own database (`orchestrator_test_hq_w_322`): lint and
-  types clean, **14896 passed, 1 skipped**, 398.90s. The adapter's two test files alone: 53
-  passed.
+- Commits, a fast-forward on `b1ba573e`: `19fc2273` (the answer sets and their tests), `ed6ae5eb`
+  (an undeclared `deploy` the token holds, on both versions), `ac7eb02c` (the `_mismatch` loop
+  variable renamed apart from `status`, from `/code-review`), `633552b6` (this report), and the
+  report commit that records these counts. Code head: `ac7eb02c`.
+- `make check` on the committed tree at `633552b6`, with the worktree's own database
+  (`orchestrator_test_hq_w_322`): lint and types clean, **14898 passed, 1 skipped**, 428.21s.
 - Token-shape grep of the added lines of `git diff 9caad335..HEAD`
-  (`grep '^+' | grep -nE '[0-9]+\|[A-Za-z0-9_-]{20,}|0\.[0-9a-f]{8}-[0-9a-f]{4}-|ghp_|github_pat_|sk-ant-|xox[bp]-'`):
-  one hit, the original report's own grep pattern text; no token or token-shaped literal.
+  (`grep '^+' | grep -E '[0-9]+\|[A-Za-z0-9_-]{20,}|0\.[0-9a-f]{8}-[0-9a-f]{4}-|ghp_|github_pat_|sk-ant-|xox[bp]-'`):
+  two hits, both a grep pattern's own text in this report (the original round's and this
+  bullet's); no token or token-shaped literal.
+- Reviews: `/code-review` (medium) gave four nits; the shadowed loop variable is fixed, and the
+  rest are answered here. `code-standards risk` is `high-risk` (auth paths), so `vendor-review`
+  ran on `b1ba573e..HEAD`: Claude and Codex both approve, agy is off by configuration, and one low
+  finding (Claude's, `cited`, not reproducible on current code) is under Concerns below.
 - `rotated_by_sds` stays unset (false) on `coolify-estate-lander-token`,
   `coolify-revision-watcher-read-token` and `coolify-change-window-token`; `.cred-consumers.toml`
   is unchanged in this round.
@@ -357,6 +363,21 @@ check and gets 400 or 405, as before; the canary probe is what refuses it.
 - **Infra Brain 1032**: no row's exposure or consumer fields changed; `.cred-consumers.toml` is
   untouched this round.
 - **Infra Brain 212** (HTTPS for public FQDNs): not applicable; no endpoint added.
+
+### Concerns (Round 1)
+
+- `docs/operations/rotation-executor.md` 1110 still says the held-deploy answer is 400. The
+  handoff limits this round to the adapter, its tests and this report, so it's unedited: it needs
+  `400 (4.0.0-beta.473) or 405 (4.7.6)`.
+- 405 proves `deploy` only while Coolify's GET `/deploy` route carries `api.ability:deploy`
+  (vendor-review, low). A release that dropped the GET route so the router answered 405 before
+  any middleware would let a token without `deploy` pass a row that declares it; the result is an
+  under-scoped keeper whose deploys get 403, never an over-scoped one, since the absent direction
+  still needs exactly 403. Re-read `routes/api.php` when either instance upgrades.
+- My worker branch was cut from `main` one commit past the PR's base, so `git merge --ff-only`
+  refused. It held no commit of its own, so I moved it with
+  `git switch -C hq/coolify-token-adapter-code-fix-1 origin/hq/coolify-token-adapter-code`;
+  nothing was lost, and the push stays a fast-forward.
 
 ### Follow-ups (not edits)
 
