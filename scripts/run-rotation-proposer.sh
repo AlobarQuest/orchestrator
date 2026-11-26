@@ -47,9 +47,11 @@
 # BARE INVOCATION IS A DRY RUN, and it needs no credential at all: it reads infraops and the
 # checkout and writes nothing and sends nothing. `--submit` is never supplied by this wrapper.
 #
-# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4, step 3f-5). A set `BWS_ACCESS_TOKEN` means the
-# lane's container, and the block after the `--submit` test runs that pass and exits; without it the
-# launcher refuses. In the container:
+# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4, step 3f-5). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret. The block after the
+# `--submit` test runs that pass and exits; without a socket or a token the launcher refuses with
+# exit 1. In the container:
 #   - `INFRADRIFT_CONFIG_DIR` and `SECURITY_DRIFT_STATE_DIR` come from the compose alone; either
 #     unset or empty, or `cred-rotation-state.json` missing from the second, exits 2 before the
 #     pass's clones, secrets or program. The state file lives on the lane's volume (ADR-0059
@@ -59,15 +61,18 @@
 #     clones' `.cred-consumers.toml`, and exits 2 when a clone lacks its registry file.
 #   - `--submit` only, it reads the change-manager PROPOSE bearer (`acccb346-…`), the orchestrator
 #     OBSERVER bearer (`f793576f-…`), the `sds-bridge` alert sender (`b415d03b-…`) and the "SDS
-#     lanes" App's key (`b8f547b9-…`, piped straight into its mint), each with the lane's one token.
-#     A dry run reads no secret.
+#     lanes" App's key (`b8f547b9-…`, piped straight into its mint), each with `sds_bws_value` and
+#     one argument, through the socket or with the lane's one token; the broker serves this lane
+#     only the UUIDs its entry in `lanes/secrets-broker/allowlist.toml` lists. A dry run reads no
+#     secret.
 #   - Its clones are anonymous, shallow at `main`, in a directory the pass discards, and the
 #     infraops-mcp-server clone is both a registry and the checkout `cred-findings` runs from. On
 #     `--submit` it hands git the App's push token with its `[bot]` identity after the clones. No
 #     program variable holds the push token; only git's extraheader does.
 #   - The lifecycle runs under the image's interpreter with the clone's `src` on `PYTHONPATH`. No
 #     chain setting reaches the program: this lane holds no chain credential (D-43 B).
-#   - It unsets `BWS_ACCESS_TOKEN` before git or any program runs.
+#   - It removes `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` from every child and unsets both before
+#     git or any program runs; the socket itself stays reachable, as the design accepts.
 #   - It always sets `ROTATION_PROPOSER_REPORT_NOT_HANDED_OVER=1`, whatever the environment held:
 #     the pass then reports a due credential not handed over as a finding and alerts on it
 #     (ADR-0059 Amendment 12 decision item 4).
@@ -108,9 +113,14 @@ PUSH_APP_BOT_EMAIL="354576843+alobar-sds-lanes[bot]@users.noreply.github.com"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The one BWS reader, with the colour guard and the venv's own interpreter. Sourced first: the host
+# test below is its `sds_in_lane_container`. Called only by a writing run.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
 # Refused before the dead-man switch arms or any secret is read.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the rotation-proposer lane runs only in its container, through lane-run" >&2
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the rotation-proposer lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -121,22 +131,17 @@ fi
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-rotation-proposer --finding 3 "$@"
 
-# The one BWS reader, with the colour guard and the venv's own interpreter. Sourced on every run
-# and called only by a writing one.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
 case " $* " in
   *" --submit "*) NEEDS_CREDENTIAL=1 ;;
   *) NEEDS_CREDENTIAL=0 ;;
 esac
 
 # ---- THE LANE'S CONTAINER (ADR-0059 increment 4, step 3f-5) -----------------------------------
-# A set `BWS_ACCESS_TOKEN` means the lane's container: `lane-run` passes the lane's own token as its
-# one secret. This block runs the whole pass and exits. The container runs the image's own code,
-# clones its checkouts fresh each pass, and reads every secret with that one token in the
-# environment, never as a process argument.
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+# `sds_in_lane_container` means the lane's container: the broker's socket in `SDS_SECRETS_SOCKET`,
+# or a lane's own token. This block runs the whole pass and exits. The container runs the image's
+# own code, clones its checkouts fresh each pass, and reads every secret through that socket or
+# with that token in the environment, never as a process argument.
+if sds_in_lane_container; then
   # THE FENCE: WHERE infraops' TWO FILES LIVE IS THE COMPOSE'S (ADR-0059 decision 5; Amendment 12
   # decision 1). `cred-findings` reads `cred-consumers.list` from `INFRADRIFT_CONFIG_DIR` and
   # `cred-rotation-state.json` from `SECURITY_DRIFT_STATE_DIR` (infraops
@@ -187,8 +192,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # THE INPUTS, gathered before any secret is read, so a pass that can't use them reads none:
   # intent-packages and the four credential registries, shallow, at `main`, anonymous, into a
   # directory the pass discards (decision 1), then the list naming the four registry files.
-  # `sds_anonymous_clone` runs each git with no credential and without the lane's token, which is
-  # still set here; the push credential doesn't exist until after the clones, so its header never
+  # `sds_anonymous_clone` runs each git with no credential and without the lane's token or the
+  # socket's marker, which are still set here; the push credential doesn't exist until after the clones, so its header never
   # rides a fetch. `ROTATION_PROPOSER_CLONE_ROOT` is a test seam: `lane-run` never passes it. The
   # git settings exported here are for the program's own git, `standing.publish`'s push.
   # shellcheck disable=SC1091
@@ -223,12 +228,14 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   export ROTATION_PROPOSER_INFRAOPS_CHECKOUT="$INFRAOPS_CLONE"
 
   # THE SECRETS, `--submit` only: a dry run reads infraops and the checkout, writes
-  # nothing and sends nothing, so it needs none. Each is read with the lane's one token.
+  # nothing and sends nothing, so it needs none. Each is read through the lane's socket or with the
+  # lane's one token.
+  FROM=" (the lane's socket or token)"
   unset _PUSH_TOKEN
   if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
     ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
     if [ -z "$ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN" ]; then
-      echo "FATAL: could not read the propose-scoped change-manager credential from BWS (the lane's token)" >&2
+      echo "FATAL: could not read the propose-scoped change-manager credential from BWS$FROM" >&2
       exit 1
     fi
     export ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN
@@ -236,13 +243,13 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
     ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
     if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
-      echo "FATAL: could not read the orchestrator observer bearer from BWS (the lane's token)" >&2
+      echo "FATAL: could not read the orchestrator observer bearer from BWS$FROM" >&2
       exit 1
     fi
     export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
     SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
     if [ -z "$SDS_BRIDGE_ALERT_TOKEN" ]; then
-      echo "FATAL: could not read the sds-bridge alert sender token from BWS (the lane's token)" >&2
+      echo "FATAL: could not read the sds-bridge alert sender token from BWS$FROM" >&2
       exit 1
     fi
     export SDS_BRIDGE_ALERT_TOKEN
@@ -250,10 +257,10 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
     # THE PUSH TOKEN, for intent-packages alone, with `contents: write` and nothing else beside
     # `metadata`. The "SDS lanes" App's key goes from the BWS read straight to the mint's stdin in
     # its stored form, base64 of the PEM; it is never in a variable, an argument or a file, and the
-    # mint runs without the lane's token. The token is held in this script's own unexported
-    # variable until git's credential takes it, below.
+    # mint runs without the lane's token or the socket's marker. The token is held in this script's
+    # own unexported variable until git's credential takes it, below.
     _PUSH_TOKEN="$(sds_bws_value "$PUSH_APP_KEY_UUID" \
-      | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+      | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
           --app-id "$PUSH_APP_ID" --repository AlobarQuest/intent-packages \
           --permission metadata=read --permission contents=write --allow-write)"
     push_rc=$?
@@ -264,8 +271,9 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   fi
 
   # EVERY BWS READ IS DONE (the dead-man switch read its ping URL when it armed), and nothing after
-  # this needs a BWS identity, git and the programs included, so the lane's token reaches none.
-  unset BWS_ACCESS_TOKEN
+  # this needs a BWS identity, git and the programs included, so neither the lane's token nor the
+  # socket's marker reaches any.
+  unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
   # ON `--submit`, GIT PUSHES AS THE "SDS LANES" APP, and its commits are the App's: the push
   # token's header and the identity pairs author and commit each revision. `standing._run` passes

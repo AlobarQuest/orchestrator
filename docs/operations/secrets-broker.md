@@ -12,7 +12,8 @@ request arrives on is the lane's identity.
 
 The broker lanes are the tables in `lanes/secrets-broker/allowlist.toml`: `inert-landing`,
 `estate-landing`, `bump-driver`, `follow-up-mint`, `change-window`, `execution-watch`,
-`landing-ledger`, `pin-watcher`, `unit-verifier`, `membership-check` and `deploy-watcher`. A test
+`landing-ledger`, `pin-watcher`, `unit-verifier`, `membership-check`, `deploy-watcher`,
+`change-proposer`, `rotation-decomposer` and `rotation-proposer`. A test
 holds that set equal to the lane composes that map no token
 (`tests/scripts/test_secrets_broker_allowlist.py`).
 
@@ -143,9 +144,8 @@ broker failed on a connection, and the lane sees no reply).
 
 ## What the broker doesn't change
 
-Six lanes on the VPS still read with their own tokens: `bump-proposer`, `change-proposer`,
-`revision-watcher`, `rotation-decomposer`, `rotation-proposer` and `work-carrier`. They, and every
-Mac launcher, run unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN` Coolify variables
+Three lanes on the VPS still read with their own tokens: `bump-proposer`, `revision-watcher` and
+`work-carrier`. They, and every Mac launcher, run unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN` Coolify variables
 and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5). The broker's own
 token is the one BWS token that stays manual until Phase C; its registry row,
 `secrets-broker-bws-token` in `.cred-consumers.toml`, is `rotated_by_sds = false` until then.

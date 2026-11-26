@@ -20,7 +20,8 @@ def test_it_stays_an_outcome_alarm_and_never_arms_the_switch() -> None:
 
 
 def test_the_sender_token_is_read_only_by_an_acting_pass() -> None:
-    """`_narrow_secret` is the lane's token (`test_run_rotation_decomposer.py` runs it)."""
+    """`_narrow_secret` reads through the lane's socket or token (`test_run_rotation_decomposer.py`
+    runs it)."""
     lines = _lines()
     fetch = [i for i, line in enumerate(lines) if '"$SDS_BRIDGE_ALERT_UUID"' in line]
     assert len(fetch) == 1
@@ -28,7 +29,7 @@ def test_the_sender_token_is_read_only_by_an_acting_pass() -> None:
     assert '_narrow_secret() { sds_bws_value "$1"; }' in lines
     guard = max(i for i in range(fetch[0]) if lines[i] == 'if [ "$_acting" -eq 1 ]; then')
     assert lines.index("fi", guard) > fetch[0]
-    assert fetch[0] < lines.index("unset BWS_ACCESS_TOKEN")
+    assert fetch[0] < lines.index("unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET")
     assert "  export SDS_BRIDGE_ALERT_TOKEN" in lines
     # Failure goes through the outcome alarm, as every other credential does.
     assert "sds_outcome_fail" in lines[fetch[0] + 1]

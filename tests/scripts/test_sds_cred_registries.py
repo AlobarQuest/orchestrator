@@ -85,8 +85,8 @@ def test_the_session_runs_infraops_from_its_own_clones_and_list(tmp_path: Path) 
     assert Path(root).parent == scratch
     assert settings == f"config={root}/infra-drift state={state} token="
     assert listed == [f"list {root}/{repository}/.cred-consumers.toml" for repository in REGISTRIES]
-    assert [line.split()[-1] for line in logs["git"] if " | " in line] == [
-        "lane_token=" for _ in REGISTRIES
+    assert [line.split()[-2:] for line in logs["git"] if " | " in line] == [
+        ["lane_token=", "socket="] for _ in REGISTRIES
     ]
     # Its clones and list are discarded after.
     assert list(scratch.iterdir()) == []

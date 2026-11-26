@@ -19,6 +19,7 @@ from rotation_decomposer import alerts
 from rotation_worker import git_mirror
 from scripts import deploy_orchestrator as deploy
 from scripts import lane_run
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-rotation-decomposer.sh")
@@ -29,6 +30,7 @@ CRONTAB = Path("lanes/rotation-decomposer/crontab")
 SYSTEM_UUID = "221a48d5-3f29-4898-b300-b4820140c880"
 READ_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
+PING_URL_KEEPER = "936bbbf2-dc3b-4343-979a-b501013afc87"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/rotation-decomposer"
 LANE_TOKEN = "a-lane-token"
@@ -55,6 +57,7 @@ _TOOL = """#!/bin/bash
 echo "pass args=$* system=${ORCHESTRATOR_API_TOKEN:-} key=${ORCHESTRATOR_API_CREDENTIAL_KEY_ID:-} \\
 cm=${CHANGE_MANAGER_TOKEN:-} alert=${SDS_BRIDGE_ALERT_TOKEN:-unset} \\
 lane_token=${BWS_ACCESS_TOKEN:+set} state=${ROTATION_DECOMPOSER_STATE_DIR:-}" >> "$LANE_LOG"
+echo "pass socket=${SDS_SECRETS_SOCKET:+set}" >> "$CHILD_LOG"
 echo "the program's report"
 exit "${FAKE_PASS_RC:-0}"
 """
@@ -66,8 +69,9 @@ def _executable(path: Path, text: str) -> None:
 
 
 def _run(
-    tmp_path: Path, *args: str, **fake: str
+    tmp_path: Path, *args: str, **fake: str | None
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, list[str]]]:
+    """`fake` overrides the environment; `None` removes a variable."""
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
@@ -84,7 +88,7 @@ def _run(
         _executable(stubs / name, body)
     home = tmp_path / "home"
     home.mkdir()
-    logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "gh", "ping")}
+    logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "gh", "ping", "child")}
     for log in logs.values():
         log.write_text("")
     env = {
@@ -97,8 +101,10 @@ def _run(
         "BWS_LOG": str(logs["bws"]),
         "GH_LOG": str(logs["gh"]),
         "PING_LOG": str(logs["ping"]),
+        "CHILD_LOG": str(logs["child"]),
         **fake,
     }
+    env = {k: v for k, v in env.items() if v is not None}
     result = subprocess.run(
         [
             "/usr/bin/env",
@@ -175,7 +181,7 @@ def test_every_read_is_the_lanes_token_whatever_identities_the_environment_holds
 def test_an_unreadable_secret_exits_1_before_the_pass(tmp_path: Path, refused: str) -> None:
     result, logs = _run(tmp_path, BWS_REFUSES=refused)
     assert result.returncode == 1
-    assert "(the lane's token)" in result.stderr
+    assert "(the lane's socket or token)" in result.stderr
     assert _passes(logs["lane"]) == []
     assert _pings(logs["ping"]) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
 
@@ -211,17 +217,113 @@ def test_the_programs_code_is_the_passs_code(tmp_path: Path, code: int, expected
 # ---- outside the container -------------------------------------------------------------------
 
 
-def test_outside_the_container_it_refuses_and_reads_no_secret(tmp_path: Path) -> None:
-    """No lane token: it refuses before the alarm is begun, so no secret is read, not even the
-    ping-URL secret, no ping is sent and no program runs."""
-    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
+@pytest.mark.parametrize("token", [None, ""], ids=["unset", "empty"])
+def test_outside_the_container_it_refuses_and_reads_no_secret(
+    tmp_path: Path, token: str | None
+) -> None:
+    """No socket and no lane token: it refuses before the alarm is begun, so no secret is read,
+    not even the ping-URL secret, no ping is sent and no program runs."""
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN=token)
     assert result.returncode == 1
     assert (
-        "FATAL: no BWS_ACCESS_TOKEN: the rotation-decomposer lane runs only in its container,"
-        " through lane-run" in result.stdout + result.stderr
+        "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the rotation-decomposer lane runs"
+        " only in its container, through lane-run" in result.stdout + result.stderr
     )
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": [], "child": []}
+
+
+def test_a_socket_variable_naming_no_socket_refuses_and_reads_nothing(tmp_path: Path) -> None:
+    """`SDS_SECRETS_SOCKET` alone isn't the container: it must name a socket."""
+    not_a_socket = tmp_path / "broker.sock"
+    not_a_socket.write_text("")
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(not_a_socket))
+    assert result.returncode == 1
+    assert "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN" in result.stderr
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": [], "child": []}
+
+
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+
+def _brokered(
+    tmp_path: Path, socket_path: Path, *args: str
+) -> tuple[subprocess.CompletedProcess[str], dict[str, list[str]]]:
+    """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
+    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path))
+
+
+def _served() -> dict[str, str | None]:
+    return {
+        READ_UUID: READ,
+        SYSTEM_UUID: SYSTEM,
+        ALERT_UUID: ALERT,
+        PING_URL_UUID: PING_URL,
+    }
+
+
+def test_on_the_socket_without_a_token_an_acting_pass_reads_every_secret_through_it(
+    tmp_path: Path, broker
+) -> None:
+    """The socket serves the ping URL and all three secrets; `bws` never runs, and the program
+    gets neither the lane's token nor the socket's marker."""
+    result, logs = _brokered(tmp_path, broker(_served()))
+    assert result.returncode == 0, result.stderr
+    assert logs["bws"] == []
+    assert _passes(logs["lane"]) == [
+        f"pass args= system={SYSTEM} key=orchestrator-system cm={READ} alert={ALERT}"
+        " lane_token= state=/var/lib/sds/rotation-decomposer"
+    ]
+    assert logs["child"] == ["pass socket="]
+    assert _pings(logs["ping"]) == [f"{PING_URL}/start", PING_URL]
+    for secret in SECRETS:
+        assert secret not in result.stdout + result.stderr
+
+
+def test_on_the_socket_a_dry_run_reads_no_sender_token_and_pings_nothing(
+    tmp_path: Path, broker
+) -> None:
+    served = _served()
+    del served[ALERT_UUID]
+    result, logs = _brokered(tmp_path, broker(served), "--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert logs["bws"] == []
+    assert _passes(logs["lane"]) == [
+        f"pass args=--dry-run system={SYSTEM} key=orchestrator-system cm={READ} alert=unset"
+        " lane_token= state=/var/lib/sds/rotation-decomposer"
+    ]
+    assert logs["ping"] == []
+
+
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [(READ_UUID, "bws_failed"), (SYSTEM_UUID, "not_allowed"), (ALERT_UUID, "not_allowed")],
+    ids=["read-bearer-read-failed", "system-not-on-the-allowlist", "sender-not-on-the-allowlist"],
+)
+def test_a_secret_the_socket_refuses_fails_the_pass(
+    tmp_path: Path, broker, refused: str, reason: str
+) -> None:
+    served = _served()
+    if reason == "bws_failed":
+        served[refused] = None
+    else:
+        del served[refused]
+    result, logs = _brokered(tmp_path, broker(served))
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {refused}: {reason}" in result.stderr
+    assert logs["bws"] == []
     assert _passes(logs["lane"]) == []
-    assert logs["bws"] == [] and logs["ping"] == [] and logs["gh"] == []
+    assert _pings(logs["ping"]) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+def test_a_dead_socket_fails_the_pass_and_never_falls_back_to_bws(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    result, logs = _brokered(tmp_path, dead_socket)
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {READ_UUID}: no_reply" in result.stderr
+    assert "FATAL: could not read the change-manager READ credential" in result.stderr
+    assert logs["bws"] == []
+    assert logs["lane"] == []
 
 
 # ---- the lane's state and mirrors ------------------------------------------------------------
@@ -261,18 +363,26 @@ def test_the_image_carries_git_and_the_lanes_state_directory() -> None:
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "rotation-decomposer")
-    assert deploy.add_refusals(service, "rotation-decomposer") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "rotation-decomposer", allowlist)
+    assert deploy.add_refusals(service, "rotation-decomposer", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "rotation-decomposer") == []
+    assert allowlist["rotation-decomposer"] == {SYSTEM_UUID, READ_UUID, ALERT_UUID, PING_URL_KEEPER}
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["rotation-decomposer"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "ROTATION_DECOMPOSER_STATE_DIR": "/var/lib/sds/rotation-decomposer",
             # The BWS secret id of `rotation-decomposer-ping-url`: not a secret, not the ping URL.
-            "SDS_DEADMAN_PING_URL_UUID": "936bbbf2-dc3b-4343-979a-b501013afc87",
+            "SDS_DEADMAN_PING_URL_UUID": PING_URL_KEEPER,
         },
-        "volumes": ["sds-lanes-rotation-decomposer-state:/var/lib/sds/rotation-decomposer"],
+        "volumes": [
+            "sds-lanes-rotation-decomposer-state:/var/lib/sds/rotation-decomposer",
+            "/data/sds/broker/rotation-decomposer:/run/sds-broker:ro",
+        ],
         "restart": "unless-stopped",
     }
     document = yaml.safe_load(COMPOSE.read_text())
@@ -307,7 +417,7 @@ def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
     secret it reads, except the ping-URL secret, whose id reaches it from the compose through
     `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
-    ping_url_secret = "936bbbf2-dc3b-4343-979a-b501013afc87"
+    ping_url_secret = PING_URL_KEEPER
     secrets = deploy.lane_secrets(manifest, "rotation-decomposer")
     assert sorted(secrets) == sorted([SYSTEM_UUID, READ_UUID, ALERT_UUID, ping_url_secret])
     launcher = LAUNCHER.read_text()

@@ -68,7 +68,7 @@ sds_cred_registries() {
 # its start, and discards them after. `SECURITY_DRIFT_STATE_DIR` is the compose's, which the exec
 # session inherits. Exits with infraops' own code, or 1 and 2 as above.
 sds_infraops_session() (
-  unset BWS_ACCESS_TOKEN
+  unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
   # infraops refuses a state file not owned by the reading uid, and its write leaves the file owned
   # by the writer: root's write would make every later pass refuse the file.
   if [ "$(id -u)" -eq 0 ]; then
