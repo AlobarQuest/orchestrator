@@ -5792,3 +5792,420 @@ This amendment edits none of them.
 | `docs/operations/secrets-broker.md`, "Move the broker to a new release" (lines 41-55) | The route's restart (item 6), at the running tag. |
 | `docs/operations/rotation-executor.md`, the helper targets (lines 1360-1394) and the broker row naming none (lines 1679-1683) | Change with the code pull request (item 9). |
 | `tests/rotation_worker/test_lane_token_helper_targets.py`, lines 108-118 | Changes with the code pull request (item 9): it keeps refusing broker lanes. |
+
+## Amendment 35 — A rotation adapter for GitHub App private keys: a person mints and deletes, the executor proves (2026-11-26)
+
+**Status: Proposed (2026-11-26).** Accepted on merge, as amendment 31 is, except the items marked
+"Open, for Devon", which stay open until he answers, and the item marked "Open, for HQ", which HQ
+settles under build-mode rule 2. **Relates to:** amendment 32 item 1 ("The missing adapters"),
+amendment 33 (the Coolify API-token adapter, whose shape this follows), amendment 34 (the root's
+reach through the broker's keeper), amendment 15 (a type is only its provider), amendment 29 (the
+executor on the VPS host), amendment 30 (the lane secrets broker), and ADR-0059 Q4, Q9 and the
+D-11 addendum (the two keys' hand-rotation).
+
+Amendment 32 item 1 puts the design's six missing adapters in Phase C, each "its own amendment,
+which states the provider's API and the adapter's proof" (lines 4651-4664; every line number in
+this amendment is at `d8d303b9` unless it names another file or commit). Amendment 33 decided the
+`coolify-api-token` class. This amendment covers the `github-app-private-key` class's two rows in
+this repository. It changes nothing that runs: no registry row, adapter, type, compose, launcher,
+grant, key or package. The code pull request that builds the adapter cites it.
+
+### Context
+
+#### The two rows
+
+Each is read from `.cred-consumers.toml` at `d8d303b9`. Neither has a `rotated_by_sds` field, so
+each falls to the manual checklist (`src/rotation_worker/registry.py`, line 57: only `true`
+counts), and `tests/architecture/test_rotation_agreement.py` (line 33) lists the class in
+`UNTYPED`. The rotation proposer reports each as `legacy` and proposes no package
+(`src/rotation_proposer/cli.py`, lines 502-504).
+
+| Row (lines) | App | Keeper (BWS project) | Readers | `created` |
+|---|---|---|---|---|
+| `lanes-read-app-private-key` (1537-1634) | `alobar-sds-lanes-read`, App id 5684758, installation 180257215 (`provider_identity`, line 1541) | `314a966c-…`, base64 of the PEM, in `SDS / Lane Apps` (lines 1547-1550; `.bws-secrets.toml`, lines 376-379) | 12 `runtime-fetch` launchers, each with a `healthchecks_check` (lines 1552-1634) | 2026-11-09 |
+| `lanes-push-app-private-key` (1636-1663) | `alobar-sds-lanes`, App id 5684778, installation 180257673 (line 1640), installed on intent-packages with `contents: write` (`.bws-secrets.toml`, lines 381-382) | `b8f547b9-…`, base64 of the PEM, in `SDS / Lane Apps` (lines 1646-1649; `.bws-secrets.toml`, lines 390-392) | 2 `runtime-fetch` launchers, bump-proposer and rotation-proposer (lines 1651-1663) | 2026-11-09 |
+
+Both rows have `disposition = "reissue"` and the same three `rotation_preconditions` (lines 1545
+and 1644): rotate it with the other row in one sitting; after every reader reads the new key,
+delete the App's other key pairs on its settings page, because a new key pair doesn't revoke the
+old one; and store base64 of the PEM. Neither has an `[[credential.exposure]]` entry or a recorded
+fingerprint.
+
+The rows are hand-rotated by decision. ADR-0059 puts both keys in this ADR's hand-rotated set "as
+the `alobar-sds-rotation` App's key did (Q4 and Q9, decided)", with "no executor" handling either,
+and Devon "rotates both in the same sitting (Devon's D-11 addendum, 2026-11-06)" (ADR-0059, lines
+663-668 and 1404-1406). The block comment above the rows says the same (`.cred-consumers.toml`,
+lines 1516-1520). An adapter changes that decision, so whether to make it is Devon's (item 13).
+
+#### Every reader, found by grep
+
+A grep of this repository at `d8d303b9` for both keeper UUIDs and both App ids finds these readers
+and nothing else that reads a value:
+
+- **Lane launchers.** Twelve read the read App's key: `scripts/run-landing-ledger.sh`,
+  `run-deploy-watcher.sh`, `run-revision-watcher.sh`, `run-unit-verifier.sh`, `run-pin-watcher.sh`,
+  `run-membership-check.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`, `run-bump-proposer.sh`,
+  `run-inert-landing.sh`, `run-estate-landing.sh` and `run-bump-driver.sh` (each's
+  `READ_APP_KEY_UUID`). Two read the push App's key: `run-bump-proposer.sh` (line 151) and
+  `run-rotation-proposer.sh` (line 97). These are exactly the rows' `runtime-fetch` consumers, and
+  `.bws-secrets.toml`'s `lanes` lists agree (lines 379 and 393).
+- **The secrets broker.** Its allowlist names the read App's key for five lanes: inert landing,
+  estate landing, the bump driver, the landing ledger and the pin watcher
+  (`lanes/secrets-broker/allowlist.toml`, lines 22, 31, 46, 75 and 83). The broker's account reads
+  `SDS / Lane Apps` by a project grant (row `secrets-broker-bws-token`, `reach_projects`,
+  `.cred-consumers.toml` line 1495; comment line 1471). No allowlist entry names the push App's key.
+- **Composes.** No `lanes/` compose maps either key. Each launcher pipes the BWS read straight into
+  `sds-github-mint`'s stdin, and the key is never in a variable, an argument or a file
+  (`src/estate_clients/github_app_mint.py`, lines 23-27; for example
+  `scripts/run-rotation-proposer.sh`, lines 255-262).
+- **The Mac.** No file in `~/.claude/bin` or `~/Library/LaunchAgents` names either UUID. The other
+  repositories under `~/Projects` name them only in sds-hq's `state/` records and codebase-review's
+  findings, which read no value.
+- **Tests** name the UUIDs as constants (for example `tests/architecture/test_bridge_edges.py`,
+  lines 63-65). They read no value.
+
+Every read is fatal to its pass, or fails its ping. A failed read or mint exits 1 with `FATAL` in
+every launcher but one (for example `run-deploy-watcher.sh`, lines 134-136, and
+`run-rotation-proposer.sh`, lines 260-262). The unit verifier runs on without a token and reports
+exit 3, which pings `/fail` (`run-unit-verifier.sh`, lines 107-112 and 126-130). The executor
+counts a reader switched only on a check whose status is `up` or `grace`
+(`src/rotation_worker/readers.py`, lines 83 and 167). So a reader's successful ping after the
+keeper's revision date proves that the reader minted a token with the new key, for every pass that
+reaches its read. A pass can also end before its read: the inert lander exits 2 on an empty
+repository list, having minted nothing (`run-inert-landing.sh`, lines 169-172). Whether such an
+exit pings success differs by launcher (the root `CLAUDE.md`: exit codes 2 and 3 aren't shared),
+and this amendment hasn't read each launcher's map. The code pull request's tests state, per
+reader, which exits reach the read and which ping (item 15).
+
+Every reader runs on a schedule (each `lanes/<lane>/crontab`). Six run daily: the landing ledger,
+the pin watcher, the membership check, the work carrier, the bump proposer and the rotation
+proposer. The others run hourly or more often. Each scheduled bump-driver pass is acting, so it
+pings (`lanes/bump-driver/crontab`; the row's note, line 1634).
+
+#### The executor's reach to the keepers
+
+- **By its own grants: none.** The root has write on `Rotation / Work`, `Rotation / Keepers` and
+  `Rotation / Inbox`, read on four other rotation projects, one direct read in `Ops / Platform`,
+  "nothing else" (`docs/operations/rotation-executor.md`, line 677; decision 4, lines 214-217). It
+  can't read or write `SDS / Lane Apps`, so a `store` step can't write either keeper where it is.
+- **Through the broker's keeper: read.** The root reads every keeper in `Rotation / Keepers`, the
+  broker's token among them, and that token reads `SDS / Lane Apps` by its project grant (amendment
+  34, "What the root reaches through this keeper", lines 5459-5481). So whoever holds the root can
+  read both App keys today. Amendment 34's Open item 10 puts that reach to Devon; this amendment adds
+  nothing to it.
+
+#### The provider's API
+
+Everything in this subsection is a reading of GitHub's documentation on 2026-11-26, not a
+measurement. No GitHub API was called.
+
+- **A key pair is created and deleted only on the App's settings page.** "Managing private keys
+  for GitHub Apps"
+  (`https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps`)
+  gives the steps: the App's **Edit**, then **Credentials**, **Key pairs**, **New key**, which
+  downloads the private key as PEM. GitHub "only stores the public portion of the key". A key is
+  deleted on the same page, and "you must regenerate a new key before you can delete the existing
+  key". An App holds up to 25 keys, and the page recommends several keys "to rotate keys without
+  downtime". Keys "do not expire".
+- **No REST endpoint creates, lists or deletes an App's key.** "REST API endpoints for GitHub Apps"
+  (`https://docs.github.com/en/rest/apps/apps`) lists `GET /app`, the installation endpoints and
+  `POST /app/installations/{installation_id}/access_tokens`, and no key endpoint. The manifest
+  conversion returns a key once, when an App is created, which isn't key management. Only the first
+  part of that page was read word for word; the rest was read as a summary. GraphQL wasn't checked.
+  So the claim is scoped: the documentation read names no key-management endpoint.
+- **A new key doesn't revoke the old one.** No page says so in words. It follows from keys not
+  expiring, from up to 25 being held at once, and from the rows' own precondition. It is an
+  inference, and confirm-dead (item 7) is where it is tested.
+- **Each key pair has a SHA-256 fingerprint**, shown in the App's Credentials section, which
+  `openssl rsa -in <PEM> -pubout -outform DER | openssl sha256 -binary | openssl base64` reproduces
+  from the private key (same page, "Verifying private keys"). It is a hash of the public half, not
+  a secret.
+- **An installation token is minted with a JWT** signed RS256 by the key, `iss` the App's id or
+  client id, `exp` "no more than 10 minutes into the future", sent as `Authorization: Bearer` to
+  `POST /app/installations/{installation_id}/access_tokens` ("Generating a JSON Web Token (JWT) for
+  a GitHub App" and "Generating an installation access token for a GitHub App", under
+  `https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/`). The
+  existing mint does exactly this (`github_app_mint.py`, lines 168-190 and 92-103).
+- **`GET /installation/repositories`** lists the repositories an installation token reaches, with
+  `total_count`, and **`DELETE /installation/token`** revokes the token used to call it, answering
+  204 ("REST API endpoints for GitHub App installations",
+  `https://docs.github.com/en/rest/apps/installations`).
+- **How GitHub answers a JWT signed by a deleted key, or by a key it never issued, isn't
+  documented** on any page read. Item 2 treats both as unmeasured.
+
+So no API can mint or delete, and the shape is amendment 33's: a person mints into the inbox, the
+executor proves and stores, and a person deletes after the executor's proof
+(`src/rotation_worker/adapters/bitbucket.py`; its type is
+`Capabilities(machine_mint=False, machine_revoke=False)`, `src/rotation_worker/types.py` line 39).
+
+### Decision
+
+1. **The type.** `github-app-private-key` becomes a credential type named `github-app-key` with
+   `Capabilities(machine_mint=False, machine_revoke=False)`: not hosted, with an overlap (GitHub
+   holds both keys at once), no issue plan, no `env_at_distribute`. Its keepers are BWS secrets
+   (`store_kind` `bws-secret`), so the VPS host executor takes its units. From each row's
+   destinations (a keeper and `runtime-fetch` readers, so no `distribute`), `plans.derive` gives
+   Bitbucket's plan, as amendment 33 item 1 does:
+   1. **mint** (person): on the App's settings page, Devon generates a new key pair. He encodes the
+      downloaded PEM as one line (`base64 -i <file> | pbcopy` on macOS, the stored form
+      `decode_stored_key` reads, `github_app_mint.py` lines 249-266), pastes it into the inbox
+      (`Rotation / Inbox`), and deletes the downloaded file and clears the clipboard. The download
+      is a copy of the key at rest, so its deletion is part of the mint.
+   2. **store** (machine): `verify_new` (items 2 to 4), then `store`, which writes the keeper and
+      reads it back.
+   3. **verify** (machine): `verify_consumers`. The unit waits unclaimed until every reader has a
+      successful run since the keeper's revision date (`worker._gates_retire`,
+      `src/rotation_worker/worker.py` line 954), up to a day for the daily readers. Its completion
+      sends the revoke alert.
+   4. **revoke** (person): Devon deletes the App's other key pairs (item 7).
+   5. **confirm** (machine): `confirm_dead`.
+
+   The type applies by class (`CLASS_TYPES`, `types.py` lines 67-77), so it also types localops'
+   `fork-sync-app-private-key` row (localops `.cred-consumers.toml`, line 31, at `3431928`). That row
+   has no `rotated_by_sds`, so the proposer still reports it `legacy`, and its consumers are
+   Actions secrets holding the decoded PEM, a form other than its keeper's. `check_row` (item 11)
+   refuses any `gh-actions-secret` consumer, so the type can't rotate it. It stays Devon's by hand.
+2. **The probe and its known-bad control.** `probe` signs a JWT with the value (`iss` the row's App
+   id, `iat` a minute back, `exp` nine minutes on, as the mint's `_jwt` does) and sends `GET /app`.
+   Live is exactly 200 with an `id` equal to the row's declared App id. The control is a JWT with
+   the same claims, signed by an RSA key the probe generates in memory and discards, which GitHub
+   never issued. Both go through the same probe, so a refused control proves the 200 came from the
+   key (amendment 5's rule). GitHub documents no status for either refusal (Context), so the
+   adapter declares `dead_statuses = {401}` and the code pull request's exit check 1 records the
+   control's measured status. A control that answers anything other than a 4xx fails the step, with
+   the status named. `probe_before_revoke` is the same request.
+3. **The identity check.** `same_identity` holds when both values answer `GET /app` with the row's
+   App id. Unlike amendment 33's team check, this tells the two rows apart: each App has its own id,
+   so a key pasted for the wrong App never binds. `verify_new` also refuses a new value whose public
+   half equals the old value's. The inbox's byte comparison (`Value.same_as`,
+   `src/rotation_worker/values.py` lines 60-61) can't see the same key wrapped differently, and that
+   would pass every probe while rotating nothing.
+4. **The working proof, in `verify_new`.** Before the keeper is written, the executor proves the new
+   key does what every reader does with it, minting a narrow installation token:
+   1. `estate_clients.github_app_mint.mint` with the new key, the row's App id, the row's declared
+      `proof_repository` alone, and `{metadata: read}` alone, the narrowest token GitHub issues.
+      The mint refuses unless GitHub's answer echoes that repository and permission
+      (`github_app_mint.py`, lines 106-111).
+   2. `GET /repos/<proof_repository>/installation` answers the row's declared installation id.
+   3. `GET /installation/repositories` with the token answers `total_count` 1, naming the proof
+      repository.
+   4. `DELETE /installation/token` answers 204, so the token is dead before the step returns.
+
+   The token is held only in memory, for those calls, and is never logged, stored or fingerprinted.
+   **Who and where:** the executor's own process, as the root's rotation unit, on `prod-vps`
+   (amendment 29). It reads the new value from staging. No other identity sees it.
+5. **The readers' proof, and rule R10.** Every reader fetches the keeper fresh each pass and keeps
+   no value between passes: the launchers pipe it into the mint (Context), and the broker caches
+   nothing (amendment 30 item 4, lines 4386-4389). So no reader can stay on the old key past a pass
+   that starts after the store. The proof is the existing route for a scheduled `runtime-fetch`
+   reader ("How each consumer kind is verified", line 342): the keeper readback in `store`, then
+   each row's `healthchecks_check` reporting a successful run that began after the keeper's revision
+   date. Because every read and mint is fatal to its pass or fails its ping (Context), a green ping
+   from a pass that reached its read proves that reader minted with the new key. A green ping from
+   a pass that ended before its read proves less, but no revoke risk follows: no reader keeps a
+   value, so none can be left on the old key. **Carried check:** which exits reach the read, per
+   launcher, is verified by the code pull request's tests (item 15). No revoke alert is sent before
+   every reader has passed, which meets R10 and Infra Brain 1032 by machine evidence. No helper target and no `loaded` read is needed:
+   no container keeps the key.
+6. **Open, for HQ: two mints in one sitting, and the inbox.** The inbox binds a pasted value only
+   while no other rotation waits on a person's mint (`other_mints`,
+   `src/rotation_worker/inbox.py` lines 12 and 120-136), and `bind` checks that before any type's
+   check (lines 151-155). Both rows were created on 2026-11-09 with one interval, so both come due
+   together. If both packages are approved together, both mint units wait, and neither binds. This
+   is a check's form, not an authority, so HQ settles it under build-mode rule 2 (construction-mode
+   ruling, `~/docs/software-delivery-system/2026-07-30-construction-mode-ruling.md`). Options:
+   - **A.** No code change. Devon approves the second package only after the first's value binds.
+     The sitting becomes two approvals and two pastes, in order.
+   - **B.** A provider that names its own credential binds while others wait. A new protocol beside
+     `BindsByItself` lets `bind` skip the `other_mints` refusal when the value's `GET /app` id
+     equals exactly one waiting rotation's declared App id and that rotation is this one. The
+     other checks still apply.
+   - **C.** Devon stages each value by hand (`rotation-worker stage`), which skips the inbox. That
+     needs his write on `Rotation / Work`, which no one uses for this today.
+
+   **Recommendation: B.** The App id is proven by the probe, so the paste names its own rotation,
+   and Devon can paste both keys one after the other, each once the inbox empties (one executor
+   pass, five minutes). **Blocks:** both rows' `rotated_by_sds`, under A only by the order rule.
+   Under any option, **the deletions are a second sitting.** Each row's `verify` unit waits for its
+   daily readers, so the revoke alerts come up to a day after the mints. The rows' "one sitting"
+   precondition then reads: mint both in one sitting, and delete each App's other key pairs after
+   its revoke alert. That rewording is part of item 13.
+7. **The revoke and confirm-dead.** After the `verify` unit's alert, Devon deletes every key pair on
+   the App's settings page except the new one. The alert names the new pair by the first 8
+   characters of GitHub's own fingerprint, which the executor computes from the new key's public
+   half as GitHub's documented `openssl` command does. That's a hash of a public key, not a secret,
+   and 8 characters is below the evidence scan's 32-character refusal
+   (`src/orchestrator/services/verifier/rotation_evidence.py`, line 36). It is not written into
+   evidence, which holds only the executor's fingerprints. `confirm_dead` probes the old value from
+   the quarantine and passes when it answers as the control answers, beside a 200 from the new
+   value. The executor can't list key pairs (no API), so a stray third pair, one Devon made by hand
+   and never pasted, is outside its proof. **Carried gap**, stated in the revoke alert. After an
+   exposure, Devon may delete first (decision 6; Infra Brain 1032; D-26, amendment 19 item 10), so
+   the adapter sets `revoke_may_come_first`.
+8. **Open, for Devon: the keepers' project.** The `store` step writes the keeper, and the root
+   can't write `SDS / Lane Apps` (Context). Options:
+   - **A.** Move both keepers into `Rotation / Keepers` (Devon's act, which needs write on both
+     projects, amendment 1 question 5), after each reading account gets a single-secret read grant
+     there and proves it with only `PATH` and `HOME` set (decision 4). Recommended after Phase C's
+     revoke sitting, when the broker is the only reading account: amendment 32 moves all 12 lanes
+     onto it (D-81 (4) and (5) A, lines 4920-4921 and 4929), and the push App's two readers move in batches 3
+     and 4 (lines 4976-4977). Then the broker needs two single-secret grants in
+     `Rotation / Keepers`. The same change updates `.bws-secrets.toml`'s `project` (lines 378 and
+     392), the broker row's `reach_secrets`, and, if `SDS / Lane Apps` then holds nothing it reads,
+     its `reach_projects`. Amendment 34's bind compares the broker token's live reach with that
+     declaration (amendment 34 item 5), so the declaration changes with the grants.
+   - **B.** A direct read and write grant for `rotation-executor` on each secret where it is. That's
+     the root's first write outside the rotation projects.
+   - **C.** Leave both rows by hand.
+
+   **Recommendation: A**, after the revoke sitting, since decision 4 says every rotated keeper moves
+   to `Rotation / Keepers`, and A adds no new kind of reach. **Blocks:** both rows'
+   `rotated_by_sds`.
+9. **Open, for Devon: the root holding the push App's key with write.** Under item 8 A or B, the root
+   reads and writes the push App's keeper by its own grant. That key mints `contents: write` on
+   intent-packages, whose `main` the executor trusts for every rotation package's revision. The App
+   pushes to `main` directly (ADR-0059, lines 774, 786 and 1411-1415). The executor still acts only
+   on a revision a named person or the standing policy approved in the orchestrator, with its hash
+   recomputed (`src/rotation_worker/CLAUDE.md`), so a package commit the root pushed alone would not
+   be approved. Options:
+   - **A.** Accept it. The approval record, not the commit, is the gate, and the root already reads
+     the key through the broker's keeper (Context).
+   - **B.** Rotate only the read App's key by machine. The push App's key stays by hand.
+   - **C.** Accept it, and narrow the push App's reach first so the root's key can't write `main`
+     directly (for example, a ruleset that admits the App only on a branch prefix). That changes
+     the two proposers' push route.
+
+   **Recommendation: A for the development phase**, reopened in the security phase as amendment 34's
+   Open item 10 is. **Blocks:** the push row's `rotated_by_sds`.
+10. **No new network path.** The adapter calls `https://api.github.com` from the executor's process
+    on the VPS host, which already calls it for the rotation App (`src/rotation_worker/github_actions.py`,
+    line 44; `rotation-executor.md`, line 675), and sends the keys only there, as JWT signatures.
+    Its confined client (`estate_clients.confined.ConfinedClient`) permits exactly `GET /app`,
+    `GET /repos/<proof_repository>/installation`,
+    `POST /app/installations/<declared id>/access_tokens`, `GET /installation/repositories` and
+    `DELETE /installation/token`.
+11. **The row fields that change.** Each row gains `app_id`, `installation_id` and
+    `proof_repository`. They are read today only from prose (`provider_identity`). `check_row` refuses
+    a row without them, one whose consumers aren't a keeper and `runtime-fetch` readers with a
+    `healthchecks_check`, or one whose `proof_repository` isn't one owner and name. The
+    preconditions are reworded (item 6), the block comment's "Hand-rotated" text (lines 1516-1520)
+    states the route, and `disposition`, the consumers and `created` keep their form. No
+    `[[credential.exposure]]` is added. Each row becomes `rotated_by_sds = true`, with a
+    `rotate_requested` date, only when the route is built, its exit checks pass, and its Open items
+    are answered.
+12. **Logging and failure.** The adapter logs nothing of a value through the executor's structured
+    logging: evidence carries only fingerprints (the sha256 prefix and length, `values.py`) through
+    `contract.py`. The JWT, the installation token and the PEM appear in no log line, exception
+    message or evidence field. As the mint does, a failure names its cause and the status only, and
+    never keeps a response body (`github_app_mint.py`, lines 19-21 and 224-236). A transport failure
+    returns no answer, so the step is indeterminate and fails the unit, which a requeue retries
+    (amendment 5). An unexpected status, a mismatched id, or a token that isn't revoked fails the
+    step with that named. Nothing is swallowed.
+13. **Open, for Devon: take both keys out of the hand-rotated set.** ADR-0059 Q4 and Q9 and the
+    D-11 addendum put them in the hand-rotated set with no executor (Context). Amendment 32 lists
+    them among the adapters Phase C builds or decides (item 1; "Phase C is done when", line 4960).
+    Options:
+    - **A.** Yes, both. The executor runs items 1 to 7 for both rows, and the precondition becomes
+      "mint both in one sitting" (item 6).
+    - **B.** The read App's key only (item 9 B).
+    - **C.** Neither. Both stay by hand, and this amendment is the decision that Phase C requires.
+
+    **Recommendation: A.** Devon's acts become two key generations and two deletions per year, and
+    the readers' proof becomes the machine's. **Blocks:** both rows' `rotated_by_sds`.
+14. **Open, for Devon: the measurement.** Items 2 and 7 rest on unmeasured statuses: GitHub's answer
+    to a JWT from a key it never issued, and from a deleted key. The sds-hq standing answer of
+    2026-11-26 (D-82: "A, A, C, yes, A") covers amendment 33's proofs only: a canary Coolify
+    application with one non-secret variable (its item 13 C), and three throwaway tokens on
+    `dev-coolify` (its item 14). It covers no GitHub App and no GitHub key. Options:
+    - **A.** The first real rotation is the measurement. The control's status is recorded in
+      `verify_new` before anything is stored, and the old key's status at `confirm`. If either isn't
+      401, the step fails with the status named and nothing is revoked by machine.
+    - **B.** A throwaway GitHub App, which Devon creates with no permissions and no installation. A
+      session generates and deletes one of its keys and records both statuses. That's a new App
+      and a new proof setup.
+
+    **Recommendation: A.** Item 2's control runs on every probe, so the first rotation's
+    `verify_new` measures the never-issued case before any write, and `confirm_dead` fails closed.
+    **Blocks:** nothing under A. Under B, the code pull request's merge.
+15. **What the code pull request changes.** Named here, none changed by this amendment:
+    - `src/rotation_worker/adapters/github_app_key.py`, the provider: `NAME` (`github-app-key`) and
+      `PROVIDER` (`github`), a `PLAN` from `derive(...)`, the probe, control and identity check
+      (items 2 and 3), the working proof (item 4), the fingerprint for the revoke alert (item 7),
+      `check_row` (item 11), and `mint`, `host`, `consumer_loaded` and `revoke` raising
+      `ContractError`, as `bitbucket.py` does.
+    - `src/estate_clients/github_app_mint.py`: the JWT signing made public for the adapter, with
+      no change to `mint`.
+    - `src/rotation_worker/adapters/__init__.py`: the import and an `ADAPTERS` entry with
+      `capabilities=TYPES[...]`, `check_row` and `revoke_may_come_first=True` (as lines 202-206 and
+      240 do).
+    - `src/rotation_worker/types.py`: a `TYPES` entry and
+      `CLASS_TYPES["github-app-private-key"]`.
+    - `src/rotation_worker/inbox.py`, only under item 6 B: the protocol and its tests, including a
+      refusal when two waiting rotations declare the same App id.
+    - `tests/architecture/test_rotation_agreement.py`: `github-app-private-key` leaves `UNTYPED`.
+    - `tests/architecture/test_rotation_edges.py`: a `PROVIDER_EDGES` entry for the adapter's reach
+      (beside `"bitbucket"`, line 416).
+    - `tests/architecture/test_wsp21_invariant_scan.py`: the module in `OUTBOUND_ALLOWLIST`, with its
+      reason, beside `bitbucket.py` (line 835).
+    - `layers.toml`, if no pattern there already names the module.
+    - `src/orchestrator/factory-policy.toml`: `github-app-key` in the `rotation_adapters` lists that
+      name `bitbucket` (lines 464 and 575).
+    - `.cred-consumers.toml`: item 11's fields. Another worker edits that file, so the pull request
+      rebases on it.
+    - intent-packages: one `rotation-<row id>` package per row the rotation proposer generates.
+      Neither is a first issue, so no standing approval covers it, and every revision is Devon's to
+      approve by name.
+    - `docs/operations/rotation-executor.md`: a section for the type, with item 1's mint note and
+      item 7's deletion note.
+    - A test per reader that names which of its launcher's exits reach the key's read and which
+      ping success (item 5 and the Context's inert-landing case), so a green ping's meaning is
+      pinned per row.
+
+    **Exit checks**, each before a row's `rotated_by_sds = true`:
+    1. **The control's status** (item 14 A or B) is recorded in the pull request's report, as a
+       status only.
+    2. **The working proof runs on the current keys without a mint**: a one-off run of item 4 by
+       the executor against each keeper's current value, which proves the App ids, installation ids
+       and proof repositories as declared, and that `DELETE /installation/token` answers 204.
+    3. **One real rotation of each row** is the proof: the bind, `verify_new`, every reader's green
+       ping, Devon's deletion, and `confirm_dead`. A canary can't stand in: no other App's key has
+       these readers.
+
+### What it grants, and nothing more
+
+Nothing. No BWS identity, project, grant or scope, no GitHub App, key, permission or installation,
+no network path and no proof setup is added or widened. Every grant, move and setup in items 6, 8,
+9, 13 and 14 is named and not given: items 8, 9, 13 and 14 are Devon's, and item 6 is HQ's and
+grants nothing. The executor's working proof (item 4) mints a token narrower than any reader's and
+revokes it before the step returns. No endpoint is added, so the HTTPS rule for public FQDNs (Infra
+Brain 212) doesn't apply. Nothing here declares a credential exposed, and no rotation age changes.
+
+### Consequences
+
+- **Both App keys can rotate by machine once the adapter merges** and Open items 8 and 13 are
+  answered, the push App's only once item 9 is too.
+- **Each rotation still needs Devon's browser acts**: a key generation per App, then a deletion per
+  App after its revoke alert, because GitHub has no key API. The keeper write, the proofs, the
+  deletion's timing and the identity checks become the executor's.
+- **The deletion follows machine evidence** from every reader, by the existing `runtime-fetch`
+  route, and a green ping here proves a successful mint with the new key.
+- **The root writes both App keys** under item 8 A, and holds the push App's `contents: write` on
+  intent-packages through it (item 9).
+- **Stale until the code pull request:** the rows' comment and preconditions in
+  `.cred-consumers.toml`, `UNTYPED`, and ADR-0059's statement that no executor handles either key.
+
+### Passages it governs
+
+This amendment edits none of them.
+
+| Passage | Disposition |
+|---|---|
+| Amendment 32 item 1, "The missing adapters" (lines 4651-4664) | The `github-app-private-key` class is decided here. The `anthropic-api-key` class stays for its own amendment. |
+| ADR-0059 Q4 and Q9 and the D-11 addendum, both keys hand-rotated, one sitting (ADR-0059, lines 663-668 and 1404-1406) | Stand until Open item 13 is answered. Under A, the keys leave the hand-rotated set and the sitting covers the mints (item 6). |
+| Decision 4, the keepers move to `Rotation / Keepers` (lines 205-217) | Applied to two more keepers, under Open item 8 A. |
+| Decision 4, the hand-rotated set (lines 221-222) | Loses the two lane App keys under Open item 13 A. The rotation App's key, `alobar-sds-rotation`, stays in it as an admin credential. |
+| "How each consumer kind is verified", the scheduled `runtime-fetch` row (line 342) | Stands, and is the readers' proof (item 5). |
+| Amendment 34's Context and Open item 10, the root's reach through the broker's keeper (lines 5459-5481 and 5696-5718) | Stand. They already cover the two keys' read, which this amendment doesn't change. |
+| Amendment 34 item 5, the broker token's bind on declared reach (line 5579) | Its `reach_secrets` and `reach_projects` change with the keepers' move under Open item 8 A. |
+| `src/rotation_worker/inbox.py`, `other_mints` (lines 12 and 120-136) | Stands, or gains item 6's exemption under HQ's answer B. |
+| `tests/architecture/test_rotation_agreement.py`, `UNTYPED` (line 33) | Changes with the code pull request (item 15). |
