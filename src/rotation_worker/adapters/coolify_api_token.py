@@ -260,8 +260,8 @@ class CoolifyApiTokenProvider:
 
 def _mismatch(ability: str, held: bool, status: int) -> str:
     expected = " or ".join(
-        str(status)
-        for status in sorted((WRITE_ANSWERS if ability == "write" else DEPLOY_ANSWERS)[held])
+        str(code)
+        for code in sorted((WRITE_ANSWERS if ability == "write" else DEPLOY_ANSWERS)[held])
     )
     declared = "declares" if held else "doesn't declare"
     return (
