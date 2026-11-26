@@ -188,4 +188,4 @@ of Amendments 32 and 33: Context, Decision, "What it grants, and nothing more", 
 
 ## PR
 
-See the PR URL and head in the final section.
+https://github.com/AlobarQuest/orchestrator/pull/816, opened against `main` and not merged. Its amendment commit is `c499c90d`; this report line is added in the commit after it, which is the PR head.
