@@ -7,7 +7,7 @@ Amendment 32 item 4 step 3). Worker W-315, branch `hq/broker-batch-2`, based on 
 `8b326f2d`.
 
 - **PR:** [AlobarQuest/orchestrator#817](https://github.com/AlobarQuest/orchestrator/pull/817)
-- **Head:** the branch tip carrying this report; its code commit is `8431d677`
+- **Head:** the code head is `8431d677`. The later commits change only this report, and the last of them is the PR's head.
 - **Merged:** no. The handoff says don't merge it.
 
 ## What I built
@@ -206,6 +206,11 @@ I grepped the added lines of `git diff 8b326f2d..HEAD`:
     decided shape for a broker lane's row (inert landing, batch 1). Nothing reads these tokens, and
     they retire at the revoke sitting.
 
+- **Security scan** from the worktree root: 0 BLOCK, 2 WARN, 1 INFO. Both WARNs were there before
+  this branch, as batch 1's report records: `*-migration/` gitignore coverage, and the undeclared
+  UUID `aaff45ca-…`, which isn't in the diff.
+- **CI on #817:** every check passed at `6182dcf8`. Quality ran `14815 passed, 14 skipped` (CI skips the tests that need local tools); `Rollout transcription currency` and `Runner consumer compatibility` passed too.
+
 ## Files changed
 
 - `.bws-secrets.toml`
@@ -252,6 +257,11 @@ I grepped the added lines of `git diff 8b326f2d..HEAD`:
   the matching notes for its lanes too. They describe the narrow identity's Mac readers, not the
   container. Requirement 6 is about the containers, so I left them. Whether they still hold after
   the Mac jobs retired is a separate registry question.
+- **change-manager's registry.** The rows for `M2M_TOKEN_OBSERVE` (read by `deploy-watcher`) and
+  `M2M_TOKEN_READ` (read by `membership-check`) live in change-manager's `.cred-consumers.toml`.
+  They might still describe these containers reading with the lane's own token. The handoff
+  scopes this to one orchestrator PR, so I didn't touch that repository. HQ can decide whether
+  those consumer notes follow.
 - **Standards coverage.** The handoff's standards cover every concern this change touches. None
   is uncovered.
 
