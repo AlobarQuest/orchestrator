@@ -5050,7 +5050,7 @@ classes the SDS deliberately has no type for.
 | Row (lines) | Scopes | Keeper (BWS project) | Consumers | Fingerprint recorded |
 |---|---|---|---|---|
 | `coolify-estate-lander-token` (622-647) | `read`, `write`, `deploy`; never `read:sensitive` (probed in-process 2026-10-30, the row's comment) | `f9f59233-…`, `COOLIFY_TOKEN_SDS_ESTATE_LANDER`, in `SDS Operator` | `runtime-fetch` by `scripts/run-estate-landing.sh`, on `--submit` passes only, not fatal if unreadable; in `sds-lane-estate-landing` through the broker (a Phase B lane, #761). Healthchecks check `sds-estate-landing`, pinged every pass. The note also names a Mac path, with the narrow `sds-operator` identity | Yes: `fingerprint_sha256_8 = "594d2c0d"`, 8 hex characters, not the executor's 16-character prefix and length (`rotation_worker/values.py`, `PREFIX_LENGTH`) |
-| `coolify-revision-watcher-read-token` (649-670) | `read` only; never `read:sensitive` (Devon, HQ gate G-62, 2026-11-15) | `0bf066e9-…`, `prod-coolify-read-token`, in `Ops / Platform` | `runtime-fetch` by `scripts/run-revision-watcher.sh`, every pass, as `REVISION_WATCHER_PLATFORM_TOKEN`; in its container with the lane's own BWS token until Phase C batch 4 moves it onto the broker (amendment 32, "Proposed batches and order"). Check `sds-revision-watcher`. The note also names a Mac path, with the broad identity | No: no session has read the value |
+| `coolify-revision-watcher-read-token` (649-674) | `read` only; never `read:sensitive` (Devon, HQ gate G-62, 2026-11-15) | `0bf066e9-…`, `prod-coolify-read-token`, in `Ops / Platform` | `runtime-fetch` by `scripts/run-revision-watcher.sh`, every pass, as `REVISION_WATCHER_PLATFORM_TOKEN`; in its container with the lane's own BWS token until Phase C batch 4 moves it onto the broker (amendment 32, "Proposed batches and order"). Check `sds-revision-watcher`. The note also names a Mac path, with the broad identity | No: no session has read the value |
 | `coolify-change-window-token` (1784-1809) | `read`, `write`, `deploy`, team-wide; never `read:sensitive` (Devon, HQ gate G-88, 2026-11-22) | `3d41395a-…`, `change-window-coolify-token`, in `Rotation / Keepers` | `runtime-fetch` by `scripts/run-change-window.sh`, on `--submit` passes only (`lanes/change-window/crontab`, line 10: daily at 04:00), and fatal if unreadable (`run-change-window.sh`, lines 129-130); in `sds-lane-change-window` through the broker (#784). Check `Change Manager OPs Check` | No |
 
 No row has a `coolify-env`, `coolify-env-held` or Actions-secret destination: each token's only
@@ -5110,7 +5110,9 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
    Bitbucket's is:
    1. **mint** (person): mint and stage. Devon creates the token in Coolify's UI with the row's
       abilities, under the row's description, and pastes it into the inbox
-      (`Rotation / Inbox`; `inbox.pasted`).
+      (`Rotation / Inbox`; `inbox.pasted`). He ticks `deploy` first: ticking it resets the
+      selection to `deploy` alone (`ApiTokens.php`, lines 67-68), so `read` and `write` go after
+      it.
    2. **store** (machine): `verify_new`, then `store`, which writes the keeper and reads it back.
    3. **verify** (machine): `verify_consumers`. The unit waits unclaimed until every
       `runtime-fetch` reader has run since the keeper's revision date (`worker._gates_retire`,
@@ -5128,8 +5130,11 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
    (amendment 5's rule). `probe_before_revoke` is the same request.
 3. **The identity check.** `same_identity` holds when both values answer 200 and
    `GET /api/v1/teams/current` (line 46) names the same team id for each. That's the account check
-   only. All three rows' tokens are in the one team, so it can't tell them apart, and a value the
-   inbox binds must also pass item 4.
+   only. All three rows' tokens are in the one team, so it can't tell them apart. The inbox's
+   existing rules do: it binds a value only while no other rotation waits on a person's mint
+   (`inbox.other_mints`, `inbox.py` lines 12 and 120), and never a value another SDS-rotated keeper
+   of the type holds (the other-keeper check, `inbox.py` lines 20 and 145-172). Two rows with the
+   same abilities are told apart by those rules, not by item 4.
 4. **The scope check, in `verify_new`.** A token's abilities can't be read back through the API, so
    the new value is probed against routes whose ability middleware answers before the handler. A
    request the token may make reaches a handler that refuses it without writing; a request it may
@@ -5170,7 +5175,9 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
    What a green ping proves differs per row, and the code pull request's tests state each:
    - **Change window:** the read is fatal, so a green `--submit` pass read the new value. The lane
      runs daily at 04:00, so the `verify` unit can wait up to a day.
-   - **Revision watcher:** the read is every pass. A green pass read the new value.
+   - **Revision watcher:** the read is every pass. A green pass read the new value. Its launcher
+     refuses to run outside its container, with no `BWS_ACCESS_TOKEN`
+     (`scripts/run-revision-watcher.sh`, lines 59-61).
    - **Estate landing:** the read is not fatal, and the check is pinged every pass. A green pass
      after the store proves that a pass began after the store, so any value it read was the new
      one, but not that the read succeeded. That isn't a revoke risk, because no consumer can be
@@ -5187,9 +5194,10 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
 6. **The revoke and confirm-dead.** Devon revokes the old token in Coolify's UI after the `verify`
    unit's alert. `confirm_dead` probes the old value and passes on 401 beside the control's 401
    and a 200 from the new value. No other credential is needed: the old value proves its own
-   revocation. A leak still revokes first (amendment 19 item 10, D-26; Infra Brain 1032), so the
-   adapter sets `revoke_may_come_first`, as the lane-token adapter does: the probe before the
-   revoke takes either answer.
+   revocation. After an exposure, Devon may revoke first: exposure response is his decision
+   (decision 6; Infra Brain 1032), and D-26 (amendment 19 item 10) is the precedent for a revoke
+   before the rotation runs. So the adapter sets `revoke_may_come_first`, as the lane-token adapter
+   does: the probe before the revoke takes either answer.
 7. **The keepers' projects.** The `store` step writes the keeper, so the keeper must be in a
    project where the executor's identity can write. The executor's reach, from the freshest
    sources:
@@ -5218,7 +5226,8 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
    with the status named. Nothing is swallowed.
 10. **What the code pull request changes.** Named here, none changed by this amendment:
     - `src/rotation_worker/adapters/coolify_api_token.py`, the provider: `NAME` and `PROVIDER`
-      (`coolify`, the rows' `provider`), the probes in items 2 to 4, `check_row` refusing a row
+      (`coolify`, the rows' `provider`), a `PLAN` constant built with `derive(...)` from the type's
+      capabilities, as `postgres_role.py` builds its own (line 153), the probes in items 2 to 4, `check_row` refusing a row
       without its declared abilities, and `mint`, `host`, `consumer_loaded` and `revoke` raising
       `ContractError`, as `bitbucket.py` does.
     - `src/rotation_worker/adapters/__init__.py`: the import and an `ADAPTERS` entry with
@@ -5237,10 +5246,13 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
       (item 5), and `rotated_by_sds = true` with a `rotate_requested` date only for a row whose
       keeper the executor can write (item 7) and whose Open items are answered. Another worker
       edits that file, so the pull request rebases on it.
-    - intent-packages: its `approval-policy.toml`, wherever it lists the adapters by name as it
-      lists `bitbucket`, and one `rotation-<row id>` package per row the rotation proposer
-      generates.
-    - `docs/operations/rotation-executor.md`: a section for the type.
+    - intent-packages: one `rotation-<row id>` package per row the rotation proposer generates.
+      Its `approval-policy.toml` needs no entry. That file's only by-name type list is
+      `grant.types.*`, the standing approval of a first issue (`bws-lane-token` and
+      `healthchecks-ping-url`). The type has no issue plan, so it has no place there, and every
+      revision of its packages stays Devon's to approve by name.
+    - `docs/operations/rotation-executor.md`: a section for the type, with the mint note in item 1
+      (tick `deploy` first).
 11. **Open, for Devon: the keepers of the estate lander's and the revision watcher's tokens.** The
     executor can't write either (item 7). Options:
     - **A.** Move each keeper into `Rotation / Keepers` (his act: the move needs write on both
@@ -5249,7 +5261,9 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
       `lane-secrets-broker`, which reads it today through its `SDS Operator` project grant. For the
       revision watcher, recommended after Phase C's revoke sitting, when its only reader is the
       broker: amendment 32 item 3's planned grant on `0bf066e9-…` in `Ops / Platform` is then given
-      in `Rotation / Keepers` instead.
+      in `Rotation / Keepers` instead. Decision 4's same-change rule applies to each move: the
+      secret's `project` in `.bws-secrets.toml` (the entries at lines 173 and 324) and the broker
+      row's `reach_secrets` in `.cred-consumers.toml` change in the same change.
     - **B.** A direct read and write grant for `rotation-executor` on each secret where it is. That
       gives the executor its first write outside the rotation projects.
     - **C.** Leave both rows manual; only the change window's rotates.
@@ -5270,6 +5284,10 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
     (item 4). Options:
     - **A.** No machine proof. Devon's mint is the only record, and the `write` and `deploy` probes
       still run.
+
+    A `root` mint passes item 4's probes as a `read` + `write` + `deploy` mint does, since `root`
+    passes every ability check (`ApiAbility.php`). Only B or C catches it, because a `root` token
+    reads sensitive values.
     - **B.** Read the envs of one named existing application and check that no `value` or
       `real_value` field is present (amendment 1 question 1's discriminator). A wrong mint would
       put that application's values in the executor's memory, never in a log.
@@ -5287,8 +5305,9 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
     **Recommendation:** yes, before the adapter merges, as amendment 1 measured before its
     decision. **Blocks:** the code pull request's merge.
 15. **Open, for Devon: proving the estate lander's read** (item 5's carried gap). Options:
-    - **A.** Carry the gap. The lander's next re-point or restore is its own proof, and a failed
-      read already alerts `landing-not-pointed-back`.
+    - **A.** Carry the gap. The lander's next re-point or restore is its own proof. A failed read
+      alerts `landing-not-pointed-back` only when a bad landing needs re-pointing, so between such
+      landings a failed read goes unseen.
     - **B.** The executor reads the broker's log lines for the lane and UUID. That's a new reach:
       the executor has no Docker access on the host (amendment 29 item 1).
     - **C.** The estate-landing lane files an observation each `--submit` pass naming the token's
@@ -5296,7 +5315,9 @@ executor's proof (`src/rotation_worker/adapters/bitbucket.py`, whose type is
       existing alternative to `healthchecks_check`). That's a lane change in its own pull request.
 
     **Recommendation: A** for the first rotation, since no consumer can stay on the old value, and
-    C if the gap is to close. **Blocks:** nothing in the change window's row.
+    C if the gap is to close. **Blocks:** nothing in the change window's row. The estate lander's
+    row's `rotated_by_sds` doesn't wait on this item: under A the gap is carried. It waits on item
+    11.
 
 ### What it grants, and nothing more
 
