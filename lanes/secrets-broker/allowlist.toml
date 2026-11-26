@@ -83,3 +83,27 @@ read = [
   "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
   "872684c0-899e-43b7-9c2d-b50000e88b21",  # pin-watcher-ping-url
 ]
+
+[lanes.unit-verifier]
+read = [
+  "660d5846-abcb-4751-be86-b483012899eb",  # orchestrator-verifier-bearer
+  "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "1cfc8352-c960-4afc-bd49-b4ff00e8783e",  # unit-verifier-ping-url
+]
+
+[lanes.membership-check]
+read = [
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "314f276d-55ca-4ddc-a24d-b4a3013508cd",  # change-manager/M2M_TOKEN_READ
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "5fc44897-b4df-44ae-8491-b5000129d9be",  # membership-check-ping-url
+]
+
+[lanes.deploy-watcher]
+read = [
+  "3b9503da-eb7e-401d-b4a7-b4a400c07efb",  # change-manager/M2M_TOKEN_OBSERVE
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875",  # deploy-watcher-ping-url
+]

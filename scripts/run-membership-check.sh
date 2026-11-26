@@ -25,12 +25,16 @@
 # container a repository list that can't be derived exits 3 (or `sds_scope`'s own failure code)
 # before the program runs.
 #
-# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3, amendment 5). A set
-# `BWS_ACCESS_TOKEN` means the lane's container: `lane-run` passes the lane's own token as its one
-# secret. Without it the launcher refuses, through the outcome alarm.
+# THE LANE RUNS ONLY IN ITS CONTAINER (ADR-0059 increment 3, amendment 5). `sds_in_lane_container`
+# means the lane's container: `lane-run` names the secrets broker's mounted socket in
+# `SDS_SECRETS_SOCKET` (ADR-0055 amendment 30), or passes a lane's own token as its one secret.
+# Without a socket or a token the launcher refuses with exit 1, before the outcome alarm begins.
+# `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` are removed from every child and unset before the
+# program runs, which needs neither; the socket itself stays reachable, as the design accepts.
 #
-# CREDENTIALS IN THE CONTAINER, every one read with the lane's token, in the environment, never as
-# a process argument:
+# CREDENTIALS IN THE CONTAINER, every one read with `sds_bws_value` and one argument, through the
+# socket or with that token in the environment, never as a process argument; the broker serves this
+# lane only the UUIDs its entry in `lanes/secrets-broker/allowlist.toml` lists:
 #   - the observer bearer (BWS `f793576f-…`), which also derives the mint's repositories;
 #   - the change-manager READ bearer (BWS `314f276d-…`);
 #   - the read-only App `alobar-sds-lanes-read`'s key (BWS `314a966c-…`), piped straight into
@@ -57,10 +61,15 @@ PACKAGES_CLONE_URL="https://github.com/AlobarQuest/intent-packages.git"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
+# Sourced first: the host test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
 # Outside the lane's container this refuses before arming the dead-man switch or reading anything:
 # armed here, the switch would ping the production check.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the membership-check lane runs only in its container, through lane-run" >&2
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the membership-check lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -71,16 +80,16 @@ source "$REPO_ROOT/scripts/sds-deadman.sh"
 # the reason as the ping body (`sds_outcome_fail`).
 sds_outcome_begin "$CHECK_NAME" membership-check
 
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
-  # THE CONTAINER. Every secret is read with the lane's one token, already in the environment.
+if sds_in_lane_container; then
+  # THE CONTAINER. Every secret is read through the lane's socket, or with the lane's one token
+  # already in the environment.
+  FROM=" (the lane's socket or token)"
   SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
   [ -n "$SDS_MEMBERS_OBSERVER_TOKEN" ] || sds_outcome_fail \
-      "FATAL: could not read the orchestrator observer credential from BWS (the lane's token)"
+      "FATAL: could not read the orchestrator observer credential from BWS$FROM"
   SDS_MEMBERS_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_READ_UUID")"
   [ -n "$SDS_MEMBERS_CHANGE_MANAGER_TOKEN" ] || sds_outcome_fail \
-      "FATAL: could not read the change-manager READ credential from BWS (the lane's token)"
+      "FATAL: could not read the change-manager READ credential from BWS$FROM"
 
   # THE REPOSITORIES ARE THE MEMBER RECORD'S, NOT LISTED HERE: `sds_scope ledger` prints the
   # record's observed repositories (onboarding and member), each once: the population the check's
@@ -92,7 +101,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # non-zero code is the tool failing (1) or not running at all (126, 127, 137), and is passed
   # through verbatim.
   REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$SDS_MEMBERS_OBSERVER_TOKEN" \
-    env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
+    env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+    "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
   scope_rc=$?
   if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
     sds_outcome_fail \
@@ -111,14 +121,14 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # THE GITHUB TOKEN IS MINTED EACH PASS, after the derivation, because the mint names its
   # repositories. The App's key goes from the BWS read straight to the mint's stdin in its stored
   # form; it is never in a variable, an argument or a file, and the mint runs without the lane's
-  # token. The three permissions are what the check's GitHub reads use: `contents` for
-  # `factory-target.toml`, the registry files and the workflow files;
-  # `metadata` for the listings and each repository. `administration` is minted but no read is
-  # known to need it: the auto-merge setting is read over GraphQL (`auto_merge.py`), because
-  # GitHub serves REST's merge-related settings only to a token with `contents:write`. Any preset
-  # value is replaced, so the pass runs only on the token it minted.
+  # token or the socket's marker. The three permissions are what the check's GitHub reads use:
+  # `contents` for `factory-target.toml`, the registry files and the workflow files; `metadata` for
+  # the listings and each repository. `administration` is minted but no read is known to need it:
+  # the auto-merge setting is read over GraphQL (`auto_merge.py`), because GitHub serves REST's
+  # merge-related settings only to a token with `contents:write`. Any preset value is replaced, so
+  # the pass runs only on the token it minted.
   SDS_MEMBERS_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+    | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
         --permission metadata=read --permission contents=read --permission administration=read)"
   mint_rc=$?
@@ -137,7 +147,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # be read" as a gap, so the pass exits 3 (or 2 if something disagrees). The report's clone line
   # names the commit read.
   _sds_anonymous_git() {
-    env -u BWS_ACCESS_TOKEN -u GH_TOKEN -u SDS_MEMBERS_GITHUB_TOKEN \
+    env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET -u GH_TOKEN -u SDS_MEMBERS_GITHUB_TOKEN \
         -u SDS_MEMBERS_OBSERVER_TOKEN -u SDS_MEMBERS_CHANGE_MANAGER_TOKEN \
         GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 git "$@"
   }
@@ -154,8 +164,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   export GH_TOKEN BUMP_PROPOSER_PACKAGES_CHECKOUT
 fi
 export SDS_MEMBERS_OBSERVER_TOKEN SDS_MEMBERS_CHANGE_MANAGER_TOKEN SDS_MEMBERS_GITHUB_TOKEN
-# The program needs no BWS identity, so the lane's token never reaches it.
-unset BWS_ACCESS_TOKEN
+# The program needs no BWS identity, so neither the lane's token nor the socket's marker reaches it.
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 # APPENDED, never truncated: the report already holds the container's clone line.
 "$REPO_ROOT/.venv/bin/membership-check" >> "$SDS_OUTCOME_REPORT" 2>&1

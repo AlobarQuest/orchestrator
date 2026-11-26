@@ -54,6 +54,12 @@ SECRETS = frozenset(
         "97802aac-5a7f-45e8-8185-b4fc00cd318e",  # execution-watch-ping-url
         "ebabdd63-2eff-4b8e-99b7-b4fd01754eae",  # landing-ledger-ping-url
         "872684c0-899e-43b7-9c2d-b50000e88b21",  # pin-watcher-ping-url
+        # Phase C's second batch (ADR-0055 Amendment 32, item 4), given at an HQ gate before its
+        # release.
+        "3b9503da-eb7e-401d-b4a7-b4a400c07efb",  # change-manager/M2M_TOKEN_OBSERVE
+        "1cfc8352-c960-4afc-bd49-b4ff00e8783e",  # unit-verifier-ping-url
+        "5fc44897-b4df-44ae-8491-b5000129d9be",  # membership-check-ping-url
+        "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875",  # deploy-watcher-ping-url
     }
 )
 

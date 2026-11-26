@@ -10,6 +10,12 @@ Each lane has `/data/sds/broker/<lane>/broker.sock` on the host (socket mode 060
 A lane's compose mounts only its own directory, read-only at `/run/sds-broker`, so the socket a
 request arrives on is the lane's identity.
 
+The broker lanes are the tables in `lanes/secrets-broker/allowlist.toml`: `inert-landing`,
+`estate-landing`, `bump-driver`, `follow-up-mint`, `change-window`, `execution-watch`,
+`landing-ledger`, `pin-watcher`, `unit-verifier`, `membership-check` and `deploy-watcher`. A test
+holds that set equal to the lane composes that map no token
+(`tests/scripts/test_secrets_broker_allowlist.py`).
+
 ## Deploy the broker
 
 1. **Create or chown the host directory first.** `/data/sds/broker` must exist on `prod-vps`, owned
@@ -137,6 +143,9 @@ broker failed on a connection, and the lane sees no reply).
 
 ## What the broker doesn't change
 
-The 12 lanes already on the VPS, and every Mac launcher, keep their tokens and run unchanged. The
-broker's own token is the one BWS token that stays manual until Phase C; its registry row,
+Six lanes on the VPS still read with their own tokens: `bump-proposer`, `change-proposer`,
+`revision-watcher`, `rotation-decomposer`, `rotation-proposer` and `work-carrier`. They, and every
+Mac launcher, run unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN` Coolify variables
+and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5). The broker's own
+token is the one BWS token that stays manual until Phase C; its registry row,
 `secrets-broker-bws-token` in `.cred-consumers.toml`, is `rotated_by_sds = false` until then.
