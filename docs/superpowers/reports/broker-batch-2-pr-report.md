@@ -6,8 +6,8 @@ Handoff: `sds-hq/state/handoffs/broker-batch-2-pr.md` (goal step `broker-batch-2
 Amendment 32 item 4 step 3). Worker W-315, branch `hq/broker-batch-2`, based on `origin/main` at
 `8b326f2d`.
 
-- **PR:** __PR__
-- **Head:** __HEAD__
+- **PR:** [AlobarQuest/orchestrator#817](https://github.com/AlobarQuest/orchestrator/pull/817)
+- **Head:** the branch tip carrying this report; its code commit is `8431d677`
 - **Merged:** no. The handoff says don't merge it.
 
 ## What I built
