@@ -266,6 +266,18 @@ def test_an_absent_deploy_is_refused_on_either_coolify_version(held_answer: int)
     assert "deploy absent (403)" in note
 
 
+@pytest.mark.parametrize("held_answer", [400, 405])
+def test_an_undeclared_deploy_the_token_holds_is_refused_on_either_version(
+    held_answer: int,
+) -> None:
+    coolify = Coolify(deploy_get=held_answer)
+    with pytest.raises(
+        ContractError,
+        match=f"deploy, so its probe must answer 403; it answered HTTP {held_answer}$",
+    ):
+        _provider(coolify, ["read"]).check_scope(coolify.add("read", "deploy"))
+
+
 def test_scope_is_checked_only_after_the_value_answers_live() -> None:
     coolify = Coolify()
     old = coolify.add(*EVERY)
