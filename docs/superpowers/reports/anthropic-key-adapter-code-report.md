@@ -3,7 +3,7 @@ Outcome: done
 # Build report: the Anthropic API-key rotation adapter (ADR-0055 Amendment 36 item 13, D-85)
 
 Branch `hq/anthropic-key-adapter-code`, based on orchestrator `origin/main` at `e7016cb8`.
-PR: PR_URL_PLACEHOLDER (head `HEAD_PLACEHOLDER`). Not merged: HQ reviews and merges.
+PR: https://github.com/AlobarQuest/orchestrator/pull/829 (the code at `16e749e3`; this line is the commit after it). Not merged: HQ reviews and merges.
 
 No live call was made to Anthropic, BWS, Coolify or Healthchecks, and no production act was taken.
 Every test runs against fakes.
