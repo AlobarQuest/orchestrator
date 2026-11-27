@@ -198,6 +198,9 @@ The host must first run a commit that has the verb ("Install or update it on the
     `private` into `pri[redacted]ate` in the line. The probe tests now get their own touched-value
     set, as `test_postgres_role.py` does. With `Value("v")` touched first, the tests pass with the
     fixture and fail without it.
+- **CI on PR #830** at `b73dc764`: all three checks pass (Quality, Rollout transcription
+  currency, Runner consumer compatibility). The Quality job collected 15,155 tests: 15,141 passed
+  and 14 skipped (run 46072358177). The total matches the local run; CI's environment skips more.
 - **Targeted runs**: `test_adapter_class.py` (60 passed), `test_probe.py` (23), and
   `test_anthropic_key.py` (35). Also `test_github_app_key.py` (36), `test_checks.py` (63), and the
   client-surface, rotation-edges, and outbound scans (1,329 with `test_probe.py`).
@@ -284,7 +287,8 @@ The host must first run a commit that has the verb ("Install or update it on the
    secret before the grant.
 6. **The ADR line is one physical line.** I kept the handoff's "one line" literally, at about 280
    characters, rather than wrapping it at the file's 100.
-7. **CI.** The PR's checks run on its final head; HQ reads them before merging.
+7. **CI is green on `b73dc764`**, the head before this line's commit; a report-only commit reruns
+   it.
 8. **Teardown is HQ's.** The worktree and `orchestrator_test_hq_w_333` remain for HQ to remove
    after merge.
 
