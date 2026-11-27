@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
-from rotation_worker import cli
+from rotation_worker import cli, values
 from rotation_worker.adapters import anthropic_key, github_app_key
 from rotation_worker.config import Config
 from rotation_worker.contract import ContractError, Rotation
@@ -128,6 +128,14 @@ def _registry(origins: Origins, rows: str) -> None:
 
 def _keep(store: MemoryStore, value: Value) -> None:
     store.secrets[KEEPER] = (WORK, "keeper", value)
+
+
+@pytest.fixture(autouse=True)
+def own_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`scrub` redacts every value the process has wrapped. In a test run that includes other
+    tests' short placeholders (a one-letter value redacts that letter from the line); the probe's
+    own process holds only the key and its control."""
+    monkeypatch.setattr(values, "_TOUCHED", set())
 
 
 @pytest.fixture
