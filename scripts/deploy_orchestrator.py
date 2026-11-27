@@ -1068,6 +1068,13 @@ CLOSED_FAILED = "closed_failed"
 # else.
 BWS_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 READ_LINE = re.compile(r"^(\S+) (ok|refused)$")
+# A broker lane's `--token` run is a read proof (ADR-0055 Amendment 32 item 10): its reads must
+# also show one UUID outside the lane's table refused. The control is the one Amendment 32 step 7's
+# proofs used, estate-landing's ping URL, and inert-landing's for a lane whose table lists that.
+BROKER_READ_CONTROLS = (
+    "11e940d7-e43a-4ebd-9026-b508017d9cef",  # estate-landing-ping-url
+    "35557473-f80c-44e3-892a-b507013158b1",  # inert-landing-ping-url
+)
 
 
 def _healthchecks_listing() -> list[dict[str, Any]]:
@@ -1098,7 +1105,9 @@ class Change:
     """One lane-phase change: `tag`, `schedule`, `add` or `token`, as its arguments name it.
 
     A `token` change carries nothing: the VM rotation executor has written the lane's token
-    variable, and the run redeploys the lane on what it already runs (ADR-0059 Amendment 2)."""
+    variable, and the run redeploys the lane on what it already runs (ADR-0059 Amendment 2). On a
+    broker lane it writes nothing and proves the running container's reads (ADR-0055 Amendment 32
+    item 10)."""
 
     kind: str
     tag: str = ""  # sha-<commit> for `tag` and `add`
@@ -1152,9 +1161,12 @@ class LaneRun:
     replaced_schedule: str = ""
     replaced_digest: str = ""
     slot_open: bool = False
-    # A `--token` run's secrets, as `.bws-secrets.toml` at its commit lists them for the lane:
-    # what `lane-run --read` must read `ok` (ADR-0059 Amendment 2).
+    # A `--token` run's secrets, what `lane-run --read` must read `ok`: as `.bws-secrets.toml` at
+    # its commit lists them for a token lane (ADR-0059 Amendment 2), and as the allowlist's table
+    # does for a broker lane (ADR-0055 Amendment 32 item 10).
     read_uuids: list[str] = field(default_factory=list)
+    # A broker lane's `--token` run: the UUID outside the lane's table that must read `refused`.
+    control_uuid: str = ""
     # The lane reads through the secrets broker at the run's commit (`broker_lane`), so its
     # container must hold no token.
     brokered: bool = False
@@ -1762,12 +1774,9 @@ def _plan(
         raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
     if change.kind == "add":
         run.volume_slug = _state_volume(service, lane) or ""
-    if change.kind == "token" and run.brokered:
-        raise Refused(
-            f"lane {lane}: a broker lane has no token; its --token run is not supported "
-            "(ADR-0055 a30 item 10)"
-        )
-    if change.kind == "token":
+    if read_proof(run):
+        _plan_read_proof(run, allowlist[lane])
+    elif change.kind == "token":
         manifest = _git(world, "show", f"{run.commit}:{SECRETS_MANIFEST}")
         run.read_uuids = lane_secrets(manifest, lane)
         if not run.read_uuids:
@@ -1778,6 +1787,19 @@ def _plan(
         malformed = [u for u in run.read_uuids if not BWS_UUID.match(u)]
         if malformed:
             raise Refused(f"{SECRETS_MANIFEST} lists malformed UUIDs for lane {lane}: {malformed}")
+
+
+def _plan_read_proof(run: LaneRun, listed: frozenset[str]) -> None:
+    """A broker lane's `--token` run writes nothing: it reads every UUID of the lane's allowlist
+    table at the run's commit and one control outside it (ADR-0055 Amendment 32 item 10)."""
+    run.read_uuids = sorted(listed)
+    control = next((uuid for uuid in BROKER_READ_CONTROLS if uuid not in listed), None)
+    if control is None:
+        raise Refused(
+            f"{BROKER_ALLOWLIST} at {run.tag} lists every read-proof control for lane "
+            f"{run.lane}, so no UUID outside its table can show the broker refusing"
+        )
+    run.control_uuid = control
 
 
 def _change(args: argparse.Namespace) -> Change:
@@ -1803,6 +1825,11 @@ def _current(runs: list[LaneRun], change: Change, status: str) -> LaneRun | None
     """The newest run of this change in this status."""
     found = [r for r in runs if r.change_key == change.key and r.status == status]
     return found[-1] if found else None
+
+
+def read_proof(run: LaneRun) -> bool:
+    """A broker lane's `--token` run: it reads the running container and writes nothing."""
+    return run.change == "token" and run.brokered
 
 
 def _container(run: LaneRun) -> str:
@@ -1842,8 +1869,10 @@ def lane_reads(run: LaneRun) -> list[tuple[str, str]]:
             )
         )
     if run.change == "token":
-        # Prints `<uuid> ok|refused` per UUID and never a value (`scripts/lane_run.py`).
-        uuids = " ".join(run.read_uuids)
+        # Prints `<uuid> ok|refused` per UUID and never a value (`scripts/lane_run.py`). A broker
+        # lane's control comes last, so the read exits 1 on the proof's one expected `refused`.
+        control = [run.control_uuid] if run.control_uuid else []
+        uuids = " ".join([*run.read_uuids, *control])
         reads.append(("--read-result", container + f'docker exec "$C" lane-run --read {uuids}'))
     return reads
 
@@ -1877,6 +1906,17 @@ def _compose_block(title: str, text: str) -> list[str]:
 def lane_inverse(run: LaneRun) -> str:
     """What undoes the run's writes, for `lanes-finish` to name when the redeploy fails."""
     resource = f"{LANE_RESOURCE_PREFIX}{run.lane}"
+    if read_proof(run):
+        closed = _phase_command("lanes-finish", run, "--restored")
+        return "\n".join(
+            [
+                f"A broker lane's --token run of {resource} is a read proof and wrote nothing,",
+                "so it has no inverse write. If lanes-finish fails, close the run as failed, with",
+                "the mismatches lanes-finish recorded as its reason:",
+                f"   {closed}",
+                "The lane can then take a retry --token; the revoke sitting waits for one to pass.",
+            ]
+        )
     if run.change == "token":
         closed = _phase_command("lanes-finish", run, "--restored")
         return "\n".join(
@@ -1930,24 +1970,39 @@ def lane_next_steps(run: LaneRun) -> str:
         lineterm="",
     )
     reads = lane_reads(run)
-    # A `--token` run writes no variable: the executor has written the token (Amendment 2).
-    variable = [] if run.change == "token" else [_variable_write(run, inverse=False)]
-    calls = [*variable, _call("coolify_deploy", run)]
-    lines = [
-        f"Lane {run.lane}'s quiet slot is open. Run {run.run_id} changes {resource} "
-        f"({run.change_key}); the lane image is {LANE_IMAGE}@{run.lane_digest}.",
-        "How the compose this run writes differs from the recorded one:",
-        *diff,
-        "",
-        "Make these calls IN THIS ORDER, with no other step between them:",
-        f"1. {_phase_command('lanes-recheck', run)}",
-        "   Only if it exits 0, the writes. A non-zero exit means go back to lanes-prepare.",
-        f"2. {_call('coolify_update_service', run)} with docker_compose_raw set to exactly:",
-        *_compose_block("compose to send", run.compose_sent),
-        *(f"{step}. {call}" for step, call in enumerate(calls, start=3)),
-        f"{3 + len(calls)}. Once the deployment has finished, read the new container with "
-        f'vps_exec(instance="{COOLIFY_INSTANCE}"):',
-    ]
+    if read_proof(run):
+        # A read proof (ADR-0055 Amendment 32 item 10): no compose, no variable, no redeploy.
+        lines = [
+            f"Lane {run.lane}'s quiet slot is open. Run {run.run_id} proves {resource}'s reads "
+            f"through the secrets broker and writes nothing; the lane runs "
+            f"{LANE_IMAGE}@{run.lane_digest}.",
+            "",
+            "Make these calls IN THIS ORDER:",
+            f"1. {_phase_command('lanes-recheck', run)}",
+            "   Only if it exits 0, the reads. A non-zero exit means go back to lanes-prepare.",
+            f'2. Read the running container with vps_exec(instance="{COOLIFY_INSTANCE}"):',
+        ]
+        step = 3
+    else:
+        # A `--token` run writes no variable: the executor has written the token (Amendment 2).
+        variable = [] if run.change == "token" else [_variable_write(run, inverse=False)]
+        calls = [*variable, _call("coolify_deploy", run)]
+        lines = [
+            f"Lane {run.lane}'s quiet slot is open. Run {run.run_id} changes {resource} "
+            f"({run.change_key}); the lane image is {LANE_IMAGE}@{run.lane_digest}.",
+            "How the compose this run writes differs from the recorded one:",
+            *diff,
+            "",
+            "Make these calls IN THIS ORDER, with no other step between them:",
+            f"1. {_phase_command('lanes-recheck', run)}",
+            "   Only if it exits 0, the writes. A non-zero exit means go back to lanes-prepare.",
+            f"2. {_call('coolify_update_service', run)} with docker_compose_raw set to exactly:",
+            *_compose_block("compose to send", run.compose_sent),
+            *(f"{step}. {call}" for step, call in enumerate(calls, start=3)),
+            f"{3 + len(calls)}. Once the deployment has finished, read the new container with "
+            f'vps_exec(instance="{COOLIFY_INSTANCE}"):',
+        ]
+        step = 4 + len(calls)
     for name, command in reads:
         lines += [f"   {name}:", f"   {command}"]
     if run.change == "token":
@@ -1955,13 +2010,18 @@ def lane_next_steps(run: LaneRun) -> str:
             "   Save the --read-result read's output (its `<uuid> ok|refused` lines) to a file "
             "and pass that file's path."
         )
+    if run.control_uuid:
+        lines.append(
+            f"   Its last UUID, {run.control_uuid}, is outside the lane's table and must read "
+            "refused, so lane-run --read exits 1."
+        )
     finish = " ".join(f"{name} <read>" for name, _ in reads)
-    lines += [
-        f"{4 + len(calls)}. {_phase_command('lanes-finish', run, finish)}",
-        "   If the redeploy itself failed, run lanes-finish with --redeploy-failed instead.",
-        "",
-        lane_inverse(run),
-    ]
+    lines.append(f"{step}. {_phase_command('lanes-finish', run, finish)}")
+    if not read_proof(run):
+        lines.append(
+            "   If the redeploy itself failed, run lanes-finish with --redeploy-failed instead."
+        )
+    lines += ["", lane_inverse(run)]
     return "\n".join(lines)
 
 
@@ -2083,17 +2143,21 @@ def read_results(path: str) -> dict[str, str]:
 
 
 def read_mismatches(run: LaneRun, results: dict[str, str]) -> list[str]:
-    """How `lane-run --read`'s results differ from every listed secret read `ok`."""
-    extra = sorted(set(results) - set(run.read_uuids))
+    """How `lane-run --read`'s results differ from every listed secret read `ok` and a broker
+    lane's control read `refused`."""
+    expected = dict.fromkeys(run.read_uuids, "ok")
+    if run.control_uuid:
+        expected[run.control_uuid] = "refused"
+    extra = sorted(set(results) - set(expected))
     if extra:
         raise Usage(f"--read-result names UUIDs run {run.run_id} doesn't list: {extra}")
     found = []
-    for uuid in run.read_uuids:
+    for uuid, wanted in expected.items():
         result = results.get(uuid)
         if result is None:
             found.append(f"lane-run --read didn't read {uuid}")
-        elif result != "ok":
-            found.append(f"lane-run --read: {uuid} {result}")
+        elif result != wanted:
+            found.append(f"lane-run --read: {uuid} {result}, not {wanted}")
     return found
 
 
@@ -2248,7 +2312,9 @@ def _lane_parsers(phases: Any) -> None:
     change.add_argument("--schedule", choices=["true", "false"], help="LANE_SCHEDULE_ENABLED")
     change.add_argument("--add", action="store_true", help="the lane's first start (with --tag)")
     change.add_argument(
-        "--token", action="store_true", help="redeploy on the token the executor wrote"
+        "--token",
+        action="store_true",
+        help="redeploy on the token the executor wrote; on a broker lane, prove its reads",
     )
     prepare = phases.add_parser(
         "lanes-prepare", parents=[change], help="wait for the quiet slot, print the calls"

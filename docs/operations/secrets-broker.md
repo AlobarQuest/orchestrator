@@ -202,8 +202,7 @@ broker's directory, and the allowlist at the run's commit lists it (`broker_lane
 compose with any other route to `/data/sds/broker` on any service: a stray mount, `volumes_from`,
 a privileged service, a mount of the Docker socket, or a named volume whose `driver_opts` device
 reaches it (`compose_broker_refusals`). A test holds every tracked lane compose to the same rule.
-A `--token` run on a broker lane is refused at plan time: the lane has no token to redeploy on,
-and Phase B settles what the run does for one.
+A `--token` run on a broker lane is its recorded read proof ("Prove a lane's reads").
 
 ## Prove a lane's reads
 
@@ -217,6 +216,27 @@ broker shows as `refused`, with one of two messages on stderr:
 - "broker socket missing at /run/sds-broker/broker.sock": the mount directory exists but holds no
   socket, because the broker never set up this lane's directory. A launcher run in this state
   starts nothing and exits 2 with the same message.
+
+A lane's recorded read proof is a `--token` run (ADR-0055 Amendment 32 item 10), which the
+revoke of a lane token needs (deploy.md, "Before a lane token's revoke"). On a broker lane the
+run writes no compose and no variable and makes no redeploy:
+
+1. `lanes-prepare --lane <lane> --token --running-tag <tag> [--running-volume <volume>]` plans
+   the reads over the lane's table in `lanes/secrets-broker/allowlist.toml` at the commit the
+   lane runs, sorted, plus one control outside the table: estate-landing's ping URL
+   `11e940d7-e43a-4ebd-9026-b508017d9cef`, or inert landing's `35557473-f80c-44e3-892a-b507013158b1`
+   for a lane whose table lists the first. It refuses a lane whose table lists both.
+2. `lanes-recheck`, then the printed reads of the running container through `vps_exec`: the
+   digest, the schedule, the state mount, the token-present read, and
+   `C=$(docker ps -q --filter name=<resource uuid>); <exactly-one check>; docker exec "$C" lane-run --read <uuid>... <control>`,
+   which exits 1 because the control reads `refused`.
+3. `lanes-finish --lane <lane> --token <reads> --token-present false --read-result <file>`. The
+   run file records `read_uuids`, `control_uuid` and status `finished`. Any listed UUID not `ok`,
+   a control not `refused`, a missing line, or a `true` token read fails it, and
+   `lanes-finish --restored` closes it `closed_failed` with those mismatches as its reason.
+
+HQ's deploy gate passes no `lane-run --read`, so an HQ cycle can't run step 2's read: a session
+runs it in the revoke sitting's gate, approved there, as Amendment 32 step 7's proofs were.
 
 ## Read its log
 
@@ -254,7 +274,8 @@ broker failed on a connection, and the lane sees no reply).
 
 No Amendment 32 lane reads with its own token: every lane on the VPS reads through the broker,
 and every Mac launcher runs unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN`
-Coolify variables and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5).
+Coolify variables and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5),
+which waits for each lane's recorded read proof ("Prove a lane's reads").
 The `bump-proposer` machine account also keeps the Mac's Keychain token `bws-bump-proposer-token`
 after the revoke (D-81 (6)).
 

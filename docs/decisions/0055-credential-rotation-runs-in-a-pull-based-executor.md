@@ -4592,8 +4592,8 @@ Line numbers are at `4d8ca873`. This amendment edits none of them.
 ## Amendment 32 — The lane secrets broker's Phase C: the 12 earlier lanes move and their tokens retire (2026-11-24)
 
 **Status: Proposed (2026-11-24).** Accepted on merge, as amendment 31 is. Of the items marked
-"Open, for Devon", D-81 answers 6 to 9, 12 and 14, HQ settles 11 and 13 (see Answers), and item 10
-stays open until HQ settles it. **Relates to:** amendment 30
+"Open, for Devon", D-81 answers 6 to 9, 12 and 14, and HQ settles 10, 11 and 13 (see Answers).
+**Relates to:** amendment 30
 (the broker; its item 8, the unlock tier; its item 10, a `--token` run on a broker lane; its
 "Phases"), amendment 29 (a lane token's revoke), amendment 19 (lane tokens and ping URLs), and
 ADR-0059's "Cut-over for one lane".
@@ -4823,12 +4823,12 @@ Three facts read from the code at `5ae929a9` shape the plan:
    lane left out.
    1. **The precondition, restated for a broker cut-over.** deploy.md's "Before a lane token's
       revoke" (lines 334-343) asks for a `--token` run's `lanes-finish` on the redeployed container.
-      A broker lane's `--token` run is refused at plan time (amendment 30 item 10), so the
-      precondition for a retirement is the following, for each of the 13 lanes: its conversion's
-      `lanes-finish` passed on the redeployed container, step 7's read proof printed `ok` for every
-      listed UUID on that container, and the container holds no `BWS_ACCESS_TOKEN`. Inert
-      landing's conversion is its Phase A move. No `--token` run is made on a broker lane unless
-      Open item 10's answer defines one, and then the precondition adds its recorded run.
+      A broker lane has no token to redeploy on, so the precondition for a retirement is the
+      following, for each of the 13 lanes: its conversion's `lanes-finish` passed on the
+      redeployed container, step 7's read proof printed `ok` for every listed UUID on that
+      container, and the container holds no `BWS_ACCESS_TOKEN`. Inert landing's conversion is its
+      Phase A move. The precondition also needs the lane's recorded read-proof run (Open item 10):
+      a broker lane's `--token` run whose `lanes-finish` passed on the running container.
       Amendment 29's `loaded` match proves a reissue's new value and has no new value to prove here,
       so it doesn't apply.
    2. **The sitting.** Devon revokes the 13 lane tokens (the 12 and inert landing's) in one BWS web
@@ -4875,9 +4875,9 @@ Three facts read from the code at `5ae929a9` shape the plan:
    sitting revokes 12. Every other grant in item 3 is a gate step for Devon, listed and not given.
    **Answered:** see Answers (2026-11-24).
 10. **Open, for Devon: a `--token` run on a broker lane** (amendment 30 item 10, which Phase B
-    didn't settle). Until it's answered, the run stays refused at plan time. **Blocks:** the revoke
-    sitting (item 5), whose precondition depends on the answer.
-    **HQ's to settle:** see Answers (2026-11-24); not settled yet.
+    didn't settle). The run is a recorded read proof that writes nothing, and item 5's precondition
+    adds it. **Blocks:** the revoke sitting (item 5), whose precondition depends on the answer.
+    **Settled by HQ:** see Answers (2026-11-27).
 11. **Open, for Devon: HQ's unregistered secrets.** Which secrets they are, and which repository's
     registry takes each row. **Blocks:** Phase C's close.
     **Settled by HQ:** see Answers (2026-11-24).
@@ -4939,7 +4939,13 @@ HQ's, not Devon's (construction-mode ruling,
 - **Open item 11:** HQ lists each unregistered secret (name, BWS UUID, reader, owning repository)
   in its next handoff, and a worker registers each in that repository's `.cred-consumers.toml` (the
   question file's recommendation 8). Only the procedure is settled; the secrets aren't named yet.
-- **Open item 10:** open, and HQ's to settle with a recorded read-proof run. It isn't settled yet.
+- **Open item 10:** B, a recorded read-proof run (2026-11-27). On a broker lane, the deploy
+  command's `--token` run writes no compose and no variable and makes no redeploy. It plans
+  `lane-run --read` on the running container over the lane's allowlist table at the run's commit,
+  plus one control outside the table: estate-landing's ping URL, or inert landing's for a lane
+  whose table lists that. Its `lanes-finish` passes only when every listed UUID reads `ok`, the
+  control reads `refused`, and the container holds no `BWS_ACCESS_TOKEN`. HQ's deploy gate passes
+  no `lane-run --read`, so a session runs each lane's proof in the revoke sitting's gate.
 
 ### Phase C is done when
 
@@ -5013,7 +5019,7 @@ Line numbers are at `5ae929a9`. This amendment edits none of them.
 | Passage | Disposition |
 |---|---|
 | Amendment 30 item 8, the unlock tier (lines 4406-4410) | Stands. Its mechanism and the token's rotation are Open items 6 and 7, answered by D-81 (1) A and (2) B. |
-| Amendment 30 item 10, a `--token` run on a broker lane (lines 4415-4416) | Stands, still open (Open item 10). Item 5 doesn't use the run. |
+| Amendment 30 item 10, a `--token` run on a broker lane (lines 4415-4416) | Settled by Open item 10's answer: the run is a recorded read proof, and item 5's precondition adds it. |
 | Amendment 30, "Phases", C (lines 4424-4426) | Planned by this amendment, with a "done when". The factory-events passwords are Open item 12, out of Phase C under D-81 (7) B. |
 | Amendment 30, "Phases", B, the held packages (lines 4422-4423) | Extended by item 5: HQ holds each batch's lanes' token packages until the revoke. |
 | Amendment 29, a lane token's revoke waits on the loaded fingerprint | Stands for a reissue. A retirement has no new value, so item 5 states its own precondition. |

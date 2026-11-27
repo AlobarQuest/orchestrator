@@ -202,7 +202,8 @@ Each phase takes `--lane <lane>` and exactly one change:
   "Development mode").
 - `--token`: redeploy the lane after the VM rotation executor wrote its `<LANE>_BWS_ACCESS_TOKEN`
   (ADR-0059 Amendment 2). It keeps the running tag, digest and schedule, writes the tracked compose
-  at that tag, and writes no variable. It refuses a lane with no passed `--add`.
+  at that tag, and writes no variable. It refuses a lane with no passed `--add`. On a broker lane
+  it is a read proof that writes nothing ("Before a lane token's revoke").
 
 A `--tag` takes the release's sha tag only. The command resolves it to its full commit on
 `origin/main`, finds that commit's one successful `Release image` run (in the newest 200), and
@@ -277,7 +278,7 @@ run of its lane is `unfinished`.
 
    A `--token` run records the UUIDs `.bws-secrets.toml` lists for the lane at its running tag:
    each `[[secret]]` whose `lanes` field names the lane. It refuses a lane the manifest lists no
-   secret for.
+   secret for. A broker lane's records its allowlist table's UUIDs and a control instead.
 
    Exit 2 means the quiet slot is unmet: re-run it on a later cycle. Exit 4 means the wait timed
    out. Exit 0 prints, on stderr, how the compose differs from the recorded one, the exact calls of
@@ -289,14 +290,17 @@ run of its lane is `unfinished`.
    `coolify_update_service_env` for `--tag`, through `coolify_create_service_env` for `--add`
    (Coolify makes no row for a `${VAR}` in `image:`), or `LANE_SCHEDULE_ENABLED` through
    `coolify_update_service_env` for `--schedule`; `--token` writes no variable, because the
-   executor has written the token. Then `coolify_deploy` on the resource.
+   executor has written the token. Then `coolify_deploy` on the resource. A broker lane's
+   `--token` run is a read proof: it makes no write and no redeploy, and reads the running
+   container.
 4. Once the deployment has finished, read the new container with the `vps_exec` commands
    `lanes-prepare` printed: its image's `RepoDigest`, its `LANE_SCHEDULE_ENABLED`, the source of a
    stateful lane's state mount, and for an `--add` or a `--token` whether its `BWS_ACCESS_TOKEN`
    is non-empty (`test -n`, which prints no value). A `--token` run adds one more read:
    `docker exec <container> lane-run --read <uuid>...` over the run's recorded UUIDs, which prints
    one `<uuid> ok` or `<uuid> refused` line per UUID and never a value. Save those lines, as
-   printed, to a file outside the repository.
+   printed, to a file outside the repository. A broker lane's `--token` run adds its control
+   last, so that read exits 1.
 5. Run `lanes-finish` with the change and the reads (`--observed-digest`, `--observed-schedule`,
    `--observed-volume`, `--token-present`, and for `--token` `--read-result <file>`, the path of
    the saved `lane-run --read` lines). `--observed-digest` takes the bare `sha256:<64 hex>` value
@@ -304,7 +308,8 @@ run of its lane is `unfinished`.
    usage error. It exits 0 only when the container runs the release's lane
    digest, has the expected schedule, mounts the recorded volume (or, for an `--add`, the
    resource's one named volume, never a double-prefixed one), and, for an `--add` or a `--token`,
-   holds a token. A `--token` run passes only if every recorded UUID reads `ok` too. A read-result
+   holds a token (a broker lane: holds none). A `--token` run passes only if every recorded UUID
+   reads `ok` too, and on a broker lane only if its control reads `refused`. A read-result
    line that isn't `<uuid> ok|refused`, a UUID named twice, or a UUID the run didn't record is a
    usage error (exit 1), and the command never repeats the line. `--read-result` is for `--token`
    only. If the redeploy itself failed, pass `--redeploy-failed` instead of the reads. A failing
@@ -346,6 +351,15 @@ between the `PATCH` and the `--token` run, still run `--token` after it passes: 
 values are the ones the lane already runs, so the second redeploy changes nothing but proves the
 reads on the container that holds the token. Report that `lanes-finish`, not the other change's,
 as the revoke's precondition.
+
+A broker lane has no token to redeploy on, so its token's retirement (ADR-0055 Amendment 32 item 5)
+needs its recorded read proof instead: a `--token` run that writes nothing and reads the running
+container. It reads `lane-run --read` over the lane's allowlist table at the commit it runs plus
+one control outside it, and the token-present read. Its `lanes-finish` passes only when every
+listed UUID is `ok`, the control is `refused`, and the token read is `false`; the run file records
+the UUIDs, the control and `finished`. A session runs it in the revoke sitting's gate, since HQ's
+deploy gate passes no `lane-run --read`. The steps are in `secrets-broker.md`, "Prove a lane's
+reads".
 
 ### Registered lanes and the lane-token matcher
 
