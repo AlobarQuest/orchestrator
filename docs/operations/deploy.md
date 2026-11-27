@@ -290,14 +290,17 @@ run of its lane is `unfinished`.
    `coolify_update_service_env` for `--tag`, through `coolify_create_service_env` for `--add`
    (Coolify makes no row for a `${VAR}` in `image:`), or `LANE_SCHEDULE_ENABLED` through
    `coolify_update_service_env` for `--schedule`; `--token` writes no variable, because the
-   executor has written the token. Then `coolify_deploy` on the resource.
+   executor has written the token. Then `coolify_deploy` on the resource. A broker lane's
+   `--token` run is a read proof: it makes no write and no redeploy, and reads the running
+   container.
 4. Once the deployment has finished, read the new container with the `vps_exec` commands
    `lanes-prepare` printed: its image's `RepoDigest`, its `LANE_SCHEDULE_ENABLED`, the source of a
    stateful lane's state mount, and for an `--add` or a `--token` whether its `BWS_ACCESS_TOKEN`
    is non-empty (`test -n`, which prints no value). A `--token` run adds one more read:
    `docker exec <container> lane-run --read <uuid>...` over the run's recorded UUIDs, which prints
    one `<uuid> ok` or `<uuid> refused` line per UUID and never a value. Save those lines, as
-   printed, to a file outside the repository.
+   printed, to a file outside the repository. A broker lane's `--token` run adds its control
+   last, so that read exits 1.
 5. Run `lanes-finish` with the change and the reads (`--observed-digest`, `--observed-schedule`,
    `--observed-volume`, `--token-present`, and for `--token` `--read-result <file>`, the path of
    the saved `lane-run --read` lines). `--observed-digest` takes the bare `sha256:<64 hex>` value
@@ -305,7 +308,8 @@ run of its lane is `unfinished`.
    usage error. It exits 0 only when the container runs the release's lane
    digest, has the expected schedule, mounts the recorded volume (or, for an `--add`, the
    resource's one named volume, never a double-prefixed one), and, for an `--add` or a `--token`,
-   holds a token. A `--token` run passes only if every recorded UUID reads `ok` too. A read-result
+   holds a token (a broker lane: holds none). A `--token` run passes only if every recorded UUID
+   reads `ok` too, and on a broker lane only if its control reads `refused`. A read-result
    line that isn't `<uuid> ok|refused`, a UUID named twice, or a UUID the run didn't record is a
    usage error (exit 1), and the command never repeats the line. `--read-result` is for `--token`
    only. If the redeploy itself failed, pass `--redeploy-failed` instead of the reads. A failing
