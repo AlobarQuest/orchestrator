@@ -104,6 +104,19 @@ Before the test edits, the lane suites had 18 failures. All were in this batch's
 tests, which pinned the token mapping and the old messages. `test_deploy_lanes.py` and
 `test_lane_image.py` passed unchanged, so the handoff's last stop point didn't apply.
 
+### The pull request and CI
+
+The PR is https://github.com/AlobarQuest/orchestrator/pull/823, not merged. CI ran on head
+`81b6bdc7` (the change commit `07465492` plus the report commit), and every check passed:
+
+| Check | Result |
+|---|---|
+| `Quality` | Passed in 17m23s. 14961 items collected: 14947 passed and 14 skipped. |
+| `Rollout transcription currency` | Passed. |
+| `Runner consumer compatibility` | Passed. |
+
+The commit that adds this section changes only this report.
+
 ### New and changed tests
 
 Each launcher test mirrors #821's tests:
