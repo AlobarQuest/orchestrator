@@ -1,9 +1,9 @@
 """The lane secrets broker's registry row, read by the code that acts on it.
 
 ADR-0055 amendment 34: the broker's own token rotates through the `bws-lane-token` adapter's
-rotation plan, anchored on the date Devon pasted the first token, and its row is not handed to the
-SDS until amendment 34 item 9's exit checks pass. The row is read here as the executor reads it,
-from this repository's own `.cred-consumers.toml`.
+rotation plan, anchored on the date Devon pasted the first token, and its row is handed to the SDS
+once amendment 34 item 9's exit checks 1 to 3 pass, so the first real rotation (check 4) can run.
+The row is read here as the executor reads it, from this repository's own `.cred-consumers.toml`.
 """
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from rotation_proposer.cli import _first_issue
+from rotation_proposer.cli import _first_issue, _pass
+from rotation_proposer.findings import Due
 from rotation_proposer.generate import plan_for
 from rotation_worker.adapters import bws_lane_token
 from rotation_worker.git_mirror import RepoMirror
@@ -88,9 +89,39 @@ def entry(mirror: RepoMirror, origins: Origins) -> RegistryEntry:
     return credentials(mirror)[TOKEN]
 
 
-def test_the_row_is_not_handed_to_the_sds(mirror: RepoMirror, entry: RegistryEntry) -> None:
-    assert TOKEN not in rotated_by_sds(mirror)
-    assert "rotate_requested" not in entry.credential
+def test_the_row_is_handed_to_the_sds_with_a_requested_date(
+    mirror: RepoMirror, entry: RegistryEntry
+) -> None:
+    assert TOKEN in rotated_by_sds(mirror)
+    assert entry.credential["rotate_requested"] == "2026-11-27"
+
+
+def test_a_dry_proposer_pass_would_generate_the_row_s_rotation_package(
+    entry: RegistryEntry, tmp_path: Path
+) -> None:
+    """The proposer acts only on a handed-over row: its due item is built here from the row's own
+    `rotated_by_sds` and `rotate_requested`, as infraops serves them, and a dry pass (no client, no
+    observer, no grant read) generates revision 1 for the rotation plan without writing anything."""
+    root = tmp_path / "intent-packages"
+    root.mkdir()
+    requested = entry.credential["rotate_requested"]
+    due = Due(
+        TOKEN, entry.credential["class"], "requested", requested, requested, entry.rotated_by_sds
+    )
+    [outcome] = _pass(
+        [due],
+        {},
+        [],
+        None,
+        None,
+        root,
+        lambda: {TOKEN: entry},
+        granted=None,
+        last_rotated={TOKEN: entry.credential["created"]},
+        report_not_handed_over=True,
+    )
+    assert (outcome.credential_id, outcome.status) == (TOKEN, "would-generate")
+    assert list(root.iterdir()) == []
 
 
 def test_the_row_is_one_the_lane_token_adapter_accepts(entry: RegistryEntry) -> None:
