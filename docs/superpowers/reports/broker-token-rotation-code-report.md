@@ -6,8 +6,8 @@ Worker W-324, branch `hq/broker-token-rotation-code`, based on `e4412d4f`. Code 
 call to BWS, Coolify, Healthchecks or the VPS, and no production act. The PR isn't merged, and the
 row stays `rotated_by_sds = false` with no `rotate_requested`.
 
-- **PR:** PR_URL
-- **Head:** PR_HEAD
+- **PR:** https://github.com/AlobarQuest/orchestrator/pull/822 (open, not merged)
+- **Head:** the commit that adds this line, one report-only commit after `a8fd3fe729047baacd989a9dc5a8a61c38c03972`, the last commit with code; `git log -1` on the branch gives it
 
 ## What I built, against item 9's list
 
