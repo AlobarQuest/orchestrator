@@ -83,9 +83,9 @@ id, whether it was listed as a project (`expected.projects`) and as a secret (`e
 of the token. It reads the token from `BWS_REACH_PROBE_TOKEN` only, never `BWS_ACCESS_TOKEN`. It
 exits 0 when it lists, 2 on a usage error (no token, a malformed id, the SDK not installed), and 3
 when the login or a listing fails,
-naming only the error's class. It imports the SDK lazily, since CI's `uv sync --frozen` doesn't
-install the `rotation-worker` extra. The tests use a fake client with random values, and none of
-them reaches the output.
+naming only the error's class. It imports the SDK lazily, since the orchestrator image's
+`--no-dev` sync doesn't install the `rotation-worker` dependency group. The tests use a fake
+client with random values, and none of them reaches the output.
 
 It uses only abilities the repository already uses: `bitwarden_sdk` (the executor's `_REACH`), a
 Keychain read (`scripts/exit_probe.py`), and the BWS API the SDK reaches. A session runs it this
@@ -109,7 +109,7 @@ way:
    unset HQ_TOK
    ```
 
-   Then it syncs the extra in a worktree: `uv sync --frozen --extra rotation-worker`.
+   Then it syncs the group in a worktree: `uv sync --frozen --group rotation-worker`.
 3. **The session runs the script** with the organization id (the executor's `organization_id`, a
    non-secret id), the project id and the scratch secret's id. The token is read in-process from
    the `SDS HQ` secret by UUID, straight into `BWS_REACH_PROBE_TOKEN` for this one command. It's
@@ -193,6 +193,10 @@ way:
   C is weaker than an exact match, as amendment 34 item 5 says: a broker token with one extra
   single-secret grant would bind. `reach_secrets` would stay as it is.
 
+Measured 2026-11-27: outcome C. The throwaway token, on an account granted one scratch project
+and no single-secret grant, listed 1 project (the scratch project) and 1 secret (the project's
+filler secret).
+
 ## The four exit checks, the session's later steps
 
 Amendment 34 puts each before the commit that sets `rotated_by_sds = true`. Checks 1 to 3 can run
@@ -220,7 +224,7 @@ then; check 4 can't (see Concerns):
   skipped**; run 45916301219 at `117e8d6c` gave the same counts. The run on fix round 1's head is
   pending at its push; "Fix round 1" names it. That's 14936 collected, the same as locally (14935 + 1). CI skips 13 more tests than
   my machine does, and the job log doesn't print their reasons. The new script tests don't import
-  the SDK (they use a fake), so CI's sync without the `rotation-worker` extra doesn't skip them.
+  the SDK (they use a fake), so they run whether or not the `rotation-worker` group is installed.
 - The two named row-test files and the new script test: `test_secrets_broker_row.py`, `test_lane_token_helper_targets.py`, `test_bws_reach_probe.py` and `test_layer_manifest.py` together gave 25 passed. One mutation checked the leak test: making the script append each secret's key to its id failed both `test_no_token_key_or_value_reaches_the_output` and the listing test, and the file was restored.
 - In-process: `check_row` accepts the row with `helper_target`, `helper_target` answers
   `secrets-broker`, and `_first_issue({id: "2026-11-20"}, id)` is `False`.

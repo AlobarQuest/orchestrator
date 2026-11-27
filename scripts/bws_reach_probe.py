@@ -14,7 +14,7 @@ read from `BWS_REACH_PROBE_TOKEN` only, never the ambient `BWS_ACCESS_TOKEN`, so
 identity can't be measured by mistake. The SDK runs with a new client and an empty, throwaway
 `HOME`, as the executor's bind does, so no cached session answers for it.
 
-Usage (needs the `rotation-worker` extra: `uv sync --frozen --extra rotation-worker`):
+Usage (needs the `rotation-worker` group: `uv sync --frozen --group rotation-worker`):
 
     BWS_REACH_PROBE_TOKEN="$(security find-generic-password -s Claude -a <item> -w)" \\
       .venv/bin/python -I scripts/bws_reach_probe.py --organization <org uuid> \\
@@ -37,12 +37,12 @@ from typing import Any
 
 TOKEN_VARIABLE = "BWS_REACH_PROBE_TOKEN"
 LISTED, USAGE, FAILED = 0, 2, 3
-NO_SDK = "bitwarden_sdk is not installed: uv sync --frozen --extra rotation-worker"
+NO_SDK = "bitwarden_sdk is not installed: uv sync --frozen --group rotation-worker"
 
 
 def _sdk_client() -> Any:
-    """A new SDK client. Imported here: the SDK is the `rotation-worker` extra, which CI's
-    `uv sync --frozen` doesn't install."""
+    """A new SDK client. Imported here: the SDK is the `rotation-worker` dependency group, which
+    the orchestrator image (`--no-dev`) doesn't install."""
     from bitwarden_sdk import BitwardenClient
 
     return BitwardenClient()
