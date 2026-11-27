@@ -6,7 +6,8 @@ declared reach (`_REACH` in `src/rotation_worker/adapters/bws_machine_token.py`)
 secret listing for a token with a project grant includes that project's secrets is unmeasured, and
 it decides how the broker token's bind must read. This script makes the same three SDK calls as
 `_REACH` (log in, list projects, list secrets) and prints one JSON line on stdout: the project ids
-and secret ids the token sees, their counts, and, for each `--expect` id, whether it was listed.
+and secret ids the token sees, their counts, and, for each `--expect` id, whether it was listed
+as a project and whether it was listed as a secret.
 
 It never prints a secret's value, key or name, the token, or any digest of the token. The token is
 read from `BWS_REACH_PROBE_TOKEN` only, never the ambient `BWS_ACCESS_TOKEN`, so a session's own
@@ -19,8 +20,8 @@ Usage (needs the `rotation-worker` extra: `uv sync --frozen --extra rotation-wor
       .venv/bin/python -I scripts/bws_reach_probe.py --organization <org uuid> \\
       --expect <project uuid> --expect <uuid of a secret in that project>
 
-Exit codes: 0 listed, 2 usage (no token, bad argument), 3 the login or a listing failed (the error's
-class is named, never its text).
+Exit codes: 0 listed, 2 usage (no token, a bad argument, no SDK installed), 3 the login or a
+listing failed (the error's class is named, never its text).
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from typing import Any
 
 TOKEN_VARIABLE = "BWS_REACH_PROBE_TOKEN"
 LISTED, USAGE, FAILED = 0, 2, 3
+NO_SDK = "bitwarden_sdk is not installed: uv sync --frozen --extra rotation-worker"
 
 
 def _sdk_client() -> Any:
@@ -70,20 +72,20 @@ def _emit(line: dict[str, Any]) -> None:
     print(json.dumps(line, sort_keys=True))
 
 
-def measure(
-    token: str, organization: str, expect: Sequence[str], client_factory: Callable[[], Any]
-) -> dict[str, Any]:
-    """What `token` sees: sorted ids and counts, and whether each expected id was listed."""
-    client = client_factory()
+def measure(client: Any, token: str, organization: str, expect: Sequence[str]) -> dict[str, Any]:
+    """What `token` sees: sorted ids and counts, and, per kind, whether each expected id was
+    listed as a project and as a secret."""
     client.auth().login_access_token(token)
     projects = sorted(str(p.id) for p in client.projects().list(organization).data.data)
     secrets = sorted(str(s.id) for s in client.secrets().list(organization).data.data)
-    seen = set(projects) | set(secrets)
     return {
         "event": "bws_reach_probe.listed",
         "projects": {"count": len(projects), "ids": projects},
         "secrets": {"count": len(secrets), "ids": secrets},
-        "expected": {identifier: identifier in seen for identifier in expect},
+        "expected": {
+            "projects": {identifier: identifier in projects for identifier in expect},
+            "secrets": {identifier: identifier in secrets for identifier in expect},
+        },
     }
 
 
@@ -100,10 +102,16 @@ def main(argv: Sequence[str] | None = None, client_factory: Callable[[], Any] = 
     with tempfile.TemporaryDirectory(prefix="bws-reach-probe-") as home:
         os.environ["HOME"] = home
         try:
-            line = measure(token, arguments.organization, arguments.expect, client_factory)
-        except Exception as error:  # The SDK's errors carry its text; only the class is printed.
-            _emit({"event": "bws_reach_probe.failed", "error": type(error).__name__})
-            return FAILED
+            try:
+                client = client_factory()
+            except ImportError:
+                _emit({"event": "bws_reach_probe.refused", "error": NO_SDK})
+                return USAGE
+            try:
+                line = measure(client, token, arguments.organization, arguments.expect)
+            except Exception as error:  # The SDK's errors carry its text; only its class prints.
+                _emit({"event": "bws_reach_probe.failed", "error": type(error).__name__})
+                return FAILED
         finally:
             if previous is None:
                 os.environ.pop("HOME", None)

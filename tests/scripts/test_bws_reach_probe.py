@@ -100,7 +100,10 @@ def test_it_prints_sorted_ids_counts_and_the_expected_ids(
     line = json.loads(out)
     assert line["projects"] == {"count": 1, "ids": [str(project.id)]}
     assert line["secrets"] == {"count": 3, "ids": sorted(str(s.id) for s in listed)}
-    assert line["expected"] == {str(project.id): True, str(listed[0].id): True, absent: False}
+    assert line["expected"] == {
+        "projects": {str(project.id): True, str(listed[0].id): False, absent: False},
+        "secrets": {str(project.id): False, str(listed[0].id): True, absent: False},
+    }
     assert client.logins == [token]
     assert client.organizations == [ORGANIZATION, ORGANIZATION]
 
@@ -155,3 +158,18 @@ def test_a_malformed_id_is_a_usage_error(capsys: pytest.CaptureFixture[str], tok
     code, _ = _run(capsys, client, "--expect", "not-a-uuid")
     assert code == USAGE
     assert client.logins == []
+
+
+def test_a_missing_sdk_is_a_usage_error_and_home_is_restored(
+    capsys: pytest.CaptureFixture[str], token: str
+) -> None:
+    before = os.environ.get("HOME")
+
+    def missing() -> Any:
+        raise ModuleNotFoundError("No module named 'bitwarden_sdk'")
+
+    code = bws_reach_probe.main(["--organization", ORGANIZATION], missing)
+    line = json.loads(capsys.readouterr().out)
+    assert code == USAGE
+    assert line == {"event": "bws_reach_probe.refused", "error": bws_reach_probe.NO_SDK}
+    assert os.environ.get("HOME") == before

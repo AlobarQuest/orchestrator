@@ -79,9 +79,10 @@ directs.
 `scripts/bws_reach_probe.py` makes `_REACH`'s three SDK calls: log in, list projects, and list
 secrets for the organization. It runs them with a new client and a throwaway `HOME`. It prints one
 JSON line on stdout with the project ids, the secret ids, their counts, and, for each `--expect`
-id, whether it was listed. It never prints a secret's value, key or name, the token, or any digest
+id, whether it was listed as a project (`expected.projects`) and as a secret (`expected.secrets`). It never prints a secret's value, key or name, the token, or any digest
 of the token. It reads the token from `BWS_REACH_PROBE_TOKEN` only, never `BWS_ACCESS_TOKEN`. It
-exits 0 when it lists, 2 on a usage error (no token, a malformed id), and 3 when the SDK fails,
+exits 0 when it lists, 2 on a usage error (no token, a malformed id, the SDK not installed), and 3
+when the login or a listing fails,
 naming only the error's class. It imports the SDK lazily, since CI's `uv sync --frozen` doesn't
 install the `rotation-worker` extra. The tests use a fake client with random values, and none of
 them reaches the output.
@@ -105,8 +106,9 @@ way:
      --expect <project id> --expect <scratch secret id>
    ```
 
-4. **The session reads the result.** It's measured only if `expected[<project id>]` is `true`.
-   Then `expected[<scratch secret id>]` decides item 5, as the following section describes. The
+4. **The session reads the result.** It's measured only if `expected.projects[<project id>]` is
+   `true`. Then `expected.secrets[<scratch secret id>]` decides item 5, as the following section
+   describes. The
    session records the JSON line (ids and counts) in its report.
 5. **Devon revokes the token** and deletes the machine account. Then he deletes the Keychain item.
 
@@ -166,13 +168,13 @@ Each runs before the commit that sets `rotated_by_sds = true`:
 ## Tests and checks run
 
 - `make check` in the worktree, with the worktree's own database `orchestrator_test_hq_w_324`
-  migrated to head, `SECURITY_STANDARDS_DIR` at the fixture, and `PGTZ=UTC`: MAKE_CHECK_RESULT.
-- The two named row-test files and the new script test: TARGETED_RESULT.
+  migrated to head, `SECURITY_STANDARDS_DIR` at the fixture, and `PGTZ=UTC`: exit 0. Ruff reported "All checks passed!", pyright 0 errors, and pytest **14935 passed, 1 skipped** (11 warnings, 5 min 38 s). The first run, before the review fixes, was 14934 passed, 1 skipped..
+- The two named row-test files and the new script test: `test_secrets_broker_row.py`, `test_lane_token_helper_targets.py`, `test_bws_reach_probe.py` and `test_layer_manifest.py` together gave 25 passed. One mutation checked the leak test: making the script append each secret's key to its id failed both `test_no_token_key_or_value_reaches_the_output` and the listing test, and the file was restored.
 - In-process: `check_row` accepts the row with `helper_target`, `helper_target` answers
   `secrets-broker`, and `_first_issue({id: "2026-11-20"}, id)` is `False`.
-- **Token-shape grep of the diff:** TOKEN_GREP_RESULT.
-- `code-standards risk`: RISK_RESULT.
-- `/code-review`: REVIEW_RESULT.
+- **Token-shape grep of the diff:** `git diff origin/main...HEAD | grep -E '0\.[0-9a-f]{8}-'` matches nothing (exit 1), and the BWS write-guard hook allowed every edit.
+- `code-standards risk`: `high-risk` (auth: `tests/rotation_worker/test_lane_token_helper_targets.py`; secrets: `tests/rotation_worker/test_secrets_broker_row.py`). So I ran the vendor review as well as `/code-review`.
+- `/code-review`: four nits. I fixed two: a missing SDK is now a usage error (exit 2, with the install command) instead of exit 3, read as a failed login; and `expected` now reports projects and secrets separately, so a listed project can't be read as its secrets listed. One was already disproved: the `layers.toml` double-ownership worry is answered by the layer-manifest test passing in `make check`. I kept the private `_first_issue` import in the row test: the handoff asks for the proposer's derivation, and no public function exposes it without infraops. **Vendor review** (`/tmp/vendor-review-nmgqthjc`, diff `31527ecb…`): Review complete, 2 of 2 seats succeeded (claude and codex, both approve, 0 findings kept, 0 dropped); agy: off by configuration. The script fixes came after the vendor review, and the targeted tests and the second `make check` cover them.
 
 ## Files changed
 
