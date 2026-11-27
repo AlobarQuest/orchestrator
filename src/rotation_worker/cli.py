@@ -48,8 +48,6 @@ from getpass import getpass
 from pathlib import Path
 from typing import Any, Final, TextIO
 
-import httpx
-
 from rotation_worker.adapters import (
     ADAPTERS,
     AdapterContext,
@@ -113,12 +111,9 @@ CREDENTIAL_ID: Final = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 POSTGRES_PASSWORD: Final = re.compile(r"^[0-9a-f]{64}$")
 POSTGRES_CLASS: Final = "postgres-role-password"
 # The classes `probe` reads: each adapter's one-off proof of a key already kept.
-Probe = Callable[[Mapping[str, Any], Value, httpx.BaseTransport | None], dict[str, Any]]
-PROBES: Final[dict[str, Probe]] = {
-    anthropic_key.CLASS: lambda _row, key, transport: anthropic_key.probe_current(key, transport),
-    github_app_key.CLASS: lambda row, key, transport: github_app_key.probe_current(
-        row, key, transport
-    ),
+PROBES: Final[dict[str, Callable[[Mapping[str, Any], Value], dict[str, Any]]]] = {
+    anthropic_key.CLASS: lambda _row, key: anthropic_key.probe_current(key),
+    github_app_key.CLASS: github_app_key.probe_current,
 }
 BEARER_BYTES: Final = 48
 LOG = logging.getLogger("rotation_worker")
@@ -503,13 +498,7 @@ def _discard(out: TextIO) -> None:
     os.close(devnull)
 
 
-def probe(
-    config: Config,
-    credential_id: str,
-    mirror: RepoMirror,
-    out: TextIO,
-    transport: httpx.BaseTransport | None = None,
-) -> int:
+def probe(config: Config, credential_id: str, mirror: RepoMirror, out: TextIO) -> int:
     """Prove a kept key without minting, storing or recording anything: read the row at its
     repository's `main`, read its keeper with this instance's own store, and print the adapter's
     one-off answer as one JSON line. Never a value, a header carrying one, or a response body."""
@@ -544,7 +533,7 @@ def probe(
         print(f"probe: {credential_id}'s keeper is not readable by this identity", file=sys.stderr)
         return EXIT_UNREADABLE
     try:
-        found = prove(entry.credential, key, transport)
+        found = prove(entry.credential, key)
     except ContractError as refusal:
         print(f"probe: {scrub(str(refusal))}", file=sys.stderr)
         return EXIT_UNREADABLE

@@ -144,13 +144,25 @@ def store(monkeypatch: pytest.MonkeyPatch) -> WatchedStore:
     return watched
 
 
+@pytest.fixture
+def answers(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The simulated service each request reaches: the probe builds its adapters' real clients,
+    and only their transport's last hop is answered here instead of by the network."""
+    handlers: list[Any] = []
+
+    def answer(_transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        return handlers[0](request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", answer)
+    return handlers
+
+
 def _probe(
-    tmp_path: Path, mirror: RepoMirror, credential_id: str, handle: Any
+    tmp_path: Path, mirror: RepoMirror, credential_id: str, handle: Any, answers: list[Any]
 ) -> tuple[int, str, list[dict[str, Any]]]:
+    answers[:] = [handle]
     out = io.StringIO()
-    code = cli.probe(
-        _config(tmp_path), credential_id, mirror, out, transport=httpx.MockTransport(handle)
-    )
+    code = cli.probe(_config(tmp_path), credential_id, mirror, out)
     text = out.getvalue()
     return code, text, [json.loads(line) for line in text.splitlines()]
 
@@ -159,13 +171,13 @@ def _probe(
 
 
 def test_the_anthropic_probe_sends_get_v1_models_alone_once_per_header_form(
-    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
 ) -> None:
     anthropic = Anthropic()
     key = anthropic.issue()
     _keep(store, Value(key))
     _registry(origins, ANTHROPIC_ROW)
-    code, _, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle)
+    code, _, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle, answers)
     assert code == 0
     sent = anthropic.requests
     assert [(r.method, str(r.url)) for r in sent] == [
@@ -186,12 +198,12 @@ def test_the_anthropic_probe_sends_get_v1_models_alone_once_per_header_form(
 
 
 def test_the_anthropic_line_is_statuses_and_the_workspace_header_only(
-    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
 ) -> None:
     anthropic = Anthropic()
     _keep(store, Value(anthropic.issue()))
     _registry(origins, ANTHROPIC_ROW)
-    _, text, lines = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle)
+    _, text, lines = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle, answers)
     assert text.endswith("\n") and len(lines) == 1
     assert lines[0] == {
         "credential_id": ANTHROPIC_ID,
@@ -205,23 +217,23 @@ def test_the_anthropic_line_is_statuses_and_the_workspace_header_only(
 
 
 def test_both_header_forms_are_measured_when_anthropic_takes_both(
-    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
 ) -> None:
     anthropic = Anthropic(takes_bearer=True)
     _keep(store, Value(anthropic.issue()))
     _registry(origins, ANTHROPIC_ROW)
-    _, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle)
+    _, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle, answers)
     assert line["key_x_api_key"]["status"] == line["key_bearer"]["status"] == 200
     assert line["control_x_api_key"]["status"] == line["control_bearer"]["status"] == 401
 
 
 def test_a_malformed_workspace_header_is_never_echoed(
-    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
 ) -> None:
     anthropic = Anthropic()
     _keep(store, Value(anthropic.issue("not a workspace id <script>")))
     _registry(origins, ANTHROPIC_ROW)
-    _, text, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle)
+    _, text, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle, answers)
     assert line["key_x_api_key"]["anthropic-workspace-id"] == "(a malformed id)"
     assert "<script>" not in text
 
@@ -233,13 +245,14 @@ def test_no_key_control_or_header_reaches_stdout_stderr_or_a_log_line(
     store: WatchedStore,
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
+    answers: list[Any],
 ) -> None:
     caplog.set_level(logging.DEBUG)
     anthropic = Anthropic()
     key = anthropic.issue()
     _keep(store, Value(key))
     _registry(origins, ANTHROPIC_ROW)
-    _, text, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle)
+    _, text, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle, answers)
     captured = capsys.readouterr()
     shown = " ".join([text, captured.out, captured.err, caplog.text])
     sent = {_sent(request) for request in anthropic.requests}
@@ -251,12 +264,12 @@ def test_no_key_control_or_header_reaches_stdout_stderr_or_a_log_line(
 
 
 def test_a_request_with_no_answer_names_its_failure_s_type_and_exits_1(
-    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
 ) -> None:
     anthropic = Anthropic(down=True)
     _keep(store, Value(_key()))
     _registry(origins, ANTHROPIC_ROW)
-    code, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle)
+    code, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle, answers)
     assert code == 1
     assert line["key_x_api_key"] == {"status": None, "no_answer": "ConnectError"}
 
@@ -280,12 +293,12 @@ def test_build_provider_and_check_row_still_refuse_the_row_without_a_workspace()
 
 
 def test_the_github_probe_sends_the_working_proof_s_calls_alone(
-    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
 ) -> None:
     github = GitHub()
     _keep(store, _stored(github.issue()))
     _registry(origins, GITHUB_ROW)
-    code, _, [line] = _probe(tmp_path, mirror, GITHUB_ID, github.handle)
+    code, _, [line] = _probe(tmp_path, mirror, GITHUB_ID, github.handle, answers)
     assert code == 0
     # `check_scope`'s calls as the rotation sends them; the mint resolves the installation itself.
     assert [(r.method, r.url.path) for r in github.requests] == [
@@ -315,13 +328,14 @@ def test_a_refused_github_proof_names_statuses_and_ids_only_and_exits_1(
     store: WatchedStore,
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
+    answers: list[Any],
 ) -> None:
     caplog.set_level(logging.DEBUG)
     github = GitHub(reach=[PROOF, "AlobarQuest/other"])
     stored = _stored(github.issue())
     _keep(store, stored)
     _registry(origins, GITHUB_ROW)
-    code, text, [line] = _probe(tmp_path, mirror, GITHUB_ID, github.handle)
+    code, text, [line] = _probe(tmp_path, mirror, GITHUB_ID, github.handle, answers)
     assert code == 1
     assert line["status"] == "refused"
     assert line["refusal"] == f"the proof token doesn't reach {PROOF} alone"
@@ -336,12 +350,12 @@ def test_a_refused_github_proof_names_statuses_and_ids_only_and_exits_1(
 
 
 def test_a_github_row_without_its_ids_refuses_with_nothing_sent(
-    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
 ) -> None:
     github = GitHub()
     _keep(store, _stored(github.issue()))
     _registry(origins, GITHUB_ROW.replace(f"app_id = {APP}\n", ""))
-    code, text, _ = _probe(tmp_path, mirror, GITHUB_ID, github.handle)
+    code, text, _ = _probe(tmp_path, mirror, GITHUB_ID, github.handle, answers)
     assert (code, text, github.requests) == (2, "", [])
 
 
@@ -359,12 +373,13 @@ def test_an_unreadable_keeper_exits_2_saying_so_and_nothing_else(
     capsys: pytest.CaptureFixture[str],
     credential_id: str,
     rows: str,
+    answers: list[Any],
 ) -> None:
     held = _key()
     monkeypatch.setattr(cli, "open_store", lambda config: UnreadableStore(held))
     _registry(origins, rows)
     sent: list[httpx.Request] = []
-    code, text, _ = _probe(tmp_path, mirror, credential_id, sent.append)
+    code, text, _ = _probe(tmp_path, mirror, credential_id, sent.append, answers)
     captured = capsys.readouterr()
     assert (code, text, captured.out, sent) == (2, "", "", [])
     assert captured.err == f"probe: {credential_id}'s keeper is not readable by this identity\n"
@@ -376,12 +391,13 @@ def test_a_keeper_another_store_keeps_is_not_readable_by_this_identity(
     mirror: RepoMirror,
     store: WatchedStore,
     capsys: pytest.CaptureFixture[str],
+    answers: list[Any],
 ) -> None:
     """The Keychain instance's store locates no BWS keeper, and reads through no other identity."""
     store.read_back_kind = "keychain"
     _registry(origins, ANTHROPIC_ROW)
     sent: list[httpx.Request] = []
-    code, _, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, sent.append)
+    code, _, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, sent.append, answers)
     assert (code, sent) == (2, [])
     assert "not readable by this identity" in capsys.readouterr().err
 
@@ -398,6 +414,7 @@ def test_the_probe_writes_nothing(
     credential_id: str,
     rows: str,
     service: str,
+    answers: list[Any],
 ) -> None:
     if service == "anthropic":
         anthropic = Anthropic()
@@ -409,7 +426,7 @@ def test_the_probe_writes_nothing(
         handle = github.handle
     before = dict(store.secrets)
     _registry(origins, rows)
-    code, _, _ = _probe(tmp_path, mirror, credential_id, handle)
+    code, _, _ = _probe(tmp_path, mirror, credential_id, handle, answers)
     assert code == 0
     assert store.writes == [] and store.secrets == before and store.deleted == []
     assert sorted(p.name for p in tmp_path.iterdir()) == ["mirrors", "origins"]
@@ -421,6 +438,7 @@ def test_a_row_of_another_class_is_refused_before_the_store_opens(
     mirror: RepoMirror,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    answers: list[Any],
 ) -> None:
     def no_store(config: Config) -> MemoryStore:
         raise AssertionError("the store was opened")
@@ -428,7 +446,7 @@ def test_a_row_of_another_class_is_refused_before_the_store_opens(
     monkeypatch.setattr(cli, "open_store", no_store)
     _registry(origins, OTHER_ROW)
     sent: list[httpx.Request] = []
-    code, _, _ = _probe(tmp_path, mirror, "rotation-canary", sent.append)
+    code, _, _ = _probe(tmp_path, mirror, "rotation-canary", sent.append, answers)
     assert (code, sent) == (2, [])
     assert "the probe reads anthropic-api-key and github-app-private-key rows" in (
         capsys.readouterr().err
@@ -436,6 +454,7 @@ def test_a_row_of_another_class_is_refused_before_the_store_opens(
 
 
 def test_the_entry_point_runs_the_probe_with_the_configured_store(
+    answers: list[Any],
     tmp_path: Path,
     origins: Origins,
     mirror: RepoMirror,
@@ -450,11 +469,7 @@ def test_the_entry_point_runs_the_probe_with_the_configured_store(
     monkeypatch.setattr(cli, "configure", lambda: None)
     monkeypatch.setattr(cli, "RepoMirror", lambda root: mirror)
 
-    def answer(_transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
-        return anthropic.handle(request)
-
-    # The verb as the host runs it: no test transport, so the adapter's real client is built.
-    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", answer)
+    answers[:] = [anthropic.handle]
     assert cli.main(["probe", ANTHROPIC_ID, "--config", str(tmp_path / "c.toml")]) == 0
     (line,) = capsys.readouterr().out.splitlines()
     assert json.loads(line)["key_x_api_key"]["status"] == 200

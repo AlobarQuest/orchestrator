@@ -853,10 +853,6 @@ OUTBOUND_ALLOWLIST = {
     # tests/rotation_worker/test_anthropic_key.py and test_probe.py. Its egress is not the
     # orchestrator's.
     Path("src/rotation_worker/adapters/anthropic_key.py"),
-    # The rotation executor's commands. `httpx` is only the annotation of the test transport
-    # `probe` hands to the adapters' own one-off proofs, which send every request; the module
-    # builds no client. Pinned by tests/rotation_worker/test_probe.py.
-    Path("src/rotation_worker/cli.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but
