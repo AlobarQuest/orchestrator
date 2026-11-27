@@ -110,9 +110,10 @@ Before the test changes, the removal failed 200 tests. Each change follows.
 
 ## Checks run, with results
 
-- **`make check`** (worktree DB `orchestrator_test_hq_w_331`, `SECURITY_STANDARDS_DIR` at the
-  fixture, `PGTZ=UTC`): exit 0. ruff and pyright are clean (0 errors). **15,014 passed, 1
-  skipped.** For comparison, the base suite collected 15,084 (14,883 passed and 200 failed after
+- **`make check`** on the clean committed head `4d7846c6` (worktree DB `orchestrator_test_hq_w_331`,
+  `SECURITY_STANDARDS_DIR` at the fixture, `PGTZ=UTC`): exit 0. ruff and pyright are clean (0
+  errors). **15,015 passed, 1 skipped.** `4d7846c6` adds only this report to `bb633c67`'s code.
+  `git rev-parse` gives the same SHA for `HEAD` and `origin/hq/broker-lane-token-rows-removal`. For comparison, the base suite collected 15,084 (14,883 passed and 200 failed after
   the removal, plus 1 skipped). Before the review fix, the affected directories passed 2,645
   tests.
 - **Fails with a row restored:** I copied my file to a protected location and spliced
@@ -184,9 +185,49 @@ Before the test changes, the removal failed 200 tests. Each change follows.
   - The exact-reach bind through `build_provider` on real lane rows: now on a no-project copy of
     the broker row.
   - The standing approval's lane-token issue-plan path: now on `LANE_TOKEN_ROW`.
+- `test_lane_token_helper_targets.py` still passes but now covers one row.
+  `test_every_lane_holding_its_own_token_names_its_helper_target` asserts nothing about any lane.
+  `test_no_broker_lane_names_one_...` keeps only its assertion on the broker's row.
+  `test_each_target_is_the_service_that_loads_the_row_s_variable` and the package-equality test
+  each run once, on the broker's row.
 - These code paths stay live code with no real subject: `bws_lane_token`'s issue plan, its exact
   reach, `sharing_reach`, the standing approval's `bws-lane-token` branch, and
   `deploy.lanes_in_registry`, which returns the empty set on the real file.
+
+## Concerns: what scheduled readers do with a removed id (HQ to confirm live state)
+
+I read each scheduled reader's missing-row path. None skips silently, and none needs a code change
+to remove the rows. Each one reacts only if a live input still names a removed id. I can't see
+live state, so HQ has to confirm each input.
+
+- **Rotation proposer** (`rotation_proposer/cli.py`):
+  - What it does: `_pass` sends each due item that infraops reports as handed over through
+    `_entry`. That raises `RegistryError(... no registry entry)`, which becomes an `error` outcome:
+    exit `EXIT_FINDINGS` (3) and, with `--submit`, the keyed alert
+    `rotation-finding:<id>:error`.
+  - What triggers it: infraops still reporting one of the 13 ids as due and handed over. infraops
+    builds that from its own read of the registry file. Until it re-reads `main` after the merge,
+    any of the 13 it still reports as due raises this alert.
+  - HQ to confirm: that infraops serves no `cred.rotation-requested` finding for the 13 ids, or
+    accept alerts until its next read.
+  - `_retired_records` skips a missing row quietly.
+- **Rotation decomposer** (`rotation_decomposer/cli.py`, `_revision`):
+  - What it does: an approved `rotation-<lane>-bws-token` revision with no units and no proposal
+    gets `refused` ("no registry row names …"). That exits `FOUND` (2), which fails the outcome
+    alarm.
+  - A revision that already has units or a proposal returns before the registry is read.
+  - HQ to confirm: no such revision waits for decomposition.
+- **Work carrier** (`work_carrier`):
+  - What it does: a `rotation-<lane>-bws-token` work record is held as `NOT_WORKABLE` by
+    `workability._opted_in` ("no registry row hands … to the SDS"). The standing-approval carry
+    form is refused through `standing.check` (`RegistryError`). Either exits `EXIT_FINDINGS` (3).
+  - HQ to confirm: change-manager holds no open work record for the 13 packages.
+- **Rotation executor** (`rotation_worker/worker.py`):
+  - What it does: a claim for a unit whose credential id is gone is refused (`check_unit` raises
+    `RegistryError`, in `REFUSALS`), and `_refuse` fails the unit. `_before_step` calls
+    `find_credential` without a catch, so a unit already in flight when its row disappears raises.
+  - HQ to confirm: no unit for the 13 ids is ready, claimed or in flight. The handoff says HQ holds
+    every `rotation-<lane>-bws-token` package.
 
 ## Concerns: places that still name a removed row id or a retired keeper UUID (unchanged)
 
@@ -223,17 +264,39 @@ Where they're still named:
   `rotation-decomposer:15`, `inert-landing:15`, `bump-proposer:19`, `work-carrier:20` and
   `rotation-proposer:21`. The variables are deleted, so the comments are false.
 - **intent-packages** (local checkout `00b32ef`, `main`; not fetched, so `origin` may be ahead):
-  - `packages/rotation-<lane>-bws-token/package.yaml` and `lineage.yaml` for all 13 lanes.
-  - `tests/test_approval_policy_rotation.py`.
-  - `tests/fixtures/standing_approval/rotation-revision-watcher-bws-token/package.yaml`.
-  - `tests/fixtures/package_hashes.json`.
-  - `docs/superpowers/reports/adr-0055-a22-increment-1-report.md`.
-  - The packages are approved and name rows that no longer exist. If the proposer or the carrier
-    reads them, a missing-row refusal or a `RegistryError` is the expected answer.
+  - `packages/rotation-<lane>-bws-token/lineage.yaml:1` for all 13 lanes.
+  - `packages/rotation-<lane>-bws-token/package.yaml`: lines 2, 3, 22, 24, 27, 32, 38, 57, 129 and
+    163 for 12 lanes. `rotation-rotation-decomposer-bws-token/package.yaml` uses lines 2, 3, 22,
+    24, 27, 31, 39, 58, 136 and 170.
+  - `tests/test_approval_policy_rotation.py:33`.
+  - `tests/fixtures/standing_approval/rotation-revision-watcher-bws-token/package.yaml`: the same
+    10 lines as the packages.
+  - `tests/fixtures/package_hashes.json`: lines 25, 35, 38, 41, 46, 48, 50, 56, 58, 61, 63, 65
+    and 67.
+  - `docs/superpowers/reports/adr-0055-a22-increment-1-report.md`: lines 117 and 173.
+  - The packages name rows that no longer exist. What each reader does with them is in the
+    preceding section.
 - **infraops-mcp-server** (local checkout `0fe5b92`, `main`): no file names a removed id or keeper
   UUID. I didn't read infraops' live rotation state (no MCP or VPS call was allowed), so any
   `last_rotated` or rotation-state entry it holds for the 13 ids is unchecked. Once the nightly
   run reads this file from `main`, those ids stop appearing in its findings.
+- **sds-hq** (local checkout `c759b847`, read with `grep` only; the source of this handoff):
+  - Tests: `tests/test_standing_approve.py:769, 780, 800` and `tests/test_chain.py:17, 443, 444,
+    456, 464`.
+  - Plans and reports: `docs/superpowers/plans/2026-11-12-phase1-speedup.md:63`,
+    `docs/superpowers/reports/phase1-speedup-chain-report.md:117-118` and
+    `lane-credential-standing-approval-report.md:169`.
+  - Gate records under `state/gates/`: `intent-packages-reconcile-2.md`,
+    `landing-ledger-token-issue.md`, `deploy-watcher-token-issue.md` and the `*-identity.md` gates.
+    The grep listed the first 40 matching lines; these are HQ's records.
+  - `codebase-review` (`40d759b`) holds a copy of sds-hq under `.src/sds-hq/` with the same matches,
+    plus `findings/orchestrator.md:1112`.
+- **Other checkouts:** I searched every git checkout directly under `~/Projects`, except the
+  orchestrator main tree (not to be touched) and the two listed earlier. No other one matched.
+- **CLAUDE.md files** in this repository: the lane-token rules in
+  `src/rotation_worker/CLAUDE.md` (lines 44, 107, 116 and 126) describe the mechanism, not the 13
+  rows, and stay true. No CLAUDE.md, exit manifest or `docs/` file names a removed or renamed test
+  function. `docs/history` names no removed id or keeper UUID.
 - **This repository, outside the change:**
   - Tests that use a removed id as a synthetic string and don't read the registry:
     - `tests/contract/test_consumer_proof_note.py:40` (`execution-watch-bws-token`).
