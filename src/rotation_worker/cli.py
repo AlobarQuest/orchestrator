@@ -28,7 +28,7 @@ class.
 (ADR-0055 amendment 36 exit check 1) or a GitHub App key (amendment 35 exit check 2). It reads the
 row's keeper with this instance's own store, sends only its adapter's confined requests, and prints
 one JSON line of statuses and non-secret ids. It stores, mints, revokes and records nothing. Exit 0
-when every request answered and a GitHub proof passed, 1 when one didn't, 2 when it can't run.
+when the line's `passed` is true, 1 when it's false, 2 when it can't run.
 """
 
 from __future__ import annotations
@@ -522,8 +522,8 @@ def probe(config: Config, credential_id: str, mirror: RepoMirror, out: TextIO) -
     except (ConfigError, StoreError) as error:
         print(f"probe: {scrub(str(error))}", file=sys.stderr)
         return EXIT_UNREADABLE
-    keeper_id = store.locate(keeper)
     try:
+        keeper_id = store.locate(keeper)
         if keeper_id is None:
             raise StoreError("the keeper isn't kept in this instance's store")
         key = store.read(keeper_id)
@@ -539,11 +539,7 @@ def probe(config: Config, credential_id: str, mirror: RepoMirror, out: TextIO) -
         return EXIT_UNREADABLE
     line = {"credential_id": credential_id, "class": credential_class, "keeper": keeper_id, **found}
     out.write(scrub(json.dumps(line)) + "\n")
-    answered = found.get("status") == "ok" or (
-        credential_class == anthropic_key.CLASS
-        and all(isinstance(answer.get("status"), int) for answer in found.values())
-    )
-    return EXIT_EQUAL if answered else EXIT_DIFFERENT
+    return EXIT_EQUAL if found.get("passed") is True else EXIT_DIFFERENT
 
 
 def pg_restore(setup: Setup, credential_id: str) -> int:

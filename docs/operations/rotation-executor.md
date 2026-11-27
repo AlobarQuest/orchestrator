@@ -1328,8 +1328,10 @@ runuser -u rotation -- env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker \
 
 The host must run a commit that has the verb ("Install or update it on the VPS host").
 
-- **Exit 0**: every request answered, and for a GitHub App key the proof passed.
-- **Exit 1**: the line is printed, and a request got no answer or the GitHub proof was refused.
+- **Exit 0**: the line's `passed` is true. For an Anthropic key, the key answered 200 as
+  `x-api-key` and neither control answered 200; for a GitHub App key, the working proof passed.
+- **Exit 1**: the line is printed with `passed` false: a status is wrong, a request got no answer,
+  or the GitHub proof was refused. Read the line for which.
 - **Exit 2**: nothing is printed to stdout. The row can't be read, its class isn't one of the two,
   or its keeper is unreadable. For an unreadable keeper the one message is `probe: <id>'s keeper
   is not readable by this identity`, and the probe never reads through another identity's token,
@@ -1349,7 +1351,7 @@ carries one of the two headers, never both. The line has this shape:
  "key_x_api_key": {"status": 200, "anthropic-workspace-id": "wrkspc_..."},
  "key_bearer": {"status": 401, "anthropic-workspace-id": null},
  "control_x_api_key": {"status": 401, "anthropic-workspace-id": null},
- "control_bearer": {"status": 401, "anthropic-workspace-id": null}}
+ "control_bearer": {"status": 401, "anthropic-workspace-id": null}, "passed": true}
 ```
 
 A request with no answer reads `{"status": null, "no_answer": "<httpx exception type>"}`. A
@@ -1373,10 +1375,10 @@ The token lives only in memory. The line has this shape:
 ```json
 {"credential_id": "lanes-read-app-private-key", "class": "github-app-private-key",
  "keeper": "<uuid>", "app_id": <the row's app_id>, "installation_id": <the row's installation_id>,
- "proof_repository": "<the row's proof_repository>", "status": "ok"}
+ "proof_repository": "<the row's proof_repository>", "status": "ok", "passed": true}
 ```
 
-A refused proof reads `"status": "refused"` with a `refusal` naming the request, its status or
+A refused proof reads `"status": "refused"` and `"passed": false`, with a `refusal` naming the request, its status or
 the ids, and exits 1. Exit check 2 reads `status` per row. Both keepers are in
 `SDS / Lane Apps` until Devon moves them (D-84 item 8 A), which the root can't read, so until then
 the probe exits 2 with "not readable by this identity". That is the answer to record, not a

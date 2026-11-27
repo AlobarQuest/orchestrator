@@ -213,6 +213,7 @@ def test_the_anthropic_line_is_statuses_and_the_workspace_header_only(
         "key_bearer": {"status": 401, "anthropic-workspace-id": None},
         "control_x_api_key": {"status": 401, "anthropic-workspace-id": None},
         "control_bearer": {"status": 401, "anthropic-workspace-id": None},
+        "passed": True,
     }
 
 
@@ -261,6 +262,24 @@ def test_no_key_control_or_header_reaches_stdout_stderr_or_a_log_line(
         assert value not in shown
         assert value[len(anthropic_key.KEY_PREFIX) :][:16] not in shown
     assert "Bearer" not in shown and "x-api-key" not in shown.replace("x_api_key", "")
+
+
+def test_a_dead_key_or_an_accepted_control_does_not_pass(
+    tmp_path: Path,
+    origins: Origins,
+    mirror: RepoMirror,
+    store: WatchedStore,
+    answers: list[Any],
+) -> None:
+    """Exit 0 means the exit check passed, not only that every request got an answer."""
+    _registry(origins, ANTHROPIC_ROW)
+    _keep(store, Value(_key()))
+    code, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, Anthropic().handle, answers)
+    assert (code, line["key_x_api_key"]["status"], line["passed"]) == (1, 401, False)
+    anthropic = Anthropic()
+    _keep(store, Value(anthropic.issue()))
+    code, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, Anthropic(every=200).handle, answers)
+    assert (code, line["control_x_api_key"]["status"], line["passed"]) == (1, 200, False)
 
 
 def test_a_request_with_no_answer_names_its_failure_s_type_and_exits_1(
@@ -318,6 +337,7 @@ def test_the_github_probe_sends_the_working_proof_s_calls_alone(
         "installation_id": INSTALLATION,
         "proof_repository": PROOF,
         "status": "ok",
+        "passed": True,
     }
 
 
@@ -383,6 +403,30 @@ def test_an_unreadable_keeper_exits_2_saying_so_and_nothing_else(
     captured = capsys.readouterr()
     assert (code, text, captured.out, sent) == (2, "", "", [])
     assert captured.err == f"probe: {credential_id}'s keeper is not readable by this identity\n"
+
+
+class UnlocatableStore(MemoryStore):
+    """A keeper destination the store can't parse: `locate` itself raises."""
+
+    def locate(self, consumer: Any) -> str | None:
+        raise KeyError("uuid")
+
+
+def test_a_keeper_the_store_can_t_locate_exits_2_without_a_traceback(
+    tmp_path: Path,
+    origins: Origins,
+    mirror: RepoMirror,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    answers: list[Any],
+) -> None:
+    monkeypatch.setattr(cli, "open_store", lambda config: UnlocatableStore())
+    _registry(origins, ANTHROPIC_ROW)
+    code, _, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, Anthropic().handle, answers)
+    assert code == 2
+    assert capsys.readouterr().err == (
+        f"probe: {ANTHROPIC_ID}'s keeper is not readable by this identity\n"
+    )
 
 
 def test_a_keeper_another_store_keeps_is_not_readable_by_this_identity(

@@ -190,8 +190,8 @@ def probe_current(
     try:
         provider.working_proof(key)
     except ContractError as refusal:
-        return {**found, "status": "refused", "refusal": str(refusal)}
-    return {**found, "status": "ok"}
+        return {**found, "status": "refused", "refusal": str(refusal), "passed": False}
+    return {**found, "status": "ok", "passed": True}
 
 
 def build_provider(
