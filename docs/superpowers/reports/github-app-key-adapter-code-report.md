@@ -163,7 +163,7 @@ Devon, so I didn't stop.
   (13 minutes 29 seconds). An earlier run failed two tests: the isolation guard
   (`test_out_of_process_isolation.py`, fixed by naming `cryptography` in the rotation executor's
   row) and one test I had edited mid-run.
-- **CI on PR #826** at head `377f2304`: all three checks pass. The `Quality` job collected 15,075
+- **CI on PR #826** at `18c0ac02` (the code at `c75ac384` plus report commits): all three checks pass. The `Quality` job collected 15,075
   tests: 15,061 passed and 14 skipped (run 46034754615). The total matches the local run; the
   skipped count differs because CI's environment skips more.
 - **Targeted runs**, all passing:
