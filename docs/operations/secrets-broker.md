@@ -61,6 +61,110 @@ that gap fails its read and runs again on its next schedule. Afterwards, check t
 one `listening` line per allowlisted lane, and run one lane's `lane-run --read` before you call the
 move verified.
 
+## Rotate the broker's token
+
+ADR-0055 amendment 34 (D-81 (2) B, D-83). The broker's token, row `secrets-broker-bws-token` in
+`.cred-consumers.toml`, rotates through the rotation executor's `bws-lane-token` adapter, with the
+loaded-fingerprint proof. Devon mints and revokes; the executor binds, stores, writes the variable
+and proves; a session restarts the broker. The row's `created` is the age anchor, so the proposer
+generates a rotation plan, and Devon approves each package revision by name: no standing approval
+covers a rotation plan. The row is `rotated_by_sds = false` until amendment 34 item 9's exit checks
+pass, so until then the proposer doesn't generate the package.
+
+### Install the helper target
+
+Do this once, as root on `prod-vps`, before the first rotation. The rotation executor's VPS helper
+reads the broker's loaded token only through a target in its root-owned
+`/etc/sds-pg-rotate/targets.toml` (`docs/operations/rotation-executor.md`, "Install the helper").
+
+1. Confirm the container's name: `docker ps --format '{{.Names}}' | grep '^secrets-broker-'` must
+   print exactly `secrets-broker-wogvks6obmvv9fdotlgnw7r3`. If it prints another name, stop: the
+   row's derivation (`<service>-<resource uuid>`) is wrong for the broker.
+2. Append the consumers-only target to `/etc/sds-pg-rotate/targets.toml`, keeping the file
+   root-owned and mode 0600. The `env` is the name the container loads (`BWS_ACCESS_TOKEN`,
+   `lanes/secrets-broker/compose.yaml`), not the Coolify key:
+
+   ```toml
+   [target.secrets-broker]
+
+   [[target.secrets-broker.consumer]]
+   container = "secrets-broker-wogvks6obmvv9fdotlgnw7r3"
+   env = "BWS_ACCESS_TOKEN"
+   ```
+
+3. Read it: `echo '{"verb": "loaded", "target": "secrets-broker"}' | /usr/local/sbin/sds-pg-rotate`
+   answers one consumer, `secrets-broker-wogvks6obmvv9fdotlgnw7r3/BWS_ACCESS_TOKEN`, with a
+   non-empty fingerprint (the sha256's first 16 hex characters, a colon and the length, never the
+   value). That is amendment 34's first exit check.
+
+### Run a rotation
+
+1. **Approve the revision** (Devon). The proposer generates the package's revision when the token
+   is due; Devon approves it by name.
+2. **Mint** (Devon). In the BWS web app, Devon creates a new access token for machine account
+   `lane-secrets-broker` and pastes it into the inbox (`Rotation / Inbox`), never into the Coolify
+   variable or the keeper. The old token stays live.
+3. **Bind** (executor, before the claim). The inbox binds the pasted token only when a fresh login
+   accepts it, what it sees is exactly the row's declared reach, and no other lane token's keeper
+   holds it. A token that doesn't bind stays in the inbox and nothing is written.
+4. **`store`** (executor). `verify_new`, then the keeper write and readback, then one `PATCH` of
+   `SECRETS_BROKER_BWS_ACCESS_TOKEN` on service `wogvks6obmvv9fdotlgnw7r3`, with no restart. The
+   old value moves to the rotation's quarantine secret in `Rotation / Work`. The broker keeps
+   running on the old token. The claim waits for the `live_estate` window.
+5. **Restart** (session). After `store` completes, and well inside the `verify` unit's 48-hour
+   clock:
+   1. Read the self-hosted Healthchecks listing for every broker lane's check (each lane's
+      `sds-<lane>`). Hold while any of them shows `started`, as the deploy command waits for a
+      lane's quiet slot.
+   2. Don't restart near the change window's daily 04:00 New York `--submit` pass
+      (`lanes/change-window/crontab`): its broker read is fatal to the pass.
+   3. Announce the act, then run infraops `coolify_deploy` on `wogvks6obmvv9fdotlgnw7r3` at the tag
+      the broker already runs (read `SDS_LANES_IMAGE_TAG`; don't change it). This is the second
+      call of "Move the broker to a new release". Never use `coolify_control` `restart` (it prunes
+      images while starting, workspace invariant #3), and never `deploy_orchestrator.py --lane`,
+      which has no broker lane.
+   4. Check the broker's log for one `listening` line per allowlisted lane, and run one lane's
+      `lane-run --read`; it prints `ok`.
+6. **`verify`** (executor). The unit waits unclaimed until the helper's `loaded` for
+   `secrets-broker` equals the keeper's fingerprint, then claims and reads it once more. Its
+   completion sends the "Revoke the old … value" alert. No revoke alert is sent before that match,
+   so the old token is never revoked before the broker holds the new one (Infra Brain 1032, R10).
+7. **Revoke** (Devon). In the BWS web app, Devon revokes the old token.
+8. **`confirm`** (executor). `confirm_dead` proves the old token refused, then deletes the
+   quarantine and staging secrets.
+
+While the broker restarts, which takes seconds, no lane has a socket. A lane pass that starts in
+that gap fails its read and runs again on its next schedule.
+
+### A failed start
+
+D-83 12 A: no machine rollback; a failed start is fixed forward. If the broker can't read with the
+new token, it exits 2 or answers `bws_failed`, and every broker lane's reads fail. The bind already
+proved the token logs in and sees the declared reach, so a failed start means the token was revoked
+since, or a Coolify fault. Devon mints again and the rotation is retried; the broker lanes' reads
+fail until that rotation completes. The adapter has no restore verb. Until `confirm`, the old value
+stays in the rotation's quarantine secret.
+
+### After a leak
+
+After an exposure, Devon may revoke the old token first (amendment 19 item 10; Infra Brain 1032),
+and the adapter accepts the old token refused. For the broker, the running token is then dead, so
+every broker lane's reads fail (`bws_failed`) until `store` completes and the session restarts the
+broker. Three things bound that outage: the executor's five-minute pass picks up the paste, the
+`store` claim waits for the `live_estate` window, and the outage lasts at least until Devon mints
+and pastes the new token. An exposure response can therefore need the hand route instead (Devon
+pastes the token into the variable and the keeper, and a session restarts the broker), outside
+the window. That's Devon's call at the time.
+
+### What the root reaches through this keeper
+
+D-83 10 A, accepted for the development phase and reopened with D-64 in the security phase. The
+broker's keeper is in `Rotation / Keepers`, which the executor's root identity reads and writes.
+So T1 includes this: whoever holds the root holds the broker's token, and through it every secret
+the broker reads, the SYSTEM and VERIFIER bearers in `SDS Operator` included. The route adds no
+grant: each rotation uses the token to list ids, reads no value with it, and writes it to the
+broker's variable.
+
 ## Add a lane
 
 All in one reviewed PR, as for any lane code:
@@ -146,6 +250,11 @@ broker failed on a connection, and the lane sees no reply).
 
 Three lanes on the VPS still read with their own tokens: `bump-proposer`, `revision-watcher` and
 `work-carrier`. They, and every Mac launcher, run unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN` Coolify variables
-and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5). The broker's own
-token is the one BWS token that stays manual until Phase C; its registry row,
-`secrets-broker-bws-token` in `.cred-consumers.toml`, is `rotated_by_sds = false` until then.
+and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5).
+
+The broker's own token rotates through the executor ("Rotate the broker's token"). It is in the
+unlock tier (ADR-0055 amendment 34 item 1, D-81 (1) A, D-83 11 B), which names two credentials:
+the broker's token, `secrets-broker-bws-token`, and the executor's root token, since anything
+holding either reads for others. The tier is a name with no mechanism: each mint, grant and revoke
+of the broker's token is Devon's act in the BWS web app, and the root token stays hand-rotated.
+The registry row's comment is the tier's mark.

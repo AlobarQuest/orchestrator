@@ -117,6 +117,8 @@
   and fails the claimed step, never passes: that match is the consumer attestation the revoke
   waits on (Infra Brain 1032). A row without `helper_target`, and every issue, keeps the `PATCH`
   proof (D-27). No broker lane's row may get `helper_target`: its container loads no
-  `BWS_ACCESS_TOKEN`, so the match could never succeed. Detail:
-  `docs/operations/rotation-executor.md`, "Lane tokens and ping URLs"; ADR-0055 amendments 29 and
-  31.
+  `BWS_ACCESS_TOKEN`, so the match could never succeed. The broker's own token
+  (`secrets-broker-bws-token`) is the one row that isn't a lane and names a target,
+  `secrets-broker`, the broker's container. Detail:
+  `docs/operations/rotation-executor.md`, "Lane tokens and ping URLs"; ADR-0055 amendments 29, 31
+  and 34.

@@ -1,8 +1,9 @@
 """The lane secrets broker's registry row, read by the code that acts on it.
 
-ADR-0055 amendment 30 item 8: the broker's own token is the one BWS token that stays manual until
-Phase C, so its row is not handed to the SDS. The row is read here as the executor reads it, from
-this repository's own `.cred-consumers.toml`.
+ADR-0055 amendment 34: the broker's own token rotates through the `bws-lane-token` adapter's
+rotation plan, anchored on the date Devon pasted the first token, and its row is not handed to the
+SDS until amendment 34 item 9's exit checks pass. The row is read here as the executor reads it,
+from this repository's own `.cred-consumers.toml`.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from rotation_proposer.cli import _first_issue
+from rotation_proposer.generate import plan_for
 from rotation_worker.adapters import bws_lane_token
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.registry import (
@@ -107,6 +110,17 @@ def test_no_other_lane_token_row_declares_the_same_reach(
     assert bws_lane_token.sharing_reach(lane_rows, entry.credential) == []
 
 
-def test_the_row_has_no_age_anchor(entry: RegistryEntry) -> None:
-    assert "created" not in entry.credential
+def test_the_row_is_anchored_on_the_paste_and_derives_the_rotation_plan(
+    entry: RegistryEntry,
+) -> None:
+    """infraops serves `created` as `last_rotated` (`rotationAnchor` in infraops-mcp-server), so the
+    proposer reads the token as issued and derives the rotation plan, which revokes the old token,
+    never the issue plan, whose `store` would refuse the hand-pasted keeper (amendment 34 item 3).
+    """
+    assert entry.credential["created"] == "2026-11-20"
     assert "last_rotated" not in entry.credential
+    first_issue = _first_issue({TOKEN: entry.credential["created"]}, TOKEN)
+    assert first_issue is False
+    adapter, plan = plan_for(entry, first_issue=first_issue)
+    assert adapter == bws_lane_token.PROVIDER
+    assert not plan.issue
