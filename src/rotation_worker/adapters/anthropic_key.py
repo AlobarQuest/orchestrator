@@ -147,8 +147,8 @@ def probe_current(key: Value, transport: httpx.BaseTransport | None = None) -> d
     """The one-off probe of a key already kept (amendment 36 exit check 1): `GET /v1/models` with
     the key and with a control of its shape, each once per header form. Statuses and the
     workspace header only; a request with no answer is `null` beside its failure's type.
-    `passed` holds when the rotation's form works: the key answers 200 as `x-api-key`, and
-    neither control answers 200."""
+    `passed` is exit check 1's verdict: every request answered, the key answers 200 as
+    `x-api-key` naming a workspace, and each control answers 401 (`dead_statuses`)."""
     client = confined_client(transport)
     control = control_like(key)
     found: dict[str, Any] = {}
@@ -165,8 +165,12 @@ def probe_current(key: Value, transport: httpx.BaseTransport | None = None) -> d
                     "status": None,
                     "no_answer": failure.error_type,
                 }
-    passed = found["key_x_api_key"]["status"] == 200 and all(
-        found[f"control_{_slug(header)}"]["status"] not in (200, None) for header in HEADER_FORMS
+    live = found["key_x_api_key"]
+    passed = (
+        all(isinstance(answer["status"], int) for answer in found.values())
+        and live["status"] == 200
+        and live[WORKSPACE_HEADER] is not None
+        and all(found[f"control_{_slug(header)}"]["status"] == 401 for header in HEADER_FORMS)
     )
     return {**found, "passed": passed}
 

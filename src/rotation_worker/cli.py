@@ -537,6 +537,11 @@ def probe(config: Config, credential_id: str, mirror: RepoMirror, out: TextIO) -
     except ContractError as refusal:
         print(f"probe: {scrub(str(refusal))}", file=sys.stderr)
         return EXIT_UNREADABLE
+    except Exception as error:
+        # An unforeseen failure names only its class: the key is in this process, and a
+        # traceback or a message might show it.
+        print(f"probe: {credential_id} unprobed: {type(error).__name__}", file=sys.stderr)
+        return EXIT_UNREADABLE
     line = {"credential_id": credential_id, "class": credential_class, "keeper": keeper_id, **found}
     out.write(scrub(json.dumps(line)) + "\n")
     return EXIT_EQUAL if found.get("passed") is True else EXIT_DIFFERENT

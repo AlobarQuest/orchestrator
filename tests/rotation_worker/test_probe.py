@@ -301,6 +301,75 @@ def test_a_request_with_no_answer_names_its_failure_s_type_and_exits_1(
     assert line["key_x_api_key"] == {"status": None, "no_answer": "ConnectError"}
 
 
+def test_only_the_bearer_request_lost_still_fails(
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, store: WatchedStore, answers: list[Any]
+) -> None:
+    """Kills: a verdict that reads only the rotation's form, so a lost request exits 0."""
+    anthropic = Anthropic()
+    _keep(store, Value(anthropic.issue()))
+    _registry(origins, ANTHROPIC_ROW)
+
+    def lose_the_bearer(request: httpx.Request) -> httpx.Response:
+        if "Authorization" in request.headers and _sent(request) in anthropic.keys:
+            raise httpx.ReadTimeout("lost", request=request)
+        return anthropic.handle(request)
+
+    code, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, lose_the_bearer, answers)
+    assert line["key_x_api_key"]["status"] == 200
+    assert line["key_bearer"] == {"status": None, "no_answer": "ReadTimeout"}
+    assert (code, line["passed"]) == (1, False)
+
+
+@pytest.mark.parametrize("case", ["a control's 429", "a 200 naming no workspace"])
+def test_an_indeterminate_answer_does_not_pass(
+    tmp_path: Path,
+    origins: Origins,
+    mirror: RepoMirror,
+    store: WatchedStore,
+    answers: list[Any],
+    case: str,
+) -> None:
+    """Amendment 36: a 429 or 5xx is indeterminate (item 9), and a 200 without the workspace
+    header can't bind (exit check 1)."""
+    anthropic = Anthropic(no_header=case == "a 200 naming no workspace")
+    key = anthropic.issue()
+    _keep(store, Value(key))
+    _registry(origins, ANTHROPIC_ROW)
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if case == "a control's 429" and _sent(request) != key:
+            return httpx.Response(429)
+        return anthropic.handle(request)
+
+    code, _, [line] = _probe(tmp_path, mirror, ANTHROPIC_ID, answer, answers)
+    assert line["key_x_api_key"]["status"] == 200
+    assert (code, line["passed"]) == (1, False)
+
+
+def test_an_unforeseen_failure_exits_2_naming_only_its_class(
+    tmp_path: Path,
+    origins: Origins,
+    mirror: RepoMirror,
+    store: WatchedStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    answers: list[Any],
+) -> None:
+    key = _key()
+    _keep(store, Value(key))
+    _registry(origins, ANTHROPIC_ROW)
+
+    def broken(_row: Any, value: Value) -> dict[str, Any]:
+        raise RuntimeError(f"failed holding {value.reveal()}")
+
+    monkeypatch.setitem(cli.PROBES, "anthropic-api-key", broken)
+    code, text, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, Anthropic().handle, answers)
+    captured = capsys.readouterr()
+    assert (code, text) == (2, "")
+    assert captured.err == f"probe: {ANTHROPIC_ID} unprobed: RuntimeError\n"
+    assert key not in captured.err + captured.out
+
+
 def test_build_provider_and_check_row_still_refuse_the_row_without_a_workspace() -> None:
     """The probe builds no provider: the rotation's refusals stand for the row it probes."""
     row: dict[str, Any] = {

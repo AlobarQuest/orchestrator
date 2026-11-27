@@ -1328,14 +1328,17 @@ runuser -u rotation -- env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker \
 
 The host must run a commit that has the verb ("Install or update it on the VPS host").
 
-- **Exit 0**: the line's `passed` is true. For an Anthropic key, the key answered 200 as
-  `x-api-key` and neither control answered 200; for a GitHub App key, the working proof passed.
+- **Exit 0**: the line's `passed` is true. For an Anthropic key, all four requests answered, the
+  key answered 200 as `x-api-key` with an `anthropic-workspace-id`, and both controls answered
+  401. For a GitHub App key, the working proof passed.
 - **Exit 1**: the line is printed with `passed` false: a status is wrong, a request got no answer,
   or the GitHub proof was refused. Read the line for which.
 - **Exit 2**: nothing is printed to stdout. The row can't be read, its class isn't one of the two,
-  or its keeper is unreadable. For an unreadable keeper the one message is `probe: <id>'s keeper
-  is not readable by this identity`, and the probe never reads through another identity's token,
-  the secrets broker's included.
+  its keeper is unreadable, or the probe failed unforeseen (`probe: <id> unprobed: <class>`). For
+  an unreadable keeper the one message is `probe: <id>'s keeper is not readable by this
+  identity`, and the probe never reads through another identity's token, the secrets broker's
+  included. The same message covers a keeper the store reads but that is empty or has
+  surrounding whitespace, which no credential value may have: check the secret before the grant.
 
 The line carries statuses, the keeper's secret id and the row's non-secret ids, never a key, a
 control, a header carrying either, or a response body.
