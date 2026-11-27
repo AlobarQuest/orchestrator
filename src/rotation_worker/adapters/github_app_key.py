@@ -124,13 +124,11 @@ def check_row(credential: Mapping[str, Any]) -> None:
 
 
 def declared_app(credential: Mapping[str, Any]) -> str | None:
-    """The App id a registry row of this type declares, or `None` for any other row."""
+    """The App id a registry row of this type declares, or `None` for a row of another class.
+    A row of this class whose `app_id` can't be read raises `ContractError`."""
     if credential.get("class") != CLASS:
         return None
-    try:
-        return str(_declared_id(credential, APP_ID_FIELD))
-    except ContractError:
-        return None
+    return str(_declared_id(credential, APP_ID_FIELD))
 
 
 def build_provider(

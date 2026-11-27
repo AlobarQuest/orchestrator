@@ -406,6 +406,8 @@ class Named(Provides):
     declared = "1"
 
     def declared_by(self, credential: dict[str, Any]) -> str | None:
+        if credential.get("app") == "unreadable":
+            raise ContractError("a row of this type declares its app_id as a positive integer")
         return credential.get("app")
 
     def identity_of(self, new: Value) -> str | None:
@@ -466,6 +468,15 @@ def test_a_waiting_rotation_whose_credential_can_t_be_told_binds_nothing(
     run.found = worker.PassActs()
     assert run.waits(monkeypatch, [])
     assert "what key-other waits for can't be told" in run.found.due["rotation-inbox:u1"].message
+
+
+def test_a_waiting_row_of_this_type_whose_identity_can_t_be_read_binds_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = {"other-cred": {"id": "other-cred", "app": "unreadable"}}
+    run = _named_pass(tmp_path, monkeypatch, rows)
+    assert run.waits(monkeypatch, [])
+    assert run.staged() is None
 
 
 def test_a_value_naming_another_identity_binds_nothing_while_others_wait() -> None:

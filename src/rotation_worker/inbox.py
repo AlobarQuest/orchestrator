@@ -97,7 +97,8 @@ class NamesItsCredential(Protocol):
         ...
 
     def declared_by(self, credential: Mapping[str, Any]) -> str | None:
-        """The identity another registry row declares, or `None` for a row of no such type."""
+        """The identity another registry row declares, or `None` for a row of no such type.
+        Raises `ContractError` for a row of its type whose identity can't be read."""
         ...
 
     def identity_of(self, new: Value) -> str | None:

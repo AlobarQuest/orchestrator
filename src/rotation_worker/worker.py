@@ -874,15 +874,20 @@ def _declared_by_waiting(
     setup: Setup, provider: NamesItsCredential, waiting: Sequence[WaitingMint]
 ) -> dict[str, str | None]:
     """By unit key, the identity each waiting rotation's registry row declares (ADR-0055
-    amendment 35 item 6 B). A unit whose package names no registry row is left out, so the inbox
-    refuses to bind beside it."""
+    amendment 35 item 6 B). A unit whose package names no registry row, or whose row's identity
+    can't be read, is left out, so the inbox refuses to bind beside it. A unit key names its
+    credential, so two units sharing one declare the same identity."""
     rows = credentials(setup.mirror)
     found: dict[str, str | None] = {}
     for mint in waiting:
         package_id = setup.client.package_intake(mint.revision_id).get("package_id")
         entry = rows.get(standing_credential(str(package_id)) or "")
-        if entry is not None:
+        if entry is None:
+            continue
+        try:
             found[mint.unit_key] = provider.declared_by(entry.credential)
+        except ContractError:
+            continue
     return found
 
 

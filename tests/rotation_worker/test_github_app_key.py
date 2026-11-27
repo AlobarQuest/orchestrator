@@ -424,6 +424,8 @@ def test_identity_is_the_row_s_app_and_a_different_key_pair() -> None:
     assert rotating.provider.identity_of(_stored(_pem(0))) is None
     assert rotating.provider.declared_by(_row()) == str(APP)
     assert rotating.provider.declared_by({"class": "coolify-api-token", "app_id": APP}) is None
+    with pytest.raises(ContractError, match="declares its app_id"):
+        rotating.provider.declared_by(_row(app_id="5684758"))
 
 
 def _unstage(rotating: Rotating) -> None:
