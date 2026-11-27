@@ -152,4 +152,4 @@ None of W-326's files is touched.
 
 ## PR
 
-Opened against `main` by the commit that adds this report; the URL is in the PR's own listing (`gh pr list --head hq/broker-token-project-reach-bind`). Code head before the report commit: `559eafd3`. Not merged.
+https://github.com/AlobarQuest/orchestrator/pull/824, against `main`, not merged. The code head is `559eafd3`, which the final `make check` ran on, with this report. Only report commits follow it: `18cd4244` adds the report, and the next commit records this URL. The PR's head is that next commit.
