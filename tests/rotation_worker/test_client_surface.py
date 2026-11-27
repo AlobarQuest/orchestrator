@@ -202,6 +202,9 @@ HTTP_CLIENTS = frozenset(
         # Production Coolify's tailnet address, with the token being rotated (ADR-0055
         # amendment 33).
         "adapters/coolify_api_token.py",
+        # `https://api.github.com` alone, with a JWT the key being rotated signs and the narrow
+        # token it mints (ADR-0055 amendment 35).
+        "adapters/github_app_key.py",
     }
 )
 

@@ -38,7 +38,7 @@ and its clocks as they were, and no failure of the sync touches a unit or the pa
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Mapping, Set
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -71,10 +71,12 @@ from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import (
     INBOX_PROJECTS,
     Inbox,
+    NamesItsCredential,
     Refusals,
+    WaitingMint,
     bind,
-    other_mints,
     pasted,
+    waiting_mints,
 )
 from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.notify import (
@@ -102,6 +104,7 @@ from rotation_worker.readers import (
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
     RegistryError,
+    credentials,
     find_credential,
     provider_entries,
     standing_credential,
@@ -789,14 +792,20 @@ def _bind_inbox(
     `staging_id` is a staging secret holding no value yet, which the value is written into."""
     rotation, unit_id = approved.rotation, str(unit["id"])
     try:
+        waiting = waiting_mints(setup.client, str(unit["work_package_revision_id"]))
         reason = bind(
             new,
             rotation=rotation,
             store=setup.store,
             provider=provider,
-            others_waiting=other_mints(setup.client, str(unit["work_package_revision_id"])),
+            others_waiting=[mint.unit_key for mint in waiting],
             other_keepers=lambda: _other_keepers(setup, approved),
             staging_id=staging_id,
+            others_declare=(
+                (lambda: _declared_by_waiting(setup, provider, waiting))
+                if isinstance(provider, NamesItsCredential)
+                else None
+            ),
         )
     except (*REFUSALS, *TRANSIENT) as error:
         # Nothing was decided about the value; it stays, and the person is told why.
@@ -861,6 +870,27 @@ def _mint_act(setup: Setup, approved: Approved, unit_id: str) -> Act:
     )
 
 
+def _declared_by_waiting(
+    setup: Setup, provider: NamesItsCredential, waiting: Sequence[WaitingMint]
+) -> dict[str, str | None]:
+    """By unit key, the identity each waiting rotation's registry row declares (ADR-0055
+    amendment 35 item 6 B). A unit whose package names no registry row, or whose row's identity
+    can't be read, is left out, so the inbox refuses to bind beside it. A unit key names its
+    credential, so two units sharing one declare the same identity."""
+    rows = credentials(setup.mirror)
+    found: dict[str, str | None] = {}
+    for mint in waiting:
+        package_id = setup.client.package_intake(mint.revision_id).get("package_id")
+        entry = rows.get(standing_credential(str(package_id)) or "")
+        if entry is None:
+            continue
+        try:
+            found[mint.unit_key] = provider.declared_by(entry.credential)
+        except ContractError:
+            continue
+    return found
+
+
 def _other_keepers(setup: Setup, approved: Approved) -> list[tuple[str, Value]]:
     """Each other SDS-rotated credential of this type whose keeper this instance reads."""
     found = []
@@ -901,8 +931,7 @@ def _revoke_waits(
         found.due[key] = Act(
             key,
             f"Revoke the old {rotation.credential_id} value"[:TITLE_LIMIT],
-            "Every consumer has switched to the new value. Revoke the old one in its provider's "
-            "console; there is nothing to record, the executor sees the revoke itself.",
+            _revoke_guide(setup, provider, rotation, unit_id),
             f"{_REVIEW}/{unit_id}",
         )
     elif state is Revoke.UNKNOWN:
@@ -914,6 +943,32 @@ def _revoke_waits(
         # No act can be announced, so only the clock tells a person this has gone on too long.
         found.waits[unit_id] = Wait(reason)
     return True
+
+
+_REVOKE_GUIDE: Final = (
+    "Every consumer has switched to the new value. Revoke the old one in its provider's "
+    "console; there is nothing to record, the executor sees the revoke itself."
+)
+
+
+@runtime_checkable
+class GuidesTheRevoke(Protocol):
+    """A provider whose revoke alert names what to keep, by the new value: a GitHub App key pair,
+    by its fingerprint (ADR-0055 amendment 35 item 7)."""
+
+    def revoke_guide(self, new: Value) -> str:
+        """The alert's text, naming no value."""
+        ...
+
+
+def _revoke_guide(setup: Setup, provider: Provider, rotation: Rotation, unit_id: str) -> str:
+    if not isinstance(provider, GuidesTheRevoke):
+        return _REVOKE_GUIDE
+    try:
+        return provider.revoke_guide(setup.store.read(rotation.keeper_id))
+    except (*REFUSALS, StoreError) as error:
+        LOG.warning("revoke_guide_unread", extra={"unit": unit_id, "reason": scrub(str(error))})
+        return f"{_REVOKE_GUIDE} The key to keep can't be named: {scrub(str(error))}."
 
 
 def _overlap_waits(

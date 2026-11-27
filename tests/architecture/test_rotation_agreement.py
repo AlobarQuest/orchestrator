@@ -29,7 +29,6 @@ UNTYPED: Final = frozenset(
         "anthropic-api-key",
         "brain-mcp-key",
         "coolify-pg-password",
-        "github-app-private-key",
         "github-pat-classic",
         "openai-key",
         "porkbun-api-key",

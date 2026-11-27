@@ -52,6 +52,7 @@ from rotation_worker.adapters import (
     bws_machine_token,
     change_manager,
     coolify_api_token,
+    github_app_key,
     github_pat,
     openrouter,
     orchestrator_bearer,
@@ -428,6 +429,34 @@ PROVIDER_EDGES: dict[str, Reach] = {
         frozenset({"https://api.bitbucket.org"}),
         frozenset({("GET", "/2.0/repositories/w")}),
     ),
+    # The key signs a JWT for `GET /app` and the proof repository's installation, and the proof
+    # token it mints lists its repositories and revokes itself (ADR-0055 amendment 35 item 10).
+    # The mint's own POST goes through `github_app_mint`'s client, its row above.
+    "github-app-key": Reach(
+        tuple(
+            built_clients(
+                github_app_key,
+                lambda: github_app_key.build_provider(
+                    rotation=_rotation(),
+                    credential={
+                        "app_id": 1,
+                        "installation_id": 2,
+                        "proof_repository": "o/r",
+                    },
+                    store=_store,
+                ),
+            )
+        ),
+        frozenset({"https://api.github.com"}),
+        frozenset(
+            {
+                ("GET", "/app"),
+                ("GET", "/repos/o/r/installation"),
+                ("GET", "/installation/repositories"),
+                ("DELETE", "/installation/token"),
+            }
+        ),
+    ),
     "change-manager": Reach(
         tuple(
             built_clients(
@@ -546,6 +575,7 @@ _WORKER_CLIENTS = {
     "src/rotation_worker/adapters/bitbucket.py": 1,
     "src/rotation_worker/adapters/change_manager.py": 1,
     "src/rotation_worker/adapters/coolify_api_token.py": 1,
+    "src/rotation_worker/adapters/github_app_key.py": 1,
     "src/rotation_worker/adapters/postgres_role.py": 1,
 }
 NETWORK: dict[str, dict[str, int]] = {
@@ -684,7 +714,18 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
                 "tailnet_or_https_problem",
             }
         ),
-        "estate_clients.github_app_mint": frozenset({"MintRefused", "MintUnavailable", "mint"}),
+        # The GitHub App key adapter signs its probe's JWT and decodes the stored form as the
+        # mint does (ADR-0055 amendment 35).
+        "estate_clients.github_app_mint": frozenset(
+            {
+                "MintRefused",
+                "MintUnavailable",
+                "REPOSITORY",
+                "decode_stored_key",
+                "mint",
+                "sign_app_jwt",
+            }
+        ),
     },
 }
 
@@ -747,7 +788,10 @@ ROUTES = frozenset(
         f"{UNIT_PATH}/history",
         f"{UNIT_PATH}/renew",
         "/v1/alerts",
+        "/app",
         "/app/installations/44/access_tokens",
+        "/installation/repositories",
+        "/installation/token",
         "/credentials/revoke",
         "/repos/o/r/actions/jobs/44/logs",
         "/repos/o/r/actions/runs/44/jobs",

@@ -22,6 +22,7 @@ from rotation_worker.adapters import (
     change_manager,
     coolify_api_token,
     fake,
+    github_app_key,
     github_pat,
     healthchecks_ping_url,
     openrouter,
@@ -264,6 +265,16 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         ),
         capabilities=TYPES[coolify_api_token.NAME].capabilities,
         check_row=coolify_api_token.check_row,
+        revoke_may_come_first=True,
+    ),
+    github_app_key.NAME: Adapter(
+        github_app_key.PROVIDER,
+        github_app_key.PLAN,
+        lambda context: github_app_key.build_provider(
+            rotation=context.rotation, credential=context.credential, store=context.store
+        ),
+        capabilities=TYPES[github_app_key.NAME].capabilities,
+        check_row=github_app_key.check_row,
         revoke_may_come_first=True,
     ),
     change_manager.ATTESTED_NAME: Adapter(

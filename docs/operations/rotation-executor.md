@@ -188,9 +188,12 @@ To mint, create the value in the provider's console, paste it as the value of `r
 and clear the clipboard with `pbcopy < /dev/null`. Nothing else is needed. The next pass binds the
 value to the waiting rotation only when all of the following hold:
 
-- No other rotation waits on a person's mint, on either instance. Nothing in a value says which
-  credential it was made for, so with two waiting, nothing binds; `rotation-worker stage` (see
-  "Mint and stage a value by hand") still works for either.
+- No other rotation waits on a person's mint, on either instance. Nothing in most values says
+  which credential it was made for, so with two waiting, nothing binds; `rotation-worker stage`
+  (see "Mint and stage a value by hand") still works for either. A GitHub App key is the
+  exception: it answers `GET /app` with its App's id, so it binds to the waiting rotation whose
+  row declares that `app_id` while others wait, unless another waiting rotation declares the same
+  App or a waiting rotation's credential can't be told (ADR-0055 amendment 35 item 6 B).
 - It isn't the keeper's value, and the provider accepts it beside a refused known-bad value.
 - It is for the same account as the value it replaces: the same GitHub account id at `GET /user`;
   a Bitbucket login with the registry's `probe_email` for both; for a BWS token, exactly the same
@@ -1148,6 +1151,82 @@ No row is `rotated_by_sds` yet. The change window's keeper is in `Rotation / Kee
 executor writes, and its row is handed over once the dev measurement has run and the canary
 exists. The other two keepers are in `SDS Operator` and `Ops / Platform`, which the executor
 can't write, and wait on Devon moving each into `Rotation / Keepers` (D-82 item 11 A).
+
+## GitHub App private keys
+
+GitHub has no API that creates, lists or deletes an App's key pairs, so a person generates and
+deletes them on the App's settings page and the executor proves and stores (ADR-0055 amendment
+35, D-84). The type is `github-app-key`, with Bitbucket's plan: a human act mints and stages, then
+`store` (AC-001, AC-002: verify-new, store), `verify` (AC-003), a human act that deletes the old
+key pairs, and `confirm` (AC-004). The adapter's provider is `github` and it reads no admin
+secret: every request goes to `https://api.github.com` with a JWT the key being proved signs, or
+with the narrow token that key mints.
+
+### Generate a key pair
+
+1. On the App's settings page (the row's `provider_identity` names the App), click **Edit**, then
+   **Credentials**, **Key pairs** and **New key**. GitHub downloads the private key as a PEM file.
+2. Encode it as one line and copy it: `base64 -i <the downloaded file> | pbcopy`.
+3. Paste it as the value of `rotation-inbox` in `Rotation / Inbox`.
+4. Delete the downloaded file and run `pbcopy < /dev/null`. The download is a copy of the key at
+   rest, so deleting it is part of the mint.
+
+Both rows came due together, so generate both keys in one sitting: paste the read App's key, wait
+until the inbox reads `empty` again (one executor pass, five minutes), then paste the push App's.
+Each key names its own App, so the inbox binds it while the other App's rotation waits.
+
+### What verify-new proves
+
+verify-new probes `GET /app` with the new key's JWT beside a JWT from an RSA key generated in
+memory, which GitHub never issued. Live is 200 naming the row's `app_id`; the control must answer
+401. GitHub documents neither refusal, so the first real rotation measures them (D-84 item 14 A):
+verify-new files the control's status before anything is stored, and any status but 401 fails the
+step with that status. Then, still before the keeper is written:
+
+1. The new key's public half must differ from the old key's: the same key encoded another way
+   passes every probe while rotating nothing.
+2. `GET /repos/<proof_repository>/installation` must answer the row's `installation_id`.
+3. A mint for `proof_repository` alone with `metadata: read` alone must echo exactly that, and the
+   token must list that one repository at `GET /installation/repositories`.
+4. `DELETE /installation/token` must answer 204, whatever the third check found, so the token is
+   dead before the step returns.
+
+A refusal names the request and its status only. No answer fails the unit; a requeue retries it.
+
+### Delete the old key pairs
+
+The `verify` unit waits, unclaimed, until every reader has a green ping that began after the
+keeper changed: up to a day, since six readers run daily. Its completion sends the revoke alert,
+which names the key pair to keep by the first 8 characters of GitHub's SHA256 fingerprint of the
+new key's public half. On the App's **Key pairs** tab, delete every key pair except that one.
+`confirm` then probes the old key and passes on 401 beside the control's 401 and the new key's
+200; any other status fails it with that status, and nothing is deleted by machine.
+
+The executor can't list key pairs, so a pair made by hand and never pasted is outside its proof:
+the alert says to delete it too. After an exposure you may delete first: the `verify` unit
+accepts an old key that is already refused, and `confirm` proves it. The inbox then can't bind the
+new key, because its identity check needs the old key to answer, so stage it by hand ("Mint and
+stage a value by hand").
+
+### The registry rows
+
+Each row declares `app_id`, `installation_id` and `proof_repository` (one `owner/name`, where the
+App is installed), and its consumers are one `bws-secret` keeper and `runtime-fetch` readers, each
+with a `healthchecks_check`; any other row is refused before a claim. Every reader pipes the
+keeper straight into `sds-github-mint` each pass and keeps nothing, so none can stay on the old
+key. Which launcher exits reach the key's read, and which ping success, is pinned per reader in
+`tests/rotation_worker/test_github_app_key_readers.py`. Two cases prove less than a mint with the
+new key:
+
+- An exit code passed through from a program before the read (`"$scope_rc"`, `"$derive_rc"`,
+  `"$registries_rc"`) pings success when it equals the lane's finding code.
+- The rotation proposer pings every pass but reads the push App's key only on `--submit`, so a
+  bare pass run by hand pings success without reading it. Its scheduled pass submits.
+
+Neither row is `rotated_by_sds` yet. Both keepers are in `SDS / Lane Apps`, which the executor
+can't write; Devon moves them into `Rotation / Keepers` after Phase C's revoke sitting (D-84 item
+8 A). Each row is handed over after that move and amendment 35's exit checks 2 (the working proof
+on the current keys) and 3 (one real rotation).
 
 ## BWS machine tokens: the Keychain instance
 

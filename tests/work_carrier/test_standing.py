@@ -209,6 +209,17 @@ def test_a_carry_form_refusal_names_its_conditions(tmp_path: Path) -> None:
     assert "proposer_generated" in refused and "destinations" in refused
 
 
+def test_a_github_app_key_revision_the_policy_approved_is_refused(tmp_path: Path) -> None:
+    """ADR-0055 amendment 35 item 15, D-84: a GitHub App key's package, approved under the
+    standing policy's name, is refused before any intake, so a person decides it."""
+    row = {**_real_row("lanes-read-app-private-key"), "rotated_by_sds": True}
+    package = {**_generated(row, first_issue=False), "status": "approved"}
+    refused = _check(tmp_path, package=package, find_entry=_entry(row))
+    assert isinstance(refused, str)
+    assert refused.startswith("the carry form refused: ")
+    assert "lane_type (class 'github-app-private-key' is no lane type)" in refused
+
+
 @pytest.mark.parametrize(
     ("error", "named"),
     [
