@@ -48,6 +48,7 @@ from rotation_worker import coolify, github_actions, helper_client, readers, sec
 from rotation_worker import orchestrator_client as worker_orchestrator
 from rotation_worker.adapters import (
     ADAPTERS,
+    anthropic_key,
     bitbucket,
     bws_machine_token,
     change_manager,
@@ -429,6 +430,19 @@ PROVIDER_EDGES: dict[str, Reach] = {
         frozenset({"https://api.bitbucket.org"}),
         frozenset({("GET", "/2.0/repositories/w")}),
     ),
+    # The key itself, as a bearer, on the model list alone (ADR-0055 amendment 36, D-85 7 A).
+    "anthropic-key": Reach(
+        tuple(
+            built_clients(
+                anthropic_key,
+                lambda: anthropic_key.build_provider(
+                    rotation=_rotation(), credential={"workspace_id": "wrkspc_w"}, store=_store
+                ),
+            )
+        ),
+        frozenset({"https://api.anthropic.com"}),
+        frozenset({("GET", "/v1/models")}),
+    ),
     # The key signs a JWT for `GET /app` and the proof repository's installation, and the proof
     # token it mints lists its repositories and revokes itself (ADR-0055 amendment 35 item 10).
     # The mint's own POST goes through `github_app_mint`'s client, its row above.
@@ -572,6 +586,7 @@ _WORKER_CLIENTS = {
     "src/rotation_worker/adapters/openrouter.py": 1,
     "src/rotation_worker/adapters/orchestrator_bearer.py": 1,
     "src/rotation_worker/adapters/github_pat.py": 2,
+    "src/rotation_worker/adapters/anthropic_key.py": 1,
     "src/rotation_worker/adapters/bitbucket.py": 1,
     "src/rotation_worker/adapters/change_manager.py": 1,
     "src/rotation_worker/adapters/coolify_api_token.py": 1,
@@ -759,7 +774,7 @@ ADMIN_SECRET_PROVIDERS = frozenset(
     {"openrouter", "orchestrator", "change-manager", "postgres-role", "bws-lane-token"}
 )
 NO_ADMIN_SECRET = frozenset(
-    {"bitbucket", "bitwarden-sm", "coolify", "fake", "github", "healthchecks-ping-url"}
+    {"anthropic", "bitbucket", "bitwarden-sm", "coolify", "fake", "github", "healthchecks-ping-url"}
 )
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
@@ -801,6 +816,7 @@ ROUTES = frozenset(
         "/repos/o/r/installation",
         "/user",
         "/2.0/repositories/w",
+        "/v1/models",
         "/api/v1/applications/u1/envs",
         "/api/v1/applications/u1/restart",
         "/api/v1/services/u1/envs",

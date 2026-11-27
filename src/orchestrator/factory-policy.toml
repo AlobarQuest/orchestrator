@@ -463,9 +463,11 @@ is the type's own, stated in the package the person approves, and is a different
 in Coolify's UI, and its units only prove, store and wait on the readers.
 `github-app-key` (ADR-0055 amendment 35) is the same shape: a person generates and deletes
 key pairs on the App's settings page, and its units only prove, store and wait on the readers.
+`anthropic-key` (ADR-0055 amendment 36) is the same shape: a person creates and deletes keys
+in the Claude Console, and its units only prove, store and wait on the readers.
 """
 decided = "2026-10-30"
-rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "coolify-api-token", "github-app-key", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed", "postgres-role"]
+rotation_adapters = ["anthropic-key", "bitbucket", "change-manager", "change-manager-distributed", "coolify-api-token", "github-app-key", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed", "postgres-role"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
@@ -578,9 +580,11 @@ is the type's own, stated in the package the person approves, and is a different
 in Coolify's UI, and its units only prove, store and wait on the readers.
 `github-app-key` (ADR-0055 amendment 35) is the same shape: a person generates and deletes
 key pairs on the App's settings page, and its units only prove, store and wait on the readers.
+`anthropic-key` (ADR-0055 amendment 36) is the same shape: a person creates and deletes keys
+in the Claude Console, and its units only prove, store and wait on the readers.
 """
 decided = "2026-10-30"
-rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "coolify-api-token", "github-app-key", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed", "postgres-role"]
+rotation_adapters = ["anthropic-key", "bitbucket", "change-manager", "change-manager-distributed", "coolify-api-token", "github-app-key", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed", "postgres-role"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3

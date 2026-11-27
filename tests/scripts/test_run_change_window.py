@@ -411,6 +411,39 @@ def test_a_window_that_wrote_no_digest_sends_none(tmp_path: Path) -> None:
     assert run.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
 
 
+def test_a_green_ping_proves_the_anthropic_key_was_read_not_that_anthropic_accepted_it(
+    tmp_path: Path,
+) -> None:
+    """ADR-0055 amendment 36 item 4: what `Change Manager OPs Check` going green proves to the
+    `anthropic-key` adapter's `verify` unit.
+
+    Only a `--submit` pass pings, and it reads the keeper fresh and fatally: an empty or
+    unreadable key fails the pass before the window, so a success ping proves that pass read a
+    non-empty key from the keeper and handed it to the window. It doesn't prove Anthropic accepted
+    the key: the window exits 0 whatever each item's outcome, so a key Anthropic refuses shows as
+    items failing in the digest while the ping stays green (amendment 36's carried gap)."""
+    green = _run(tmp_path / "green", "--submit")
+    assert green.pings == [f"{PING_URL}/start", PING_URL]
+    assert f"{ANTHROPIC_UUID} token={LANE_TOKEN}" in green.bws
+    assert green.node_env is not None
+    assert green.node_env["ANTHROPIC_API_KEY"] == SECRETS[ANTHROPIC_UUID]
+    # A window whose every item failed (a refused key among the causes) still exits 0 and pings
+    # success: the fake window answers 0 whatever it did.
+    refused = DIGEST.replace("done", "failed")
+    still_green = _run(tmp_path / "items-failed", "--submit", FAKE_DIGEST=refused)
+    assert still_green.returncode == 0
+    assert still_green.pings == [f"{PING_URL}/start", PING_URL]
+    # The key's read is fatal, so no green ping follows a pass that read no key.
+    for fault in ("BWS_REFUSES", "BWS_EMPTY"):
+        unread = _run(tmp_path / fault, "--submit", **{fault: ANTHROPIC_UUID})
+        assert unread.nodes() == []
+        assert unread.pings == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+    # A bare pass reads no Anthropic key and pings nothing, so it never counts as a green run.
+    bare = _run(tmp_path / "bare")
+    assert ANTHROPIC_UUID not in " ".join(bare.bws)
+    assert bare.pings == []
+
+
 # ---- failure handling ------------------------------------------------------------------------
 
 

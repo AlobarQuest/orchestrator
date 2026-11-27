@@ -196,7 +196,8 @@ value to the waiting rotation only when all of the following hold:
   App or a waiting rotation's credential can't be told (ADR-0055 amendment 35 item 6 B).
 - It isn't the keeper's value, and the provider accepts it beside a refused known-bad value.
 - It is for the same account as the value it replaces: the same GitHub account id at `GET /user`;
-  a Bitbucket login with the registry's `probe_email` for both; for a BWS token, exactly the same
+  a Bitbucket login with the registry's `probe_email` for both; for an Anthropic key, both
+  answering in the row's `workspace_id`; for a BWS token, exactly the same
   projects and secrets, each listed by a fresh login. For a GitHub PAT this checks the account
   only, not its repository list or permissions: create it with the registry's
   `replacement_scope`.
@@ -1227,6 +1228,81 @@ Neither row is `rotated_by_sds` yet. Both keepers are in `SDS / Lane Apps`, whic
 can't write; Devon moves them into `Rotation / Keepers` after Phase C's revoke sitting (D-84 item
 8 A). Each row is handed over after that move and amendment 35's exit checks 2 (the working proof
 on the current keys) and 3 (one real rotation).
+
+## Anthropic API keys
+
+Anthropic has no API that creates or deletes an API key, and the executor holds no Admin API key
+(ADR-0055 amendment 36, D-85 10 A). So a person creates and deletes keys in the Claude Console,
+and the executor proves and stores. The type is `anthropic-key`, with Bitbucket's plan: a human
+act mints and stages, then `store` (AC-001, AC-002: verify-new, store), `verify` (AC-003), a
+human act that deletes the old key, and `confirm` (AC-004). The adapter's provider is `anthropic`
+and it reads no admin secret. Its client may send exactly one request,
+`GET https://api.anthropic.com/v1/models`, with the key being proved as `Authorization: Bearer`
+and an `anthropic-version` header (D-85 7 A).
+
+### Create a key
+
+1. In the Claude Console, open the workspace the row's `provider_identity` names
+   (`sds-change-window` for the change window's key), and create an API key **in that workspace**.
+   Don't create an organization-wide key: a key not scoped to one workspace can call the Admin
+   API, and the executor refuses it.
+2. Copy the key, and paste it as the value of `rotation-inbox` in `Rotation / Inbox`.
+3. Run `pbcopy < /dev/null`.
+
+### What verify-new proves
+
+verify-new probes `GET /v1/models` with the new key beside a key Anthropic never issued: the
+regular-key prefix and random characters, as long as the old key, made in memory and discarded.
+Live is 200, and the response's `anthropic-workspace-id` header must equal the row's
+`workspace_id`; a 200 naming another workspace, or none, fails the step by name, so a key from
+another workspace never binds or stores, even staged by hand. The probe sends no workspace
+header, so a key not scoped to a workspace gets 400, which fails the step as indeterminate. The
+control must answer 401. A 429, a 5xx or no answer is indeterminate and fails the unit; a requeue
+retries it. A refusal names the status or the workspace only.
+
+### Delete the old key
+
+The `verify` unit waits, unclaimed, until `Change Manager OPs Check` reports a successful
+`--submit` pass that began after the keeper changed: up to a day, since the window runs daily at
+04:00 New York. Its completion sends the revoke alert, which names the workspace and the day the
+executor stored the new key. In the Console, in that workspace, **Delete** every key except the
+one created for this rotation. Don't use **Disable**: a disabled key can be re-enabled, so it
+isn't revoked. `confirm` then probes the old key and passes on 401 beside the control's 401 and
+the new key's 200. Anthropic doesn't document a deleted key's status or how soon it applies, so
+the first real rotation measures it (D-85 11 A): any other status fails `confirm` with that
+status, and nothing is deleted by machine.
+
+The executor can't list the workspace's keys, so a key made by hand and never pasted is outside
+its proof: the alert says to delete it too. After an exposure you may delete first: the `verify`
+unit accepts an old key that is already refused, and `confirm` proves it. The inbox then can't
+bind the new key, because its identity check needs the old key to answer, so stage it by hand
+("Mint and stage a value by hand").
+
+### The registry row
+
+The row declares `workspace_id`, the `wrkspc_` id of its workspace, and its consumers are one
+`bws-secret` keeper and `runtime-fetch` readers, each with a `healthchecks_check`; any other row
+is refused before a claim. That refuses factory-runner's shared `anthropic-api-key` row, whose
+copies are Actions secrets, so it stays Devon's by hand. The change window's launcher reads the
+keeper fresh through the secrets broker on every `--submit` pass and keeps nothing, so it can't
+stay on the old key. Its green ping proves the pass read a non-empty key, not that Anthropic
+accepted it: the window exits 0 whatever each item's outcome, so a refused key shows as the
+digest's items failing (`tests/scripts/test_run_change_window.py`).
+
+The row isn't `rotated_by_sds` and declares no `workspace_id` yet, so the adapter refuses it.
+Amendment 36's exit checks come first: 1, a one-off probe of the current key that records the
+200, the control's 401 and the `anthropic-workspace-id` value, which Devon confirms is
+`sds-change-window`'s in the Console before the row declares it; and 2, one real rotation.
+
+### What the root reaches through this keeper
+
+D-84's standing answer, condition 3, accepted for the development phase and reopened with D-64 in
+the security phase. The keeper is in `Rotation / Keepers`, which the executor's root identity
+reads and writes. So T1 includes this: whoever holds the root holds the change window's Anthropic
+key, which calls the Claude API in workspace `sds-change-window`. By Anthropic's documentation
+(amendment 36, Context), a key scoped to one workspace runs only there and can't call the Admin
+API, and the executor refuses any other key. The executor's process sends it to
+`https://api.anthropic.com/v1/models` alone. The route adds no grant and moves no keeper.
 
 ## BWS machine tokens: the Keychain instance
 

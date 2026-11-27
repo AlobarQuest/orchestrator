@@ -26,7 +26,6 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "rotation_class_pol
 UNTYPED: Final = frozenset(
     {
         "alert-hub-sender-token",
-        "anthropic-api-key",
         "brain-mcp-key",
         "coolify-pg-password",
         "github-pat-classic",

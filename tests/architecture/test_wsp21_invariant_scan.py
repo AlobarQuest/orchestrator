@@ -847,6 +847,11 @@ OUTBOUND_ALLOWLIST = {
     # send nothing else. Pinned by tests/rotation_worker/test_github_app_key.py. Its egress is not
     # the orchestrator's.
     Path("src/rotation_worker/adapters/github_app_key.py"),
+    # ADR-0055 amendment 36, D-85 7 A. The Anthropic API-key adapter sends the key being rotated,
+    # as a bearer, to `https://api.anthropic.com` alone, for `GET /v1/models`, and may send nothing
+    # else. Pinned by tests/rotation_worker/test_anthropic_key.py. Its egress is not the
+    # orchestrator's.
+    Path("src/rotation_worker/adapters/anthropic_key.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

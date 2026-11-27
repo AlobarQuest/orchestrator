@@ -221,6 +221,17 @@ def test_a_github_app_key_revision_the_policy_approved_is_refused(tmp_path: Path
     assert "lane_type (class 'github-app-private-key' is no lane type)" in refused
 
 
+def test_an_anthropic_key_revision_the_policy_approved_is_refused(tmp_path: Path) -> None:
+    """ADR-0055 amendment 36 item 13, D-85: the change window's Anthropic key package, approved
+    under the standing policy's name, is refused before any intake, so Devon decides it."""
+    row = {**_real_row("anthropic-change-window-key"), "rotated_by_sds": True}
+    package = {**_generated(row, first_issue=False), "status": "approved"}
+    refused = _check(tmp_path, package=package, find_entry=_entry(row))
+    assert isinstance(refused, str)
+    assert refused.startswith("the carry form refused: ")
+    assert "lane_type (class 'anthropic-api-key' is no lane type)" in refused
+
+
 @pytest.mark.parametrize(
     ("error", "named"),
     [

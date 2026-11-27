@@ -65,11 +65,15 @@ TYPES: Final[dict[str, CredentialType]] = {
     # ADR-0055 amendment 35: GitHub has no key-pair API, so a person generates a key pair and
     # deletes the old ones on the App's settings page.
     "github-app-key": CredentialType(Capabilities(machine_mint=False, machine_revoke=False)),
+    # ADR-0055 amendment 36: Anthropic has no API that creates or deletes a key, and the executor
+    # holds no Admin API key (D-85 10 A), so a person creates and deletes keys in the Console.
+    "anthropic-key": CredentialType(Capabilities(machine_mint=False, machine_revoke=False)),
 }
 
 # A registry row's `class`, mapped to its type (increment 4). A class with no entry is a type the
 # SDS doesn't rotate: nothing is generated for it.
 CLASS_TYPES: Final[dict[str, str]] = {
+    "anthropic-api-key": "anthropic-key",
     "atlassian-api-token": "bitbucket",
     "bws-lane-token": "bws-lane-token",
     "bws-machine-token": "bws-machine-token",
