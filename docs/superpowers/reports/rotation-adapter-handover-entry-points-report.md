@@ -3,8 +3,8 @@ Outcome: done
 # Build report: rotation adapters' hand-over entry points (ADR-0055 Amendments 35 and 36)
 
 Worker W-333, branch `hq/rotation-adapter-handover-entry-points`, based on `a8cb546e`. PR
-[#830](https://github.com/AlobarQuest/orchestrator/pull/830). The code head is `b182f139`; this
-report is committed after it. Nothing is merged: HQ reviews and merges. No live call to Anthropic,
+[#830](https://github.com/AlobarQuest/orchestrator/pull/830). The code head is `6444eebc`; this
+report's commit follows it. Nothing is merged: HQ reviews and merges. No live call to Anthropic,
 GitHub, BWS, Coolify, or Healthchecks was made, and no production act was taken.
 
 ## What I built
@@ -136,7 +136,9 @@ in memory only.
 
 A request with no answer reads `{"status": null, "no_answer": "<httpx exception type>"}`. A
 workspace header not in the `wrkspc_` shape reads `(a malformed id)`. `passed` holds when the key
-answers 200 as `x-api-key` and neither control answers 200.
+answers 200 as `x-api-key` with an `anthropic-workspace-id`, both controls answer 401, and all
+four requests answered. That is Amendment 36's exit check 1 verdict: a 429 or 5xx is indeterminate
+(item 9), and a 200 with no workspace can't bind.
 
 The GitHub App probe sends `check_scope`'s calls as the rotation sends them:
 1. `GET /repos/<proof>/installation`.
@@ -158,7 +160,8 @@ statuses, or ids.
 
 The exit codes are 0 when `passed` is true, 1 when the line is printed with `passed` false, and 2
 when the probe can't run: an unreadable row, another class, a store that can't open, an unreadable
-keeper, or a row missing its ids. On exit 2, nothing goes to stdout.
+keeper, a row missing its ids, or an unforeseen failure (`probe: <id> unprobed: <class>`). On exit
+2, nothing goes to stdout.
 
 ## What each exit check's session runs
 
@@ -185,8 +188,8 @@ The host must first run a commit that has the verb ("Install or update it on the
 
 ## Tests and checks run
 
-- **`make check`** on `orchestrator_test_hq_w_333`, clean tree at `b182f139`: exit 0. Ruff,
-  format (1,059 files), and pyright are clean. Pytest: **15,150 passed, 1 skipped** (5 minutes 33
+- **`make check`** on `orchestrator_test_hq_w_333`, clean tree at `6444eebc`: exit 0. Ruff,
+  format (1,059 files), and pyright are clean. Pytest: **15,154 passed, 1 skipped** (5 minutes 17
   seconds). Earlier runs failed and each was fixed:
   - Run 1: `cli.py` imported `httpx`, which the client-surface and rotation-edges guards refuse. I
     removed the import, and the verb takes no transport.
@@ -195,10 +198,10 @@ The host must first run a commit that has the verb ("Install or update it on the
     `private` into `pri[redacted]ate` in the line. The probe tests now get their own touched-value
     set, as `test_postgres_role.py` does. With `Value("v")` touched first, the tests pass with the
     fixture and fail without it.
-- **Targeted runs**: `test_adapter_class.py` (60 passed), `test_probe.py` (19), and
+- **Targeted runs**: `test_adapter_class.py` (60 passed), `test_probe.py` (23), and
   `test_anthropic_key.py` (35). Also `test_github_app_key.py` (36), `test_checks.py` (63), and the
   client-surface, rotation-edges, and outbound scans (1,329 with `test_probe.py`).
-- **Mutation**: 7 mutations, 7 killed. Each was applied, its tests run with `-x`, then reversed by
+- **Mutation**: 9 mutations, 9 killed, at `6444eebc`. Each was applied, its tests run with `-x`, then reversed by
   inverse edit with `__pycache__` cleared, ending on a clean tree.
 
   | Mutation | Killed by |
@@ -210,6 +213,8 @@ The host must first run a commit that has the verb ("Install or update it on the
   | M5: the unreadable-keeper refusal prints its cause | `test_probe.py` |
   | M6: the probe writes the keeper back | `test_probe.py` (writes nothing) |
   | M7: the probe calls `check_scope` instead of `working_proof` | `test_probe.py` |
+  | M8: the verdict ignores whether every request answered | `test_probe.py` (the lost bearer request) |
+  | M9: the verdict takes any control refusal, not 401 | `test_probe.py` (the control's 429) |
 
 - **`code-standards risk`**: `normal`, so `/code-review` alone. It ran at medium on `main...HEAD`
   and returned four nits:
@@ -218,7 +223,12 @@ The host must first run a commit that has the verb ("Install or update it on the
   - The header changed before the probe measured it: HQ's settled call (item 3), and it fails
     closed.
   - The class term could silently refuse a new name: the walk's drift guards already cover it.
-- **Token-shape grep of the diff** (1,073 added lines against `a8cb546e`): 0 Anthropic-key
+
+  An advisor review of the fix round found that the first `passed` verdict read only the
+  rotation's form, so a lost bearer request, a control's 429, or a 200 naming no workspace exited
+  0. It also found that an unforeseen exception escaped with a traceback. Both are fixed and
+  pinned (M8, M9, and `test_an_unforeseen_failure_exits_2_naming_only_its_class`).
+- **Token-shape grep of the diff** (1,460 added lines against `a8cb546e`, the report included): 0 Anthropic-key
   shapes, 0 PEM blocks, 0 BWS-token shapes, 0 `ghs_` or `ghp_` literals, 0 base64 runs of 60 or
   more characters. The one `PRIVATE KEY` hit is the assertion `"PRIVATE KEY" not in shown`. Test
   keys are built at run time from `KEY_PREFIX` and random characters, and from generated RSA keys.
@@ -268,9 +278,14 @@ The host must first run a commit that has the verb ("Install or update it on the
    (`of_a_type`).
 4. **Choices the handoff left open.** Anthropic sends a control in each form too, so a refused
    bearer can be told from a header Anthropic ignores. Exit 0 requires `passed`, from review.
-5. **The ADR line is one physical line.** I kept the handoff's "one line" literally, at about 280
+5. **An unusable value reads as a missing grant.** `store.read` wraps the value, and a `Value`
+   refuses empty text or surrounding whitespace. The probe reports that with the one message the
+   handoff fixes, "not readable by this identity". The runbook's exit 2 bullet says to check the
+   secret before the grant.
+6. **The ADR line is one physical line.** I kept the handoff's "one line" literally, at about 280
    characters, rather than wrapping it at the file's 100.
-6. **Teardown is HQ's.** The worktree and `orchestrator_test_hq_w_333` remain for HQ to remove
+7. **CI.** The PR's checks run on its final head; HQ reads them before merging.
+8. **Teardown is HQ's.** The worktree and `orchestrator_test_hq_w_333` remain for HQ to remove
    after merge.
 
 ## Standards followed
@@ -279,7 +294,7 @@ The host must first run a commit that has the verb ("Install or update it on the
   (`logs.py`: stdout is reserved for `emit-secret`'s value). The probe's one result line goes to
   stdout, as the handoff states.
 - **Code Brain 4 (error handling)**: nothing is swallowed. A transport failure is
-  `"no_answer": "<type>"` with exit 1. An unreadable keeper, a store that can't open, a refused
+  `"no_answer": "<type>"` with exit 1, on any of the four requests. An unreadable keeper, a store that can't open, a refused
   row, or a client that can't be built exits 2 with its cause named. The one deliberate exception
   is the unreadable keeper's cause, withheld because a value read in the process might stand in
   its message, as `emit-secret` does. No bare `except …: pass` was added.
