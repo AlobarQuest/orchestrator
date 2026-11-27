@@ -1555,11 +1555,18 @@ reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a1
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
 # form on stdin. Modelled on factory-runner's `fork-sync-app-private-key` row (factory-runner
 # `4b1580f7246b7a12f08b33181dc691ee50487133`).
-# Hand-rotated, so neither row is rotated_by_sds: no executor adapter handles the class (ADR-0055's
-# hand-rotated set; ADR-0059 Q4, Q9 and the D-11 addendum). Devon rotates both on the Apps'
-# settings pages in one sitting. `created` is the age anchor: at 365 days (infraops CLASS_POLICY)
-# the 03:00 scan posts `cred.rotation-age` with the manual checklist, and the rotation proposer
-# reports the row `legacy` and proposes no package.
+# The executor's route (ADR-0055 amendment 35, D-84 item 13 A): the `github-app-key` adapter. Devon
+# generates a key pair on each App's settings page and pastes base64 of its PEM into the inbox;
+# the executor proves it (`GET /app` naming the row's `app_id` beside a never-issued key's refusal,
+# then a `metadata: read` mint on `proof_repository` whose installation is the row's
+# `installation_id`, revoked before the step returns), stores it, waits for every reader's green
+# ping, and after Devon deletes the App's other key pairs proves the old key refused. Neither row is
+# rotated_by_sds yet: amendment 35's exit checks 2 and 3 and the keepers' move to `Rotation /
+# Keepers` (D-84 item 8 A, Devon's act after Phase C's revoke sitting) come first, so each still
+# falls to the manual checklist. `created` is the age anchor: at 365 days (infraops CLASS_POLICY)
+# the 03:00 scan posts `cred.rotation-age`, and the rotation proposer reports the row `legacy` and
+# proposes no package. `proof_repository` is intent-packages, where both Apps are installed
+# (ADR-0059 Q9, HQ D-17, and Q1).
 # Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher,
 # revision-watcher, unit-verifier, pin-watcher, membership-check and change-proposer lanes' accounts
 # hold read grants on the read App's keeper (HQ gates G-18, G-28, G-30, G-33, G-37, G-39 and G-49),
@@ -1584,9 +1591,13 @@ class = "github-app-private-key"
 provider = "github"
 provider_identity = "GitHub App alobar-sds-lanes-read (id 5684758, installation 180257215), Credentials page Key pairs tab"
 bws_uuid = "314a966c-5654-4e3c-8358-b4fd01268775"
+rotated_by_sds = false
 created = "2026-11-09"
 disposition = "reissue"
-rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
+app_id = 5684758
+installation_id = 180257215
+proof_repository = "AlobarQuest/intent-packages"
+rotation_preconditions = ["mint it with lanes-push-app-private-key in one sitting", "after its revoke alert delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the inbox takes base64 of the PEM: encode the downloaded PEM before pasting it and delete the download"]
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -1683,9 +1694,13 @@ class = "github-app-private-key"
 provider = "github"
 provider_identity = "GitHub App alobar-sds-lanes (id 5684778, installation 180257673), Credentials page Key pairs tab"
 bws_uuid = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
+rotated_by_sds = false
 created = "2026-11-09"
 disposition = "reissue"
-rotation_preconditions = ["rotate it with lanes-read-app-private-key in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
+app_id = 5684778
+installation_id = 180257673
+proof_repository = "AlobarQuest/intent-packages"
+rotation_preconditions = ["mint it with lanes-read-app-private-key in one sitting", "after its revoke alert delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the inbox takes base64 of the PEM: encode the downloaded PEM before pasting it and delete the download"]
 
   [[credential.consumer]]
   kind = "bws-secret"

@@ -840,6 +840,13 @@ OUTBOUND_ALLOWLIST = {
     # list. It may send nothing else. Pinned by tests/rotation_worker/test_coolify_api_token.py.
     # Its egress is not the orchestrator's.
     Path("src/rotation_worker/adapters/coolify_api_token.py"),
+    # ADR-0055 amendment 35. The GitHub App key adapter signs a JWT with the key and sends it to
+    # `https://api.github.com` alone: `GET /app` and the proof repository's
+    # `GET /repos/<owner>/<name>/installation`, then, with the narrow proof token it mints through
+    # `github_app_mint`, `GET /installation/repositories` and `DELETE /installation/token`. It may
+    # send nothing else. Pinned by tests/rotation_worker/test_github_app_key.py. Its egress is not
+    # the orchestrator's.
+    Path("src/rotation_worker/adapters/github_app_key.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

@@ -83,7 +83,9 @@ def mint(
     """
     wanted = _check_request(app_id, repositories, permissions)
     label = ", ".join(repositories)
-    client = _client(_jwt(app_id, private_key_pem, clock), wanted, transport, user_agent)
+    client = _client(
+        sign_app_jwt(app_id, private_key_pem, clock), wanted, transport, user_agent
+    )
     try:
         installations = {_installation(client, repository) for repository in wanted.values()}
         if len(installations) != 1:
@@ -165,7 +167,16 @@ def _check_repositories(repositories: Sequence[str]) -> dict[str, str]:
     return wanted
 
 
-def _jwt(app_id: str, private_key_pem: str, clock: Callable[[], datetime]) -> str:
+def sign_app_jwt(
+    app_id: str,
+    private_key_pem: str,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> str:
+    """The App's JWT, signed RS256 by `private_key_pem`, for `GET /app` and the mint.
+
+    Raises `MintRefused` naming only the failure's type: a key that doesn't load, isn't RSA, or
+    can't sign. The rotation executor signs with it to prove a new key (ADR-0055 amendment 35).
+    """
     import jwt
     from cryptography.exceptions import UnsupportedAlgorithm
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey

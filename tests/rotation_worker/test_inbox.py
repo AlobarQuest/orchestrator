@@ -22,9 +22,10 @@ from rotation_worker.inbox import (
     EMPTY,
     Inbox,
     Refusals,
+    WaitingMint,
     bind,
-    other_mints,
     person_mints_before,
+    waiting_mints,
 )
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.registry import RegistryEntry
@@ -139,7 +140,10 @@ def test_every_other_rotation_s_unclaimed_unit_after_a_mint_counts_on_either_ins
             "plain": {"work_package_revision_id": "r6", "authority": {"constraints": {}}},
         }
     )
-    assert other_mints(cast(OrchestratorClient, ledger), "this") == ["key-pat", "key-token"]
+    assert waiting_mints(cast(OrchestratorClient, ledger), "this") == [
+        WaitingMint("key-pat", "r1"),
+        WaitingMint("key-token", "r2"),
+    ]
 
 
 # ---- binding --------------------------------------------------------------------------------
@@ -391,6 +395,107 @@ def test_two_rotations_waiting_on_a_mint_bind_nothing(
     run.ledger = Ledger({"other": _listed("bitbucket", "store", "r1")})
     assert run.waits(monkeypatch, [])
     assert run.staged() is None
+
+
+# ---- a value that names its own credential (ADR-0055 amendment 35 item 6 B) -----------------
+
+
+class Named(Provides):
+    """A provider whose value answers with the App it was issued for: `NEW` names App 1."""
+
+    declared = "1"
+
+    def declared_by(self, credential: dict[str, Any]) -> str | None:
+        return credential.get("app")
+
+    def identity_of(self, new: Value) -> str | None:
+        return "1" if new.same_as(NEW) else None
+
+
+class IntakeLedger(Ledger):
+    def __init__(self, units: dict[str, dict[str, Any]], packages: dict[str, str]) -> None:
+        super().__init__(units)
+        self.packages = packages
+
+    def package_intake(self, revision_id: str) -> dict[str, Any]:
+        return {"package_id": self.packages[revision_id]}
+
+
+def _named_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rows: dict[str, dict[str, Any]]
+) -> Pass:
+    run = Pass(tmp_path, NEW.reveal())
+    run.provider = Named([NEW, OLD])
+    run.ledger = IntakeLedger(
+        {"other": _listed("bitbucket", "store", "r1")}, {"r1": "rotation-other-cred"}
+    )
+    monkeypatch.setattr(
+        worker,
+        "credentials",
+        lambda _mirror: {cid: RegistryEntry("o/r", "c" * 40, row) for cid, row in rows.items()},
+    )
+    return run
+
+
+def test_a_value_naming_its_own_rotation_binds_while_another_type_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _named_pass(tmp_path, monkeypatch, {"other-cred": {"id": "other-cred"}})
+    assert not run.waits(monkeypatch, [])
+    staged = run.staged()
+    assert staged is not None and staged.same_as(NEW)
+
+
+def test_two_waiting_rotations_declaring_one_identity_bind_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _named_pass(tmp_path, monkeypatch, {"other-cred": {"id": "other-cred", "app": "1"}})
+    assert run.waits(monkeypatch, [])
+    assert run.staged() is None
+    run.found = worker.PassActs()
+    assert run.waits(monkeypatch, [])
+    assert "declares the same identity (1)" in run.found.due["rotation-inbox:u1"].message
+
+
+def test_a_waiting_rotation_whose_credential_can_t_be_told_binds_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _named_pass(tmp_path, monkeypatch, {})
+    assert run.waits(monkeypatch, [])
+    assert run.staged() is None
+    run.found = worker.PassActs()
+    assert run.waits(monkeypatch, [])
+    assert "what key-other waits for can't be told" in run.found.due["rotation-inbox:u1"].message
+
+
+def test_a_value_naming_another_identity_binds_nothing_while_others_wait() -> None:
+    store = MemoryStore()
+    rotation = _rotation(store)
+    other = Value("another-apps-key-for-tests")
+    reason = bind(
+        other,
+        rotation=rotation,
+        store=store,
+        provider=cast(Provider, Named([other, OLD])),
+        others_waiting=["key-other"],
+        other_keepers=list,
+        others_declare=lambda: {"key-other": None},
+    )
+    assert reason is not None and reason.endswith("it doesn't name this rotation's own")
+
+
+def test_a_provider_that_names_nothing_keeps_the_waiting_refusal_whatever_is_declared() -> None:
+    store = MemoryStore()
+    reason = bind(
+        NEW,
+        rotation=_rotation(store),
+        store=store,
+        provider=cast(Provider, Provides([NEW, OLD])),
+        others_waiting=["key-other"],
+        other_keepers=list,
+        others_declare=lambda: {"key-other": None},
+    )
+    assert reason is not None and reason.startswith("another rotation waits on a person's mint")
 
 
 def test_an_inbox_still_holding_the_staged_value_is_emptied(

@@ -295,6 +295,25 @@ def test_a_class_that_is_no_lane_type_refuses(rig: Rig, capsys: pytest.CaptureFi
     assert lane["reason"] == "class 'github-pat-fine-grained' is no lane type"
 
 
+@pytest.mark.parametrize(
+    "credential_id", ["lanes-read-app-private-key", "lanes-push-app-private-key"]
+)
+def test_a_github_app_key_package_refuses_as_no_lane_type(
+    rig: Rig, capsys: pytest.CaptureFixture[str], credential_id: str
+) -> None:
+    """ADR-0055 amendment 35 item 15 and D-84: no standing approval covers a GitHub App key's
+    package, so every revision is a named person's, even one the root wrote and handed to the
+    SDS. Its type is a reissue with no issue plan, its class is no lane type, and its kinds
+    aren't a lane's."""
+    row = {**_real_row(credential_id), "rotated_by_sds": True}
+    rig.publish(credential_id, row=row, package=_generated(row, first_issue=False))
+    code, lines = _run(capsys, credential_id)
+    assert code == 1
+    assert {ISSUE_PLAN, LANE_TYPE, DESTINATIONS} <= set(_refused(lines))
+    (lane,) = [line for line in lines if line.get("condition") == LANE_TYPE]
+    assert lane["reason"] == "class 'github-app-private-key' is no lane type"
+
+
 def test_a_lane_token_variable_that_redeploys_refuses(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:

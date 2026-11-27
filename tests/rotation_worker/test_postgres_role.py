@@ -309,6 +309,7 @@ EXISTING_PLANS: dict[str, list[tuple[str, list[str]]]] = {
     "bitbucket": BY_PERSON,
     "bws-machine-token": BY_PERSON,
     "coolify-api-token": BY_PERSON,
+    "github-app-key": BY_PERSON,
 }
 
 

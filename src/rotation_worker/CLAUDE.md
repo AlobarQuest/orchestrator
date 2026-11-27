@@ -36,9 +36,12 @@
   (`worker._mint_waits`); a staging secret holding only the empty marker, a blank or padded text
   isn't staged (`inbox.pasted`), and a value bound beside one is written into it, never created
   beside it. The inbox binds a value only while no other rotation on either
-  instance waits on a mint, and only after the provider accepts it beside a refused control,
-  `same_identity` (same account, not scope) holds against the keeper, and no other SDS-rotated
-  keeper of its type holds it; a lane token binds by its row's declared reach instead
+  instance waits on a mint, except a value whose provider `NamesItsCredential` (a GitHub App key,
+  by `GET /app`'s id, ADR-0055 amendment 35 item 6 B): it binds beside waiting rotations when it
+  names its own row's declared identity, no waiting row declares the same one, and every waiting
+  rotation's row can be told. Every bind also needs the provider to accept it beside a refused
+  control, `same_identity` (same account, not scope) to hold against the keeper, and no other
+  SDS-rotated keeper of its type to hold it; a lane token binds by its row's declared reach instead
   (`inbox.BindsByItself`, ADR-0055 amendment 19), never by `same_identity`;
   it writes staging before emptying the inbox. A ping URL never comes through the inbox: its
   mint is the machine's (`Capabilities.creates` false, so no `credential_create`), reading the

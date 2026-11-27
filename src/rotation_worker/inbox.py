@@ -9,8 +9,12 @@ The unit after the person's mint waits, unclaimed, until a value is staged for i
 pass that finds a value in the inbox binds it to that rotation, writing the staging secret and
 then emptying the inbox, only when all of these hold:
 
-* no other rotation waits on a person's mint, across the estate (`other_mints`), since nothing in
-  a pasted value says which credential it was made for;
+* no other rotation waits on a person's mint, across the estate (`waiting_mints`), since nothing in
+  most pasted values says which credential it was made for. A type whose value names its own
+  credential (`NamesItsCredential`, ADR-0055 amendment 35 item 6 B: a GitHub App key answers
+  `GET /app` with its App's id) binds while others wait, when the value names this rotation's
+  declared identity and no waiting rotation declares the same one; a waiting rotation whose
+  credential can't be told refuses it;
 * it isn't the value it replaces, and the provider accepts it beside a refused known-bad control;
 * it is for the same account as the value it replaces (`same_identity`), which must still answer:
   after an early revoke or an expiry, the value is staged by hand. A type that binds by what the
@@ -32,9 +36,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Protocol, runtime_checkable
+from typing import Any, Final, Protocol, runtime_checkable
 
 from rotation_worker.adapters import ADAPTERS
 from rotation_worker.checks import UNIT_KEY
@@ -81,6 +86,33 @@ class BindsByItself(Protocol):
         ...
 
 
+@runtime_checkable
+class NamesItsCredential(Protocol):
+    """A provider whose value says which credential it is for, so the inbox can bind it while other
+    rotations wait on a mint (ADR-0055 amendment 35 item 6 B). Every other check still applies."""
+
+    @property
+    def declared(self) -> str:
+        """The identity this rotation's registry row declares."""
+        ...
+
+    def declared_by(self, credential: Mapping[str, Any]) -> str | None:
+        """The identity another registry row declares, or `None` for a row of no such type."""
+        ...
+
+    def identity_of(self, new: Value) -> str | None:
+        """The identity `new` answers for, or `None` when it answers for none."""
+        ...
+
+
+@dataclass(frozen=True)
+class WaitingMint:
+    """Another rotation's unit that waits on a person's mint."""
+
+    unit_key: str
+    revision_id: str
+
+
 class Inbox:
     """The one BWS secret a person pastes a new value into, reached through `open_store` only
     when a unit waits on a mint: on the Keychain instance that is a BWS login of its own."""
@@ -117,22 +149,23 @@ def person_mints_before(unit_name: str, adapter_name: str) -> bool:
     return person_acts_beside(adapter.plan, unit, -1, StepKind.MINT)
 
 
-def other_mints(client: OrchestratorClient, revision_id: str) -> list[str]:
-    """The key of each listed unit of another rotation that waits on a person's mint: never
+def waiting_mints(client: OrchestratorClient, revision_id: str) -> list[WaitingMint]:
+    """Each listed unit of another rotation that waits on a person's mint, by unit key: never
     claimed, and straight after one. Both instances' units count, and so do units whose
     decomposition holds the mint as a human act."""
     found = []
     for row in client.active_units():
         unit = client.unit(str(row["unit_id"]))
-        if not is_rotation_unit(unit) or str(unit.get("work_package_revision_id")) == revision_id:
+        other_revision = str(unit.get("work_package_revision_id"))
+        if not is_rotation_unit(unit) or other_revision == revision_id:
             continue
         constraints = envelope_constraints(unit)
         waiting = int(unit.get("attempt_count") or 0) == 0 and person_mints_before(
             str(constraints.get(UNIT_KEY)), str(constraints.get(ADAPTER_KEY))
         )
         if waiting:
-            found.append(str(row["unit_key"]))
-    return sorted(found)
+            found.append(WaitingMint(str(row["unit_key"]), other_revision))
+    return sorted(found, key=lambda mint: mint.unit_key)
 
 
 def bind(
@@ -144,35 +177,72 @@ def bind(
     others_waiting: Sequence[str],
     other_keepers: Callable[[], Iterable[tuple[str, Value]]],
     staging_id: str | None = None,
+    others_declare: Callable[[], Mapping[str, str | None]] | None = None,
 ) -> str | None:
     """Stage `new` for `rotation`. Returns why it wasn't, or `None` once the staging secret holds
     it; emptying the inbox is the caller's. `staging_id` names a staging secret that held no value
-    when the caller looked: `new` is written into it."""
+    when the caller looked: `new` is written into it. `others_declare` gives, by unit key, the
+    identity each waiting rotation's row declares (`None` for a row of another type), for a
+    provider that `NamesItsCredential`; a waiting rotation it omits can't be told, and refuses."""
     if others_waiting:
-        return (
-            "another rotation waits on a person's mint too, so the inbox can't tell which "
-            f"credential the value is for: {', '.join(others_waiting)}"
-        )
+        refusal = _waiting_refusal(new, provider, others_waiting, others_declare)
+        if refusal is not None:
+            return refusal
     old = store.read(rotation.keeper_id)
     if new.same_as(old):
         return "it is the value the keeper already holds"
-    if isinstance(provider, BindsByItself):
-        refusal = provider.bind_refusal(new, old)
-        if refusal is not None:
-            return refusal
-    elif not accepts(provider, new):
-        return "the provider doesn't accept it beside a refused known-bad value"
-    elif not isinstance(provider, ConfirmsIdentity):
-        return "this type can't tell whose a value is, so nothing is taken from the inbox"
-    elif not provider.same_identity(new, old):
-        return (
-            "it isn't for the same account as the value it replaces, or that value no longer "
-            "answers"
-        )
+    refusal = _identity_refusal(new, old, provider)
+    if refusal is not None:
+        return refusal
     for credential, value in other_keepers():
         if new.same_as(value):
             return f"it is {credential}'s value"
     return _stage(new, rotation, store, staging_id)
+
+
+def _identity_refusal(new: Value, old: Value, provider: Provider) -> str | None:
+    """Why `new` isn't the value that replaces `old`, by what the provider can tell, or `None`."""
+    if isinstance(provider, BindsByItself):
+        return provider.bind_refusal(new, old)
+    if not accepts(provider, new):
+        return "the provider doesn't accept it beside a refused known-bad value"
+    if not isinstance(provider, ConfirmsIdentity):
+        return "this type can't tell whose a value is, so nothing is taken from the inbox"
+    if not provider.same_identity(new, old):
+        return (
+            "it isn't for the same account as the value it replaces, or that value no longer "
+            "answers"
+        )
+    return None
+
+
+def _waiting_refusal(
+    new: Value,
+    provider: Provider,
+    others_waiting: Sequence[str],
+    others_declare: Callable[[], Mapping[str, str | None]] | None,
+) -> str | None:
+    """Why other rotations waiting on a mint keep `new` from binding, or `None` when it names this
+    rotation and no waiting one declares the same identity."""
+    unknown = (
+        "another rotation waits on a person's mint too, so the inbox can't tell which "
+        f"credential the value is for: {', '.join(others_waiting)}"
+    )
+    if not isinstance(provider, NamesItsCredential) or others_declare is None:
+        return unknown
+    if provider.identity_of(new) != provider.declared:
+        return f"{unknown}; it doesn't name this rotation's own"
+    declared = others_declare()
+    untold = sorted(key for key in others_waiting if key not in declared)
+    if untold:
+        return f"{unknown}; what {', '.join(untold)} waits for can't be told"
+    clashing = sorted(key for key in others_waiting if declared.get(key) == provider.declared)
+    if clashing:
+        return (
+            f"another waiting rotation declares the same identity ({provider.declared}), so the "
+            f"inbox can't tell which it is for: {', '.join(clashing)}"
+        )
+    return None
 
 
 def _stage(
