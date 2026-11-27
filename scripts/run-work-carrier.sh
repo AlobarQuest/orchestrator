@@ -25,7 +25,7 @@
 # an authority envelope. The window bounds acts on live services, and this is not one. It runs in
 # the morning so the queue a person approved yesterday is carried before they look at it.
 #
-# TWO BWS PROJECTS, read with the lane's one token (see the container note below):
+# TWO BWS PROJECTS, read through the lane's socket or token (see the container note below):
 #   - the change-manager project: the READ-scoped bearer, which enumerates approved records and can
 #     do nothing else. It must NOT reach for the full bearer, which can approve a record -- a carry
 #     that could approve the proposal it is carrying would be a system asking itself for permission.
@@ -85,9 +85,13 @@
 # exists to prevent this program's own write, and requiring the orchestrator credential for a
 # reporting pass would break the read-only invocation this header promises works anywhere.
 #
-# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4, step 3f-2). `lane-run` passes the lane's own
-# token as its one secret, and the launcher reads every secret with that one token, in the
-# environment, never as a process argument:
+# THE LANE'S CONTAINER ONLY (ADR-0059 increment 4, step 3f-2). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret. Every secret is read with
+# `sds_bws_value` and one argument, through the socket or with that token in the environment, never
+# as a process argument; the broker serves this lane only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists. Without a socket or a token the launcher refuses with
+# exit 1, before the outcome alarm begins. It reads:
 #   - every pass: the change-manager READ bearer (`314f276d-…`), the orchestrator SYSTEM bearer
 #     (`221a48d5-…`, the watcher's read; the carry holds it only on `--register`),
 #     the orchestrator OBSERVER bearer (`f793576f-…`), the factory-events read password
@@ -99,8 +103,9 @@
 # `work-watcher repositories` prints (ADR-0059 decision 2), clones intent-packages through
 # `scripts/sds-git.sh` into the image's scratch directory, which `/intent-packages` links to, takes
 # the chain's three settings from the compose (a missing one fails the pass; there is no file
-# mode), verifies the whole VPS chain before the carry (D-52 A), and unsets `BWS_ACCESS_TOKEN`
-# before any program runs.
+# mode), verifies the whole VPS chain before the carry (D-52 A), and removes `BWS_ACCESS_TOKEN` and
+# `SDS_SECRETS_SOCKET` from every child and unsets both before any program runs; the socket itself
+# stays reachable, as the design accepts.
 #
 # Usage:
 #   scripts/run-work-carrier.sh                # reports both phases; writes nothing
@@ -142,9 +147,17 @@ PACKAGES_REMOTE="https://github.com/AlobarQuest/intent-packages.git"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The launcher runs only in the lane's container, where `lane-run` passes the token.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the work-carrier lane runs only in its container, through lane-run" >&2
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard: `--color no` and an
+# environment with the forcing variables removed, since FORCE_COLOR / CLICOLOR_FORCE make
+# `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe. Sourced first: the host
+# test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# Outside the lane's container this refuses before the outcome alarm begins or anything is read:
+# begun here, the alarm would ping the production check.
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the work-carrier lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -164,18 +177,12 @@ done
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" work-carrier "$_wants_register"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
-# CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
-# which breaks the parse below.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
 unset CHAIN_DB_HOST CHAIN_DB_PORT CHAIN_DB_NAME CHAIN_PASSWORD PACKAGES_CLONE
 # ---- THE LANE'S CONTAINER (ADR-0059 increment 4, step 3f-2) ---------------------------------
-# Every read takes the lane's one token from the environment (`sds_bws_value` with one argument),
-# so it never appears in a process argument. Each secret is always
-# read, never taken from the environment, which `lane-run` passes nothing else through.
-FROM=" (the lane's token)"
+# Every read goes through the lane's socket, or takes the lane's one token from the environment
+# (`sds_bws_value` with one argument), so no credential appears in a process argument. Each secret
+# is always read, never taken from the environment, which `lane-run` passes nothing else through.
+FROM=" (the lane's socket or token)"
 
 # THE CHAIN'S SETTINGS COME FROM THE COMPOSE, and a missing one fails the pass before anything is
 # read. There is no file mode to fall back to: a carry that
@@ -244,7 +251,8 @@ export WORK_WATCHER_ORCHESTRATOR_TOKEN="$WORK_CARRIER_ORCHESTRATOR_TOKEN"
 # repositories). AN UNDERIVABLE LIST MINTS NOTHING, AND SAYS SO, on this launcher's scale: the
 # subcommand exits 1 for an unreadable listing and 2 for a missing credential, as the watcher's
 # pass would, and that code is the pass's; any other non-zero code is passed through verbatim.
-REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/work-watcher" repositories)"
+REPOSITORIES="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+  "$REPO_ROOT/.venv/bin/work-watcher" repositories)"
 derive_rc=$?
 if [ "$derive_rc" -ne 0 ]; then
   sds_outcome_fail \
@@ -261,11 +269,11 @@ done <<< "$REPOSITORIES"
 # THE GITHUB TOKEN IS MINTED EACH PASS, bare or not, after the derivation, because the mint names
 # its repositories. The App's key goes from the BWS read straight to the mint's stdin in its
 # stored form, base64 of the PEM; it is never in a variable, an argument or a file, and the mint
-# runs without the lane's token. The three permissions are what the pass's reads use: the clone
-# (`contents`), the watcher's one GET of a pull request (`pull_requests`), and `metadata`, which
-# GitHub grants with every token.
+# runs without the lane's token or the socket's marker. The three permissions are what the pass's
+# reads use: the clone (`contents`), the watcher's one GET of a pull request (`pull_requests`), and
+# `metadata`, which GitHub grants with every token.
 WORK_CARRIER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-  | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+  | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
       --app-id "$READ_APP_ID" "${TARGETS[@]}" \
       --permission metadata=read --permission contents=read --permission pull_requests=read)"
 mint_rc=$?
@@ -275,8 +283,8 @@ fi
 export WORK_CARRIER_GITHUB_TOKEN
 
 # EVERY BWS READ IS DONE, and nothing after this needs a BWS identity, git and the programs
-# included, so the lane's token reaches none of them.
-unset BWS_ACCESS_TOKEN
+# included, so neither the lane's token nor the socket's marker reaches any of them.
+unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
 # THE PACKAGES CLONE, shallow, at `main`, into a directory the pass discards (decision 1). The
 # image links `/intent-packages` to `$PACKAGES_CLONE`, so `package_sources` finds its `src`

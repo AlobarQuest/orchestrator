@@ -426,10 +426,11 @@ volume `sds-lanes-revision-watcher-state` at `REVISION_WATCHER_STATE_DIR`
 40, as the Mac job's `StartInterval` of 3600 does; the minute keeps it clear of every other lane's
 start, and the watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer
 bearer, the hosting platform's API token, App Brain's read key, the `sds-bridge` alert sender
-(acting passes only), the read-only App's key and its ping-URL secret, all read with the lane's one
-token. Its compose
+(acting passes only), the read-only App's key and its ping-URL secret, all read through the
+broker. Its compose
 names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `revision-watcher-ping-url`, which the
-container's dead-man helper reads the URL from with the lane's own token (`scripts/sds-deadman.sh`).
+container's dead-man helper reads the URL from through the broker (`scripts/sds-deadman.sh`).
+It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/revision-watcher` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`).
 Its cut-over (ADR-0059, "Cut-over for one
 lane") still needs the following, in this order, each in its own change or act:
 
@@ -643,8 +644,8 @@ New York time, as the Mac job does; minute 5 is one no other lane starts on. The
 crontab line, so a scheduled pass registers, and the bare `lane-run work-carrier` is the reporting
 pass.
 
-Its `.bws-secrets.toml` secrets are its ping-URL secret and the following eight, all read with the
-lane's one token:
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following eight, all read through
+the lane secrets broker:
 
 - On every pass: the change-manager READ bearer, the orchestrator SYSTEM bearer (the watcher's read;
   the carry holds it only on `--register`), the orchestrator OBSERVER bearer, the factory-events
@@ -675,7 +676,9 @@ holds as `UNDECIDED` and the pass exits 2. An empty queue with a stale feed exit
 without it. The Mac pass gets no `--portfolio-scan` and still reads `~/.portfolio/portfolio.json`
 (`WORK_CARRIER_PORTFOLIO`); that read leaves with the Mac job. The check is an outcome alarm that pings only on `--register`. Its
 compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `work-carrier-ping-url`, which the
-container's dead-man helper reads the URL from with the lane's own token (`scripts/sds-deadman.sh`).
+container's dead-man helper reads the URL from through the broker (`scripts/sds-deadman.sh`).
+It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/work-carrier` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). The broker is the carrier's chain read holder in place of its lane account
+(D-81 (5) A).
 
 Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
 its own change or act:
@@ -733,10 +736,11 @@ minute 50 is the rotation decomposer's, so the lane takes 55, which no other lan
 which still runs before the carry's 07:05. The flag is in the crontab line, so a scheduled pass
 writes, and the bare `lane-run bump-proposer` is the dry run, which writes and pings nothing.
 
-Its `.bws-secrets.toml` secrets are its ping-URL secret and the following seven, all read with the
-lane's one token. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
-`bump-proposer-ping-url`, which the container's dead-man helper reads the URL from with the lane's
-own token (`scripts/sds-deadman.sh`).
+Its `.bws-secrets.toml` secrets are its ping-URL secret and the following seven, all read through
+the lane secrets broker. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`bump-proposer-ping-url`, which the container's dead-man helper reads the URL from through the
+broker (`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/bump-proposer` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). The broker holds the append password for
+the bump proposer only (D-81 (4) A).
 
 - On every pass: the change-manager READ bearer, the orchestrator OBSERVER bearer, the
   `sds-bridge` alert sender, and the read-only App's key.

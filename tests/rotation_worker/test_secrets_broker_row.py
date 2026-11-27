@@ -68,6 +68,13 @@ SECRETS = frozenset(
         "7651ccc2-7e13-417b-86da-b50100c0d4b2",  # change-proposer-ping-url
         "936bbbf2-dc3b-4343-979a-b501013afc87",  # rotation-decomposer-ping-url
         "506a5436-4643-4040-8a8b-b50601312be2",  # rotation-proposer-ping-url
+        # Phase C's fourth batch (ADR-0055 Amendment 32, item 4), given at HQ gate G-109.
+        "55fbae20-e503-4eb5-b75c-b5040164d394",  # work-carrier-ping-url
+        "786f75e2-3d02-4667-8607-b50601312a9d",  # bump-proposer-ping-url
+        "9b2722ea-8ec1-425b-ac2e-b4ff00cba931",  # revision-watcher-ping-url
+        "2ce0dbc7-eeac-4bf0-8204-b50200c97516",  # factory-events-append-password
+        "0bf066e9-28c1-4aa7-8c3d-b50300d492a6",  # prod-coolify-read-token
+        "726a18ba-7a38-4ecc-aa03-b49a015fd302",  # APP_BRAIN_READ_KEY
     }
 )
 

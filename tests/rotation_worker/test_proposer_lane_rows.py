@@ -39,8 +39,6 @@ class Lane:
     check: str
     # The `.bws-secrets.toml` secrets the lane reads, its ping URL's keeper among them.
     reach: frozenset[str]
-    # Whether the lane reads through the secrets broker, so its compose maps no token.
-    brokered: bool
 
     @property
     def token(self) -> str:
@@ -68,7 +66,6 @@ BUMP_PROPOSER = Lane(
             "786f75e2-3d02-4667-8607-b50601312a9d",  # bump-proposer-ping-url's keeper
         }
     ),
-    brokered=False,
 )
 ROTATION_PROPOSER = Lane(
     name="rotation-proposer",
@@ -84,7 +81,6 @@ ROTATION_PROPOSER = Lane(
             "506a5436-4643-4040-8a8b-b50601312be2",  # rotation-proposer-ping-url's keeper
         }
     ),
-    brokered=True,
 )
 LANES = (BUMP_PROPOSER, ROTATION_PROPOSER)
 BY_NAME = pytest.mark.parametrize("lane", LANES, ids=lambda lane: lane.name)
@@ -123,18 +119,15 @@ def test_the_token_row_is_one_the_lane_token_adapter_acts_on(
     bws_lane_token.check_row(entry.credential)
     variable = bws_lane_token.lane_variable(entry.destinations, entry.keeper)
     assert variable["uuid"] == lane.service
-    # The resource's variable: a token lane's compose maps it to the container's BWS_ACCESS_TOKEN,
-    # and a broker lane's maps it to nothing, keeping it until the lane tokens are revoked.
+    # The resource's variable, kept until the lane tokens are revoked; the lane reads through the
+    # secrets broker, so its compose maps it to nothing.
     assert variable["key"] == lane.variable
     # The lane phases redeploy the service, never the executor. Read from the row itself: the
     # destination parser reads a missing `redeploy` as false.
     [env] = [c for c in entry.credential["consumer"] if c["kind"] == "coolify-env"]
     assert env["redeploy"] is False
     compose = (ROOT / "lanes" / lane.name / "compose.yaml").read_text()
-    if lane.brokered:
-        assert f"${{{lane.variable}}}" not in compose
-    else:
-        assert f"BWS_ACCESS_TOKEN: ${{{lane.variable}}}" in compose
+    assert f"${{{lane.variable}}}" not in compose
 
 
 @BY_NAME

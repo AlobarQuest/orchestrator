@@ -13,7 +13,8 @@ request arrives on is the lane's identity.
 The broker lanes are the tables in `lanes/secrets-broker/allowlist.toml`: `inert-landing`,
 `estate-landing`, `bump-driver`, `follow-up-mint`, `change-window`, `execution-watch`,
 `landing-ledger`, `pin-watcher`, `unit-verifier`, `membership-check`, `deploy-watcher`,
-`change-proposer`, `rotation-decomposer` and `rotation-proposer`. A test
+`change-proposer`, `rotation-decomposer`, `rotation-proposer`, `work-carrier`, `bump-proposer` and
+`revision-watcher`. A test
 holds that set equal to the lane composes that map no token
 (`tests/scripts/test_secrets_broker_allowlist.py`).
 
@@ -251,9 +252,11 @@ broker failed on a connection, and the lane sees no reply).
 
 ## What the broker doesn't change
 
-Three lanes on the VPS still read with their own tokens: `bump-proposer`, `revision-watcher` and
-`work-carrier`. They, and every Mac launcher, run unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN` Coolify variables
-and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5).
+No Amendment 32 lane reads with its own token: every lane on the VPS reads through the broker,
+and every Mac launcher runs unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN`
+Coolify variables and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5).
+The `bump-proposer` machine account also keeps the Mac's Keychain token `bws-bump-proposer-token`
+after the revoke (D-81 (6)).
 
 The broker's own token rotates through the executor ("Rotate the broker's token"). It is in the
 unlock tier (ADR-0055 amendment 34 item 1, D-81 (1) A, D-83 11 B), which names two credentials:

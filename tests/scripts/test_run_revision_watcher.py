@@ -1,10 +1,11 @@
-"""`scripts/run-revision-watcher.sh` (ADR-0059 increment 3): which secrets it reads with the lane's
-token, the repositories it derives, the GitHub mint's exact arguments, and that `gh` is never
-asked; the alert token is fetched on the acting pass only; the exit codes fold; outside the
-container it refuses.
+"""`scripts/run-revision-watcher.sh` (ADR-0059 increment 3): which secrets it reads through the
+lane's socket or token, the repositories it derives, the GitHub mint's exact arguments, and that
+`gh` is never asked; the alert token is fetched on the acting pass only; the exit codes fold;
+outside the container it refuses.
 
 The launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's
-token as `BWS_ACCESS_TOKEN`. `bws`,
+token as `BWS_ACCESS_TOKEN`, or the secrets broker's socket as `SDS_SECRETS_SOCKET` (a stand-in
+broker, `conftest.py`'s). `bws`,
 `gh` and `curl` are stubs on PATH; the venv's `python -m scripts.sds_scope`, `sds-github-mint` and
 `revision-watcher` are stubs that log. Nothing reads the real Keychain, BWS, GitHub, the member
 record or Healthchecks.
@@ -21,6 +22,7 @@ import pytest
 import yaml
 
 from scripts import deploy_orchestrator as deploy
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-revision-watcher.sh")
@@ -31,6 +33,7 @@ PLATFORM_UUID = "0bf066e9-28c1-4aa7-8c3d-b50300d492a6"  # prod-coolify-read-toke
 ESTATE_UUID = "726a18ba-7a38-4ecc-aa03-b49a015fd302"
 ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
 READ_APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
+PING_URL_KEEPER = "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"
 PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
 PING_URL = "https://hc.example/ping/revision-watcher"
 LANE_TOKEN = "a-lane-token"
@@ -52,12 +55,13 @@ _CURL = """#!/bin/sh
 for argument in "$@"; do [ "$argument" = "-" ] && { cat >> "$PING_LOG"; exit 0; }; done
 exit 1
 """
-# `python -c` is `sds-bws.sh`'s parse and runs for real; `python -m scripts.sds_scope` is the
-# derivation, answered from the environment.
+# `python -c` is `sds-bws.sh`'s parse and `python -I -c` its socket client, and both run for real;
+# `python -m scripts.sds_scope` is the derivation, answered from the environment.
 _PYTHON = """#!/bin/bash
-if [ "$1" = "-c" ]; then exec "$REAL_PYTHON" "$@"; fi
+case "$1" in -c|-I) exec "$REAL_PYTHON" "$@" ;; esac
 echo "scope $* token=$SDS_SCOPE_ORCHESTRATOR_TOKEN \\
 lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "scope socket=${SDS_SECRETS_SOCKET:+set}" >> "$CHILD_LOG"
 printf '%s' "$FAKE_SCOPE"
 exit "${FAKE_SCOPE_RC:-0}"
 """
@@ -67,6 +71,7 @@ _MINT = """#!/bin/bash
 echo "mint $*" >> "$LANE_LOG"
 echo "stdin=$(cat)" >> "$LANE_LOG"
 echo "mint lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "mint socket=${SDS_SECRETS_SOCKET:+set}" >> "$CHILD_LOG"
 [ "${FAKE_MINT_RC:-0}" -eq 0 ] || { echo "FATAL: refused" >&2; exit "$FAKE_MINT_RC"; }
 printf '%s' "$FAKE_MINTED"
 """
@@ -74,6 +79,7 @@ _WATCHER = """#!/bin/bash
 echo "watcher args=$* github=$REVISION_WATCHER_GITHUB_TOKEN observer=$ORCHESTRATOR_API_TOKEN \\
 platform=$REVISION_WATCHER_PLATFORM_TOKEN estate=$REVISION_WATCHER_ESTATE_KEY \\
 alert=${SDS_BRIDGE_ALERT_TOKEN:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "watcher socket=${SDS_SECRETS_SOCKET:+set}" >> "$CHILD_LOG"
 exit "${FAKE_WATCHER_RC:-0}"
 """
 OBSERVER = f"value-of-{OBSERVER_UUID}"
@@ -88,8 +94,9 @@ def _executable(path: Path, text: str) -> None:
 
 
 def _run(
-    tmp_path: Path, *args: str, gh: str = _GH, **fake: str
+    tmp_path: Path, *args: str, gh: str = _GH, **fake: str | None
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
+    """`fake` overrides the environment; `None` removes a variable."""
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
     for name in (LAUNCHER.name, "sds-deadman.sh", "sds-bws.sh"):
@@ -105,7 +112,7 @@ def _run(
         _executable(stubs / name, body)
     home = tmp_path / "home"
     home.mkdir()
-    logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "gh", "ping")}
+    logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "gh", "ping", "child")}
     for log in logs.values():
         log.write_text("")
     env = {
@@ -120,8 +127,10 @@ def _run(
         "BWS_LOG": str(logs["bws"]),
         "GH_LOG": str(logs["gh"]),
         "PING_LOG": str(logs["ping"]),
+        "CHILD_LOG": str(logs["child"]),
         **fake,
     }
+    env = {k: v for k, v in env.items() if v is not None}
     result = subprocess.run(
         [
             "/usr/bin/env",
@@ -217,7 +226,7 @@ def test_an_unreadable_secret_exits_1_before_the_derivation(tmp_path: Path) -> N
         run_dir.mkdir()
         result, logs = _run(run_dir, BWS_REFUSES=uuid)
         assert result.returncode == 1, uuid
-        assert "the lane's token" in result.stderr, uuid
+        assert "(the lane's socket or token)" in result.stderr, uuid
         assert logs["lane"] == [], uuid
         assert _pings(logs["ping"]) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
 
@@ -295,14 +304,117 @@ def test_exit_codes_fold_as_before(tmp_path: Path, program_exit: int, expected: 
 # ---- outside the container -------------------------------------------------------------------
 
 
-def test_outside_the_container_it_refuses_and_runs_nothing(tmp_path: Path) -> None:
-    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN="")
+@pytest.mark.parametrize("token", [None, ""], ids=["unset", "empty"])
+def test_outside_the_container_it_refuses_and_runs_nothing(
+    tmp_path: Path, token: str | None
+) -> None:
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN=token)
     assert result.returncode == 1
     assert (
-        "FATAL: no BWS_ACCESS_TOKEN: the revision-watcher lane runs only in its container,"
-        " through lane-run" in result.stderr
+        "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the revision-watcher lane runs only"
+        " in its container, through lane-run" in result.stderr
     )
-    assert logs == {"lane": [], "bws": [], "gh": [], "ping": []}
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": [], "child": []}
+
+
+def test_a_socket_variable_naming_no_socket_refuses_and_reads_nothing(tmp_path: Path) -> None:
+    """`SDS_SECRETS_SOCKET` alone isn't the container: it must name a socket."""
+    not_a_socket = tmp_path / "broker.sock"
+    not_a_socket.write_text("")
+    result, logs = _run(tmp_path, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(not_a_socket))
+    assert result.returncode == 1
+    assert "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN" in result.stderr
+    assert logs == {"lane": [], "bws": [], "gh": [], "ping": [], "child": []}
+
+
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+
+def _brokered(
+    tmp_path: Path, socket_path: Path, *args: str
+) -> tuple[subprocess.CompletedProcess[str], dict]:
+    """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
+    return _run(tmp_path, *args, BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(socket_path))
+
+
+def _served() -> dict[str, str | None]:
+    return {
+        OBSERVER_UUID: OBSERVER,
+        PLATFORM_UUID: PLATFORM,
+        ESTATE_UUID: ESTATE,
+        ALERT_UUID: ALERT,
+        READ_APP_KEY_UUID: f"value-of-{READ_APP_KEY_UUID}",
+        PING_URL_UUID: PING_URL,
+    }
+
+
+def test_on_the_socket_without_a_token_an_acting_pass_reads_every_secret_through_it(
+    tmp_path: Path, broker
+) -> None:
+    """The socket serves the ping URL and the five secrets; `bws` never runs, and no child gets
+    the lane's token or the socket's marker."""
+    result, logs = _brokered(tmp_path, broker(_served()))
+    assert result.returncode == 0, result.stderr
+    assert logs["bws"] == [] and logs["gh"] == []
+    assert f"stdin=value-of-{READ_APP_KEY_UUID}" in logs["lane"]
+    assert _watcher_runs(logs["lane"]) == [
+        f"watcher args= github={MINTED} observer={OBSERVER} platform={PLATFORM} estate={ESTATE}"
+        f" alert={ALERT} lane_token="
+    ]
+    assert logs["child"] == ["scope socket=", "mint socket=", "watcher socket="]
+    assert _pings(logs["ping"]) == [f"{PING_URL}/start", PING_URL]
+    for secret in (MINTED, OBSERVER, PLATFORM, ESTATE, ALERT):
+        assert secret not in result.stdout + result.stderr
+
+
+def test_on_the_socket_a_dry_run_reads_no_alert_token(tmp_path: Path, broker) -> None:
+    served = _served()
+    del served[ALERT_UUID]
+    result, logs = _brokered(tmp_path, broker(served), "--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert logs["bws"] == []
+    assert _watcher_runs(logs["lane"]) == [
+        f"watcher args=--dry-run github={MINTED} observer={OBSERVER} platform={PLATFORM}"
+        f" estate={ESTATE} alert= lane_token="
+    ]
+    assert logs["child"] == ["scope socket=", "mint socket=", "watcher socket="]
+
+
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [
+        (PLATFORM_UUID, "bws_failed"),
+        (ESTATE_UUID, "not_allowed"),
+        (ALERT_UUID, "not_allowed"),
+    ],
+    ids=["platform-read-failed", "estate-not-on-the-allowlist", "sender-not-on-the-allowlist"],
+)
+def test_a_secret_the_socket_refuses_fails_the_pass(
+    tmp_path: Path, broker, refused: str, reason: str
+) -> None:
+    served = _served()
+    if reason == "bws_failed":
+        served[refused] = None
+    else:
+        del served[refused]
+    result, logs = _brokered(tmp_path, broker(served))
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {refused}: {reason}" in result.stderr
+    assert "(the lane's socket or token)" in result.stderr
+    assert logs["bws"] == []
+    assert _watcher_runs(logs["lane"]) == []
+    assert _pings(logs["ping"]) == [f"{PING_URL}/start", f"{PING_URL}/fail"]
+
+
+def test_a_dead_socket_fails_the_pass_and_never_falls_back_to_bws(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    result, logs = _brokered(tmp_path, dead_socket)
+    assert result.returncode == 1
+    assert f"the secrets broker gave no value for {OBSERVER_UUID}: no_reply" in result.stderr
+    assert "FATAL: could not read the observer bearer" in result.stderr
+    assert logs["bws"] == []
+    assert logs["lane"] == []
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -310,18 +422,33 @@ def test_outside_the_container_it_refuses_and_runs_nothing(tmp_path: Path) -> No
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "revision-watcher")
-    assert deploy.add_refusals(service, "revision-watcher") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "revision-watcher", allowlist)
+    assert deploy.add_refusals(service, "revision-watcher", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "revision-watcher") == []
+    assert allowlist["revision-watcher"] == {
+        OBSERVER_UUID,
+        PLATFORM_UUID,
+        ESTATE_UUID,
+        ALERT_UUID,
+        READ_APP_KEY_UUID,
+        PING_URL_KEEPER,
+    }
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["revision-watcher"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${REVISION_WATCHER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "REVISION_WATCHER_STATE_DIR": "/var/lib/sds/revision-watcher",
             # The BWS secret id of `revision-watcher-ping-url`, not a secret and not the ping URL.
-            "SDS_DEADMAN_PING_URL_UUID": "9b2722ea-8ec1-425b-ac2e-b4ff00cba931",
+            "SDS_DEADMAN_PING_URL_UUID": PING_URL_KEEPER,
         },
-        "volumes": ["sds-lanes-revision-watcher-state:/var/lib/sds/revision-watcher"],
+        "volumes": [
+            "sds-lanes-revision-watcher-state:/var/lib/sds/revision-watcher",
+            "/data/sds/broker/revision-watcher:/run/sds-broker:ro",
+        ],
         "restart": "unless-stopped",
     }
     document = yaml.safe_load(COMPOSE.read_text())
@@ -359,7 +486,7 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 def test_the_repositorys_manifest_lists_the_watchers_secrets() -> None:
     manifest = Path(".bws-secrets.toml").read_text()
-    ping_url_secret = "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"
+    ping_url_secret = PING_URL_KEEPER
     assert deploy.lane_secrets(manifest, "revision-watcher") == [
         OBSERVER_UUID,
         PLATFORM_UUID,

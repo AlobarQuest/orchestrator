@@ -401,8 +401,8 @@ The holders in this repository:
 
 | Holder | Secret | Account and Keychain item | When it fetches |
 | --- | --- | --- | --- |
-| `scripts/run-bump-proposer.sh` | `factory-events-append-password` (`2ce0dbc7-…`) | The `bump-proposer` lane account, with the lane's own token in its container (no Keychain item). | A `--submit` run, with the chain settings from the lane's compose. A dry run fetches nothing. The password reaches `bump-proposer` alone. |
-| `scripts/run-work-carrier.sh` | `factory-events-read-password` (`2f708d08-…`) | The `work-carrier` lane account, with the lane's own token in its container (no Keychain item). | Every pass, with the chain settings from the lane's compose. The password reaches `work-carrier` and the container's chain verify only, never `work-watcher`. |
+| `scripts/run-bump-proposer.sh` | `factory-events-append-password` (`2ce0dbc7-…`) | The lane secrets broker's account `lane-secrets-broker`, through the broker in the lane's container (no Keychain item), for the bump proposer only (ADR-0055 Amendment 32, D-81 (4) A). | A `--submit` run, with the chain settings from the lane's compose. A dry run fetches nothing. The password reaches `bump-proposer` alone. |
+| `scripts/run-work-carrier.sh` | `factory-events-read-password` (`2f708d08-…`) | The lane secrets broker's account `lane-secrets-broker`, through the broker in the lane's container (no Keychain item), as the carrier's read holder (ADR-0055 Amendment 32, D-81 (5) A). | Every pass, with the chain settings from the lane's compose. The password reaches `work-carrier` and the container's chain verify only, never `work-watcher`. |
 | `scripts/factory-events-session.sh` (FE-5 P-OR-2) | `factory-events-append-password` | `factory-events-session`, `Claude` / `BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION` | Each run, for an interactive session's `approve` or the one history import. |
 
 `scripts/run-rotation-proposer.sh` holds no chain password in the `rotation-proposer` lane
