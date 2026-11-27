@@ -1490,9 +1490,10 @@ healthchecks_check = "sds-follow-up-mint"
 # `created` is the age anchor: Devon minted the first token and pasted it into the Coolify variable
 # on 2026-11-20, with the keeper copy in Rotation / Keepers. infraops serves it as `last_rotated`,
 # so the proposer reads the token as issued and derives the rotation plan, never the issue plan.
-# The row stays `rotated_by_sds = false`, with no `rotate_requested`, until amendment 34 item 9's
-# exit checks 1-3 pass and item 5's bind on a project grant is settled; the executor refuses the
-# row until then, so check 4, the first real rotation, follows the flip.
+# Handed to the SDS once amendment 34 item 9's exit checks 1-3 passed (HQ gates G-110 and G-111)
+# and item 5's bind on a project grant was settled, and due for its first rotation by
+# `rotate_requested`; that rotation is check 4, which can't run before the flip because the
+# proposer and the executor act only on a handed-over row.
 # Its reach is project-level for SDS Operator and SDS / Lane Apps, plus single-secret grants:
 # - Rotation / Keepers: change-manager/M2M_TOKEN_READ, inert-landing-ping-url,
 #   estate-landing-ping-url, bump-driver-ping-url, follow-up-mint-ping-url,
@@ -1530,7 +1531,8 @@ id = "secrets-broker-bws-token"
 class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
-rotated_by_sds = false
+rotated_by_sds = true
+rotate_requested = "2026-11-27"
 helper_target = "secrets-broker"
 created = "2026-11-20"
 reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5", "3d41395a-06c3-47d5-ac85-b50a00dfbc2f", "aa7c76af-bd52-4796-9d13-b50a00e035de", "0e9ebf2d-5b62-4f81-a731-b50a00e0df18", "71616bf5-14ba-4888-b3f8-b50a00e13ed2", "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3", "f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "97802aac-5a7f-45e8-8185-b4fc00cd318e", "ebabdd63-2eff-4b8e-99b7-b4fd01754eae", "872684c0-899e-43b7-9c2d-b50000e88b21", "3b9503da-eb7e-401d-b4a7-b4a400c07efb", "1cfc8352-c960-4afc-bd49-b4ff00e8783e", "5fc44897-b4df-44ae-8491-b5000129d9be", "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875", "acccb346-4baa-43ec-a1d4-b4a400c048ee", "7651ccc2-7e13-417b-86da-b50100c0d4b2", "936bbbf2-dc3b-4343-979a-b501013afc87", "506a5436-4643-4040-8a8b-b50601312be2", "55fbae20-e503-4eb5-b75c-b5040164d394", "786f75e2-3d02-4667-8607-b50601312a9d", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931", "2ce0dbc7-eeac-4bf0-8204-b50200c97516", "0bf066e9-28c1-4aa7-8c3d-b50300d492a6", "726a18ba-7a38-4ecc-aa03-b49a015fd302"]

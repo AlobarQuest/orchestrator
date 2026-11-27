@@ -5684,7 +5684,8 @@ grant: the reach exists today because of where the keeper is. Open item 10 puts 
      `/etc/sds-pg-rotate/targets.toml` on `prod-vps`, written as root after a `docker ps` confirms the
      name, as increment 7's cut-over did for the lane targets.
 
-   **Exit checks**, each before `rotated_by_sds = true`:
+   **Exit checks**: checks 1 to 3 pass before `rotated_by_sds = true`, and check 4 runs after it,
+   because the proposer and the executor act only on a handed-over row (`checks.py`, `cli.py`):
    1. **The target answers for the running broker, with no mint.** As root on `prod-vps`, the
       helper's `loaded` for `secrets-broker` answers one consumer,
       `secrets-broker-wogvks6obmvv9fdotlgnw7r3/BWS_ACCESS_TOKEN`, with a non-empty fingerprint. That

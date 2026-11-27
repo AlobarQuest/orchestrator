@@ -69,9 +69,8 @@ ADR-0055 amendment 34 (D-81 (2) B, D-83). The broker's token, row `secrets-broke
 loaded-fingerprint proof. Devon mints and revokes; the executor binds, stores, writes the variable
 and proves; a session restarts the broker. The row's `created` is the age anchor, so the proposer
 generates a rotation plan, and Devon approves each package revision by name: no standing approval
-covers a rotation plan. While the row is `rotated_by_sds = false`, the proposer generates no
-package and the executor refuses the row (`src/rotation_worker/checks.py`), so "Run a rotation"
-runs only after the commit that sets it `true`.
+covers a rotation plan. The row is `rotated_by_sds = true`: the proposer and the executor act only
+on a handed-over row (`src/rotation_worker/checks.py`), so "Run a rotation" follows that commit.
 
 ### Install the helper target
 
