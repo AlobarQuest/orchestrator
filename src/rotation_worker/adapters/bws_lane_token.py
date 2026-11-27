@@ -12,7 +12,14 @@ lane's `<LANE>_BWS_ACCESS_TOKEN` variable.
   lane's account sees (`reach_secrets`, and `reach_projects`, empty unless a grant is a project's),
   and the pasted token must see exactly that, beside a login a known-bad control fails. So it binds
   after a leak's early revoke, when the old token no longer answers. No two rows may declare the
-  same set, or the check couldn't tell one lane's token from another's.
+  same set, or the check couldn't tell one lane's token from another's. A row with
+  `reach_projects` empty (every lane's) binds only on an exact match, by digest (`_REACH`). A row
+  naming projects (the broker's own token, `secrets-broker-bws-token`) can't: a project grant's
+  secrets are listed too (outcome C of amendment 34 item 5, measured 2026-11-27). It binds when
+  the listed projects equal the declared ones exactly and every declared secret is listed
+  (`_REACH_IDS`); any other answer, a failed listing included, refuses. That form is weaker than
+  an exact match: a broker token with one extra single-secret grant would bind (amendment 34
+  item 5).
 * **Distribute writes the variable with one `PATCH` and never restarts** (item 6): the lane takes
   the token at its next start, a lane phases' redeploy in its quiet slot. The client it builds
   can't send a restart, and a row whose `coolify-env` has `redeploy` true is refused before a
@@ -196,6 +203,7 @@ def build_provider(
         siblings,
         loaded=loaded,
         issue=issue,
+        project_reach=(projects, secrets) if projects else None,
     )
 
 
@@ -243,9 +251,13 @@ class BwsLaneTokenProvider:
         siblings: Callable[[], list[str]],
         loaded: LoadedRead | None = None,
         issue: bool = False,
+        project_reach: tuple[frozenset[str], frozenset[str]] | None = None,
     ) -> None:
         self._login = login
         self._declared = declared
+        # A row's declared projects and secrets when it names a project: the project-reach bind.
+        # `None` for a row naming none, which binds on the exact digest `declared`.
+        self._project_reach = project_reach
         self._variable = variable
         self._coolify = coolify
         self._client: CoolifyClient | None = None
@@ -278,9 +290,21 @@ class BwsLaneTokenProvider:
             )
         if not accepts(self, new):
             return "a fresh login doesn't accept it beside a refused known-bad value"
-        if self._login.reach(new) != self._declared:
+        if not self._sees_declared_reach(new):
             return "what it can see isn't exactly the reach its registry row declares"
         return None
+
+    def _sees_declared_reach(self, new: Value) -> bool:
+        """A row naming no project: exactly its declared reach, by digest. A row naming projects:
+        exactly its declared projects, and at least its declared secrets, since a project grant's
+        own secrets are listed too. A failed listing (`None`) sees nothing."""
+        if self._project_reach is None:
+            return self._login.reach(new) == self._declared
+        listed = self._login.reach_sets(new)
+        if listed is None:
+            return False
+        projects, secrets = self._project_reach
+        return listed[0] == projects and secrets <= listed[1]
 
     def write_variable(self, consumer: Mapping[str, Any], new: Value) -> None:
         """One `PATCH` of the lane's variable, never a restart. A 404 (no such variable) raises

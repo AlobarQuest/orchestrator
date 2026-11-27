@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 import secrets
 import string
@@ -115,6 +116,27 @@ except Exception:
 else:
     print(hashlib.sha256("\\n".join(ids).encode()).hexdigest())
 """
+# Run in the child: the same three calls as `_REACH`, printing the sorted project and secret ids
+# as JSON (ids only, never a key or value), for a bind that compares sets (`reach_sets`).
+_REACH_IDS: Final = f"""
+import json
+import sys
+from {CHILD_SDK} import BitwardenClient
+organization, token = sys.stdin.read().split("\\n", 1)
+client = BitwardenClient()
+try:
+    client.auth().login_access_token(token)
+    projects = client.projects().list(organization)
+    secrets = client.secrets().list(organization)
+    ids = {{
+        "projects": sorted(str(p.id) for p in projects.data.data),
+        "secrets": sorted(str(s.id) for s in secrets.data.data),
+    }}
+except Exception:
+    print("unreadable")
+else:
+    print(json.dumps(ids))
+"""
 
 
 def reach_digest(projects: Iterable[str], secrets: Iterable[str]) -> str:
@@ -180,6 +202,29 @@ class BwsMachineTokenProvider:
             raise ContractError("no organization is configured to list what a token can see")
         answer = self._fresh(_REACH, f"{self._organization_id}\n{value.reveal()}")
         return answer if answer is not None and DIGEST.fullmatch(answer) else None
+
+    def reach_sets(self, value: Value) -> tuple[frozenset[str], frozenset[str]] | None:
+        """The project ids and secret ids `value` can see (`_REACH_IDS`), or `None` when the login
+        or a listing fails, or the child answers anything but two lists of ids. The caller
+        refuses on `None` and names the refusal; no answer carries a key, a value or the token."""
+        if self._organization_id is None:
+            raise ContractError("no organization is configured to list what a token can see")
+        answer = self._fresh(_REACH_IDS, f"{self._organization_id}\n{value.reveal()}")
+        if answer is None:
+            return None
+        try:
+            listed = json.loads(answer)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(listed, dict):
+            return None
+        sets = []
+        for kind in ("projects", "secrets"):
+            ids = listed.get(kind)
+            if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                return None
+            sets.append(frozenset(ids))
+        return sets[0], sets[1]
 
     def _fresh(self, script: str, stdin: str) -> str | None:
         """What `script` prints, run in a child with a new SDK client and an empty, throwaway
