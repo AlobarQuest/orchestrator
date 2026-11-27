@@ -83,9 +83,7 @@ def mint(
     """
     wanted = _check_request(app_id, repositories, permissions)
     label = ", ".join(repositories)
-    client = _client(
-        sign_app_jwt(app_id, private_key_pem, clock), wanted, transport, user_agent
-    )
+    client = _client(sign_app_jwt(app_id, private_key_pem, clock), wanted, transport, user_agent)
     try:
         installations = {_installation(client, repository) for repository in wanted.values()}
         if len(installations) != 1:
