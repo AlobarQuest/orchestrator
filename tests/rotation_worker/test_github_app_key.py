@@ -357,6 +357,14 @@ def test_a_proof_token_reaching_more_is_refused_and_still_revoked() -> None:
     assert github.tokens == {} and len(github.revoked) == 1
 
 
+def test_a_proof_token_reaching_one_other_repository_is_refused() -> None:
+    github = GitHub(reach=["AlobarQuest/orchestrator"])
+    rotating, _, _ = _rotating(github)
+    with pytest.raises(ContractError, match=f"doesn't reach {PROOF} alone"):
+        rotating.run("store")
+    assert github.tokens == {} and len(github.revoked) == 1
+
+
 @pytest.mark.parametrize("status", [404, 500])
 def test_a_proof_token_not_revoked_fails_the_step_by_its_status(status: int) -> None:
     github = GitHub(revoke_status=status)
