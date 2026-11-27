@@ -8,7 +8,8 @@ from intent-packages' and the registries' public git:
   package at that commit hashes to the `content_hash` the orchestrator holds;
 * it is a standing rotation package for one credential and one occurrence;
 * that credential's registry entry, read at its repository's `main`, still hands it to the SDS
-  (`rotated_by_sds = true`, R6) and names the adapter's provider;
+  (`rotated_by_sds = true`, R6), names the adapter's provider, and is of the class the adapter
+  runs: its type's, or the type whose fixed plan the adapter's name pins (`runs_on_class`);
 * the plan is the one the approved package's criteria describe, step for step: for a credential
   type, the plan derived from its registry row (`plans.derive`), or the plan its packages were
   approved with before derivation; for any other name, its one fixed plan;
@@ -36,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from rotation_worker import envelope
-from rotation_worker.adapters import ADAPTERS, Adapter
+from rotation_worker.adapters import ADAPTERS, Adapter, runs_on_class
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.contract import (
     ACTIONS_KIND,
@@ -108,7 +109,8 @@ def check_unit(
     if intake.get("id") != unit_view.get("work_package_revision_id"):
         raise ContractError("the package revision isn't the unit's")
     constraints = envelope.constraints(unit_view)
-    adapter = ADAPTERS.get(str(constraints.get(ADAPTER_KEY)))
+    adapter_name = str(constraints.get(ADAPTER_KEY))
+    adapter = ADAPTERS.get(adapter_name)
     if adapter is None:
         raise ContractError(f"no adapter named {constraints.get(ADAPTER_KEY)!r}")
     document = approved_package(intake, mirror)
@@ -116,12 +118,7 @@ def check_unit(
     credential_id = str(fields.get("credential_id"))
     packaged = standing_destinations(fields, credential_id, "the approved revision")
     entry = find_credential(mirror, credential_id)
-    if not entry.rotated_by_sds:
-        raise ContractError(f"{credential_id} isn't rotated_by_sds in the registry")
-    if entry.credential.get("provider") != adapter.provider_name:
-        raise ContractError(
-            f"{credential_id}'s provider isn't the {adapter.provider_name} adapter's"
-        )
+    _check_handed_to(entry, adapter_name, adapter)
     enveloped = constraints.get(DESTINATIONS_KEY)
     if (
         not isinstance(enveloped, list)
@@ -157,6 +154,24 @@ def check_unit(
     rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
     _check_issue_fact(adapter, plan, rotation, store)
     return Approved(adapter, plan, unit, rotation, entry, reads, without_overlap)
+
+
+def _check_handed_to(entry: RegistryEntry, adapter_name: str, adapter: Adapter) -> None:
+    """The row hands its credential to the SDS, names the adapter's provider, and is of the class
+    the adapter runs: two types can share a provider (`github`), so the provider can't tell."""
+    credential_id = entry.credential.get("id")
+    if not entry.rotated_by_sds:
+        raise ContractError(f"{credential_id} isn't rotated_by_sds in the registry")
+    if entry.credential.get("provider") != adapter.provider_name:
+        raise ContractError(
+            f"{credential_id}'s provider isn't the {adapter.provider_name} adapter's"
+        )
+    credential_class = entry.credential.get("class")
+    if not runs_on_class(adapter_name, credential_class):
+        raise ContractError(
+            f"the {adapter_name} adapter doesn't run a {credential_class!r} row: it runs its "
+            "type's class alone"
+        )
 
 
 def _plan(

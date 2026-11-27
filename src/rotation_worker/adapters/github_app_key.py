@@ -24,6 +24,8 @@ after the person deletes the App's other key pairs, proves the old key dead.
 * **The revoke alert** names the new key pair by the first 8 characters of GitHub's own SHA-256
   fingerprint of its public half: a hash of a public key, never written into evidence.
 * **Mint, host, consumer_loaded and revoke** are never the executor's.
+* **The one-off probe** (`probe_current`, `rotation-worker probe`) runs the working proof alone on
+  a key already kept (amendment 35's exit check 2): the same calls, with no old key to compare.
 
 Nothing here logs, keeps or raises with the PEM, a JWT or a token, and no response body is kept:
 a refusal names the request, the status, or the failure's type.
@@ -131,6 +133,67 @@ def declared_app(credential: Mapping[str, Any]) -> str | None:
     return str(_declared_id(credential, APP_ID_FIELD))
 
 
+def confined_client(
+    proof_repository: str, transport: httpx.BaseTransport | None = None
+) -> ConfinedClient:
+    """The client the probe and the working proof go through: `GET /app`, the proof repository's
+    installation, the token's repositories and the token's revoke, and nothing else. The proof's
+    mint goes through `github_app_mint`'s own client."""
+    permitted = {
+        ("GET", APP_PATH),
+        ("GET", f"/repos/{proof_repository}/installation"),
+        ("GET", REPOSITORIES_PATH),
+        ("DELETE", TOKEN_PATH),
+    }
+    try:
+        return ConfinedClient(
+            base_url=API,
+            user_agent=USER_AGENT,
+            headers=HEADERS,
+            timeout=TIMEOUT_SECONDS,
+            permits=lambda method, path: (method, path) in permitted,
+            refuse=lambda method, path: ContractError(f"the probe may not {method} {path}"),
+            transport=transport,
+        )
+    except TransportFailure as failure:
+        raise ContractError(f"GitHub's client couldn't be built: {failure.error_type}") from None
+
+
+def probe_current(
+    credential: Mapping[str, Any],
+    key: Value,
+    transport: httpx.BaseTransport | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> dict[str, Any]:
+    """The one-off working proof of a key already kept (amendment 35 exit check 2): the row's ids
+    and proof repository, and `ok` or the refusal, which names requests and statuses only."""
+    app_id, installation_id, proof = row_fields(credential)
+
+    def no_old() -> Value:
+        raise ContractError("the probe compares no old key")
+
+    provider = GitHubAppKeyProvider(
+        confined_client(proof, transport),
+        app_id=app_id,
+        installation_id=installation_id,
+        proof_repository=proof,
+        old=no_old,
+        transport=transport,
+        clock=clock,
+        control_key=_new_rsa_pem,
+    )
+    found: dict[str, Any] = {
+        "app_id": app_id,
+        "installation_id": installation_id,
+        "proof_repository": proof,
+    }
+    try:
+        provider.working_proof(key)
+    except ContractError as refusal:
+        return {**found, "status": "refused", "refusal": str(refusal)}
+    return {**found, "status": "ok"}
+
+
 def build_provider(
     *,
     rotation: Rotation | None,
@@ -152,27 +215,8 @@ def build_provider(
         quarantine = store.find(rotation.work_project_id, rotation.quarantine_key)
         return store.read(quarantine.id if quarantine is not None else rotation.keeper_id)
 
-    installation_path = f"/repos/{proof}/installation"
-    permitted = {
-        ("GET", APP_PATH),
-        ("GET", installation_path),
-        ("GET", REPOSITORIES_PATH),
-        ("DELETE", TOKEN_PATH),
-    }
-    try:
-        client = ConfinedClient(
-            base_url=API,
-            user_agent=USER_AGENT,
-            headers=HEADERS,
-            timeout=TIMEOUT_SECONDS,
-            permits=lambda method, path: (method, path) in permitted,
-            refuse=lambda method, path: ContractError(f"the probe may not {method} {path}"),
-            transport=transport,
-        )
-    except TransportFailure as failure:
-        raise ContractError(f"GitHub's client couldn't be built: {failure.error_type}") from None
     return GitHubAppKeyProvider(
-        client,
+        confined_client(proof, transport),
         app_id=app_id,
         installation_id=installation_id,
         proof_repository=proof,
@@ -275,6 +319,11 @@ class GitHubAppKeyProvider:
         mint a token on the row's installation. Returns the note verify_new files."""
         if _public_der(new) == _public_der(self._old()):
             raise ContractError("the new key is the old key pair: its public half is the same")
+        return self.working_proof(new)
+
+    def working_proof(self, new: Value) -> str:
+        """Whether `new` mints a token on the row's installation reaching the proof repository
+        alone, revoked with 204; returns the note verify_new files, or refuses."""
         assertion = self._jwt(new)
         installation = self._installation(assertion)
         if installation != self._installation_id:

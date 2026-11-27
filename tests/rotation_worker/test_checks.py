@@ -37,7 +37,7 @@ REVISION = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 WORK = "99999999-0000-4000-8000-000000000000"
 
 
-def _registry(**changes: str) -> str:
+def _registry(credential_class: str = "rotation-canary", **changes: str) -> str:
     entry = {
         "provider": '"fake"',
         "bws_uuid": f'"{KEEPER}"',
@@ -49,7 +49,7 @@ def _registry(**changes: str) -> str:
         f"""
         [[credential]]
         id = "canary"
-        class = "rotation-canary"
+        class = "{credential_class}"
         {fields}
 
           [[credential.consumer]]
@@ -332,7 +332,7 @@ def _postgres(world: World, row: dict[str, str]) -> tuple[dict[str, Any], dict[s
     """A postgres-role unit whose registry row carries `row`, and everything else correct."""
     fields = {"provider": '"postgres-role"', **row}
     world.registry(
-        _registry(**fields).replace(
+        _registry("postgres-role-password", **fields).replace(
             '  kind = "runtime-fetch"\n  repo = "orchestrator"\n  ref = "a person attests"\n',
             '  kind = "coolify-env"\n  instance = "prod"\n  resource_type = "service"\n'
             '  uuid = "svc"\n  key = "PG_PASS"\n  redeploy = true\n',
@@ -433,7 +433,7 @@ def test_both_of_the_orchestrator_adapter_s_units_write_the_hosted_service(world
     )
     destinations = sorted([f'bws-secret uuid="{KEEPER}"', 'provider name="orchestrator"', hosted])
     world.registry(
-        _registry(provider='"orchestrator"').replace(
+        _registry("orchestrator-m2m-bearer", provider='"orchestrator"').replace(
             '  [[credential.consumer]]\n  kind = "runtime-fetch"\n  repo = "orchestrator"\n'
             '  ref = "a person attests"\n',
             '  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "prod"\n'
@@ -475,7 +475,7 @@ def _orchestrator_world(world: World, reader_fields: str) -> tuple[dict[str, Any
         [f'bws-secret uuid="{KEEPER}"', 'provider name="orchestrator"', hosted, reader]
     )
     world.registry(
-        _registry(provider='"orchestrator"').replace(
+        _registry("orchestrator-m2m-bearer", provider='"orchestrator"').replace(
             '  ref = "a person attests"\n',
             '  ref = "scripts/run-x.sh"\n'
             + reader_fields
@@ -593,7 +593,7 @@ def test_a_type_runs_the_plan_its_package_s_criteria_describe(
     reader = 'runtime-fetch repo="orchestrator" ref="scripts/run-x.sh"'
     destinations = sorted([f'bws-secret uuid="{KEEPER}"', 'provider name="github"', reader])
     world.registry(
-        _registry(provider='"github"').replace(
+        _registry("github-pat-fine-grained", provider='"github"').replace(
             '  ref = "a person attests"\n',
             '  ref = "scripts/run-x.sh"\n  healthchecks_check = "sds-x"\n',
         )
@@ -610,3 +610,34 @@ def test_a_type_runs_the_plan_its_package_s_criteria_describe(
     approved = world.check(unit, intake)
     assert approved.plan == plan
     assert approved.unit == plan.unit("store")
+
+
+@pytest.mark.parametrize(
+    ("credential_class", "adapter"),
+    [("github-app-private-key", "github-pat"), ("github-pat-fine-grained", "github-app-key")],
+)
+def test_an_adapter_of_another_class_sharing_the_row_s_provider_is_refused(
+    world: World, credential_class: str, adapter: str
+) -> None:
+    """Kills: the provider comparison alone, which `github` passes for both GitHub types, so a PAT
+    envelope on an App key's row would send the stored key to the PAT's probe (#826 concern 3)."""
+    reader = 'runtime-fetch repo="orchestrator" ref="scripts/run-x.sh"'
+    destinations = sorted([f'bws-secret uuid="{KEEPER}"', 'provider name="github"', reader])
+    world.registry(
+        _registry(credential_class, provider='"github"').replace(
+            '  ref = "a person attests"\n',
+            '  ref = "scripts/run-x.sh"\n  healthchecks_check = "sds-x"\n',
+        )
+    )
+    capabilities = ADAPTERS[adapter].capabilities
+    assert capabilities is not None
+    plan = derive(capabilities, destinations, f'bws-secret uuid="{KEEPER}"', "bws-secret")
+    world.publish(_package(_acceptance(plan), destinations=destinations))
+    intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 8)])
+    unit = world.unit(destinations=destinations, rotation_adapter=adapter)
+    with pytest.raises(ContractError) as refused:
+        world.check(unit, intake)
+    assert str(refused.value) == (
+        f"the {adapter} adapter doesn't run a {credential_class!r} row: it runs its type's class "
+        "alone"
+    )
