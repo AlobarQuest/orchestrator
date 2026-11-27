@@ -140,12 +140,11 @@ def test_the_row_declares_the_granted_projects_and_secrets(entry: RegistryEntry)
     assert bws_lane_token.declared_reach(entry.credential) == (PROJECTS, SECRETS)
 
 
-def test_no_other_lane_token_row_declares_the_same_reach(
-    entry: RegistryEntry, mirror: RepoMirror
-) -> None:
+def test_the_row_is_the_only_lane_token_row(entry: RegistryEntry, mirror: RepoMirror) -> None:
+    """ADR-0055 Amendment 32 item 5.3 removed every lane's token row, so no other row can share
+    the broker's reach."""
     lane_rows = provider_entries(mirror, bws_lane_token.PROVIDER)
-    assert len(lane_rows) > 1
-    assert bws_lane_token.sharing_reach(lane_rows, entry.credential) == []
+    assert [row.credential["id"] for row in lane_rows] == [entry.credential["id"]] == [TOKEN]
 
 
 def test_the_row_is_anchored_on_the_paste_and_derives_the_rotation_plan(

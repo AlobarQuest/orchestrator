@@ -854,28 +854,12 @@ def test_the_brokers_token_row_is_skipped_and_an_unknown_lane_s_is_refused() -> 
         deploy.lanes_in_registry("version = 1\n" + unknown)
 
 
-def test_the_repositorys_registry_registers_the_thirteen_moved_lanes() -> None:
-    """Increment 2 adds the first lane token entry, increment 3 the landing ledger's, the deploy
-    watcher's, the revision watcher's, the unit verifier's, the pin watcher's and the membership
-    check's, increment 4 the change proposer's, the rotation decomposer's, the work carrier's,
-    the bump proposer's and the rotation proposer's, and increment 5 the inert lander's
-    (ADR-0059). A registered lane holds no release until its `--add` passes."""
+def test_the_repositorys_registry_registers_no_token_lane() -> None:
+    """Increments 2 to 5 of ADR-0059 registered thirteen lanes by their token entries, and ADR-0055
+    Amendment 32 item 5.3 removed those entries once each lane read through the secrets broker; the
+    broker's allowlist registers them now."""
     text = (ROOT / ".cred-consumers.toml").read_text()
-    assert deploy.lanes_in_registry(text) == {
-        "bump-proposer",
-        "change-proposer",
-        "deploy-watcher",
-        "execution-watch",
-        "inert-landing",
-        "landing-ledger",
-        "membership-check",
-        "pin-watcher",
-        "revision-watcher",
-        "rotation-decomposer",
-        "rotation-proposer",
-        "unit-verifier",
-        "work-carrier",
-    }
+    assert deploy.lanes_in_registry(text) == set()
 
 
 # ---- registration by the secrets broker's allowlist (ADR-0055 a32 item 4) --------------------
@@ -921,12 +905,13 @@ def test_a_lane_with_a_token_entry_and_a_table_is_registered_once(lanes: Lanes) 
 
 
 def test_the_repositorys_registry_and_allowlist_register_seventeen_lanes() -> None:
-    """The thirteen token lanes and the four lanes moved to the secrets broker in its Phase B
-    (ADR-0055 a32), which have no token entry; the inert lander has both."""
+    """Every lane is registered by its table in the secrets broker's allowlist: the four Phase B
+    lanes never had a token entry, and the thirteen that did lost it in ADR-0055 Amendment 32 item
+    5.3."""
     token = deploy.lanes_in_registry((ROOT / ".cred-consumers.toml").read_text())
     broker = deploy.allowlisted_lanes(load_allowlist(ROOT / deploy.BROKER_ALLOWLIST))
-    assert broker - token == {"bump-driver", "change-window", "estate-landing", "follow-up-mint"}
-    assert len(token | broker) == 17
+    assert token == set()
+    assert len(broker) == 17
 
 
 def test_the_allowlists_tables_are_exactly_the_broker_lanes_composes() -> None:

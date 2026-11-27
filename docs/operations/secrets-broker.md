@@ -272,11 +272,11 @@ broker failed on a connection, and the lane sees no reply).
 ## What the broker doesn't change
 
 No Amendment 32 lane reads with its own token: every lane on the VPS reads through the broker,
-and every Mac launcher runs unchanged. The broker lanes keep their `<LANE>_BWS_ACCESS_TOKEN`
-Coolify variables and token rows until the lane tokens are revoked (ADR-0055 Amendment 32, item 5),
-which waits for each lane's recorded read proof ("Prove a lane's reads").
-The `bump-proposer` machine account also keeps the Mac's Keychain token `bws-bump-proposer-token`
-after the revoke (D-81 (6)).
+and every Mac launcher runs unchanged. Once each lane's recorded read proof passed ("Prove a lane's
+reads"), Devon revoked the lane tokens, their `<LANE>_BWS_ACCESS_TOKEN` Coolify variables were
+deleted, and their registry rows were removed (ADR-0055 Amendment 32, item 5). Each token's keeper
+stays in `Rotation / Keepers`. The `bump-proposer` machine account also keeps the Mac's Keychain
+token `bws-bump-proposer-token` after the revoke (D-81 (6)).
 
 The broker's own token rotates through the executor ("Rotate the broker's token"). It is in the
 unlock tier (ADR-0055 amendment 34 item 1, D-81 (1) A, D-83 11 B), which names two credentials:

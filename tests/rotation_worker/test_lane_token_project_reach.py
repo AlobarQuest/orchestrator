@@ -187,19 +187,23 @@ def test_the_child_prints_sorted_ids_only_and_reach_sets_reads_them(
         assert login.reach_sets(TOKEN) == expected
 
 
-def test_the_real_broker_row_takes_the_project_path_and_every_lane_row_the_exact_one(
+def test_the_real_broker_row_takes_the_project_path_and_a_lane_row_the_exact_one(
     mirror: RepoMirror, origins: Origins, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The broker's is the registry's one lane-token row (ADR-0055 Amendment 32 item 5.3 removed
+    every lane's), so the exact path runs on a copy of it that names no project, as each lane's
+    row did."""
     registry = (ROOT / REGISTRY_PATH).read_text()
     for repository in REGISTRY_REPOSITORIES:
         text = registry if repository == "AlobarQuest/orchestrator" else "version = 1\n"
         origins.commit(repository, {REGISTRY_PATH: text})
-    rows = provider_entries(mirror, lane.PROVIDER)
-    assert BROKER in {entry.credential["id"] for entry in rows} and len(rows) > 1
+    [entry] = provider_entries(mirror, lane.PROVIDER)
+    assert entry.credential["id"] == BROKER
+    lane_row = {**entry.credential, "id": "a-lane-bws-token", "reach_projects": []}
 
-    for entry in rows:
-        projects, declared = lane.declared_reach(entry.credential)
-        broker = entry.credential["id"] == BROKER
+    for credential in (entry.credential, lane_row):
+        projects, declared = lane.declared_reach(credential)
+        broker = credential["id"] == BROKER
         # The broker's live listing holds its projects' own secrets too, which no row declares.
         login = Login((projects, declared | PROJECT_SECRETS if broker else declared))
         monkeypatch.setattr(
@@ -207,9 +211,9 @@ def test_the_real_broker_row_takes_the_project_path_and_every_lane_row_the_exact
         )
         provider = lane.build_provider(
             rotation=Rotation(
-                entry.credential["id"], "2026-11-27-requested", "k", "w", tuple(entry.destinations)
+                credential["id"], "2026-11-27-requested", "k", "w", tuple(entry.destinations)
             ),
-            credential=entry.credential,
+            credential=credential,
             store_read=lambda _: pytest.fail("a bind reads no store"),
             coolify_token_id="coolify-token",
             coolify_url="https://coolify.example.test",
@@ -218,6 +222,6 @@ def test_the_real_broker_row_takes_the_project_path_and_every_lane_row_the_exact
             pg_helper=lambda: pytest.fail("a bind asks no helper"),
             issue=False,
         )
-        assert provider.bind_refusal(TOKEN, Value("old")) is None, entry.credential["id"]
+        assert provider.bind_refusal(TOKEN, Value("old")) is None, credential["id"]
         expected = "reach_sets" if broker else "reach"
-        assert login.asked == [expected], entry.credential["id"]
+        assert login.asked == [expected], credential["id"]

@@ -861,7 +861,7 @@ It prints `switched`, `not yet` or `unreadable` for each reader, with the start 
 it found. It exits 2 when any reader is unreadable. When it prints nothing and exits 0, the
 credential's row names no scheduled reader: no `runtime-fetch` consumer with a read and no
 Actions-secret copy. A `bws-lane-token` row with `helper_target`, such as
-`revision-watcher-bws-token`, is one: its lane is proved by the helper's `loaded` fingerprint
+`secrets-broker-bws-token`, is one: its reader is proved by the helper's `loaded` fingerprint
 ("Lane tokens and ping URLs"), which this command doesn't read.
 
 ### If a rotation stalls after host
@@ -1687,6 +1687,12 @@ into the VM's inbox. No person copies a ping URL: the executor reads it from the
 check listing (ADR-0055 amendment 23, under Devon's standing answer that a ping URL is
 configuration while the estate is in development).
 
+A lane on the secrets broker has no token of its own and no token row: ADR-0055 Amendment 32, item
+5.3 removed the thirteen lanes' rows once each read through the broker. The registry's one
+`bws-lane-token` row is the broker's own, `secrets-broker-bws-token`
+(`tests/rotation_worker/test_secrets_broker_row.py`). The lane-token steps in the following
+sections apply to a lane given its own token again.
+
 ### Create the keepers
 
 Each credential's keeper is a secret in `Rotation / Keepers` that holds the inbox's empty marker
@@ -1696,7 +1702,7 @@ prints. In the VM, for each of the lane token and the ping URL, with the row's `
 ```sh
 orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \
   HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker create-keeper \
-  execution-watch-bws-token --config /etc/rotation-worker/config.toml
+  execution-watch-ping-url --config /etc/rotation-worker/config.toml
 ```
 
 It prints `{"secret_id": ...}` and refuses a key that already exists. It reads no value. The
@@ -1716,7 +1722,7 @@ the same reach:
 
 ```toml
 [[credential]]
-id = "execution-watch-bws-token"
+id = "<lane>-bws-token"
 class = "bws-lane-token"
 provider = "bws-lane-token"
 bws_uuid = "<the keeper's secret id, printed by create-keeper>"
@@ -1732,8 +1738,8 @@ reach_projects = []
   kind = "coolify-env"
   instance = "prod"
   resource_type = "service"
-  uuid = "<sds-lane-execution-watch's service uuid>"
-  key = "EXECUTION_WATCH_BWS_ACCESS_TOKEN"
+  uuid = "<sds-lane-<lane>'s service uuid>"
+  key = "<LANE>_BWS_ACCESS_TOKEN"
   redeploy = false
 ```
 
@@ -1833,9 +1839,9 @@ A reissue's `verify` proves that start one of two ways, chosen by the lane token
   (D-27).
 
 Every `rotated_by_sds` `bws-lane-token` row whose lane loads its own token names `helper_target`,
-the lane's name, so a reissue of those tokens takes the `loaded` proof. The rows of the broker
-lanes (the tables in `lanes/secrets-broker/allowlist.toml`) name none and keep the `PATCH` proof,
-since their containers load no `BWS_ACCESS_TOKEN`. The broker's own token,
+the lane's name, so a reissue of those tokens takes the `loaded` proof. The broker lanes (the
+tables in `lanes/secrets-broker/allowlist.toml`) have no token rows: their containers load no
+`BWS_ACCESS_TOKEN`, and ADR-0055 Amendment 32, item 5.3 removed their rows. The broker's own token,
 `secrets-broker-bws-token`, is the one row that isn't a lane and names a target, `secrets-broker`
 (ADR-0055 amendment 34 item 4): its reissue proves the broker's restarted container by `loaded`.
 `tests/rotation_worker/test_lane_token_helper_targets.py` holds both rules on the real file.
