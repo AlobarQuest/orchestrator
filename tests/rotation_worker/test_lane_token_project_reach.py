@@ -198,8 +198,13 @@ def test_the_real_broker_row_takes_the_project_path_and_every_lane_row_the_exact
     assert BROKER in {entry.credential["id"] for entry in rows} and len(rows) > 1
 
     for entry in rows:
-        login = Login(lane.declared_reach(entry.credential))
-        monkeypatch.setattr(lane, "BwsMachineTokenProvider", lambda organization_id: login)
+        projects, declared = lane.declared_reach(entry.credential)
+        broker = entry.credential["id"] == BROKER
+        # The broker's live listing holds its projects' own secrets too, which no row declares.
+        login = Login((projects, declared | PROJECT_SECRETS if broker else declared))
+        monkeypatch.setattr(
+            lane, "BwsMachineTokenProvider", lambda organization_id, login=login: login
+        )
         provider = lane.build_provider(
             rotation=Rotation(
                 entry.credential["id"], "2026-11-27-requested", "k", "w", tuple(entry.destinations)
@@ -214,5 +219,5 @@ def test_the_real_broker_row_takes_the_project_path_and_every_lane_row_the_exact
             issue=False,
         )
         assert provider.bind_refusal(TOKEN, Value("old")) is None, entry.credential["id"]
-        expected = "reach_sets" if entry.credential["id"] == BROKER else "reach"
+        expected = "reach_sets" if broker else "reach"
         assert login.asked == [expected], entry.credential["id"]
