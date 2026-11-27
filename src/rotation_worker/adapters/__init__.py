@@ -38,7 +38,7 @@ from rotation_worker.plans import Capabilities
 from rotation_worker.readers import Healthchecks, PingUrls
 from rotation_worker.registry import CHECK_FIELD, provider_entries
 from rotation_worker.secret_store import SecretStore
-from rotation_worker.types import TYPES
+from rotation_worker.types import CLASS_TYPES, TYPES
 
 
 @dataclass(frozen=True)
@@ -295,3 +295,22 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         change_manager.NAME, change_manager.DISTRIBUTED_PLAN, _change_manager
     ),
 }
+
+# Each fixed-plan name, mapped to the credential type whose plan from before derivation it pins:
+# it runs only on that type's rows. A type's own adapter is named by its type.
+FIXED_PLAN_TYPES: Final[dict[str, str]] = {
+    orchestrator_bearer.DISTRIBUTED_NAME: orchestrator_bearer.NAME,
+    change_manager.ATTESTED_NAME: change_manager.NAME,
+    change_manager.DISTRIBUTED_NAME: change_manager.NAME,
+}
+
+
+def runs_on_class(adapter_name: str, credential_class: object) -> bool:
+    """Whether the adapter an envelope names may act on a registry row of `credential_class`: the
+    row's class type (`CLASS_TYPES`), or a fixed-plan name of that type. Two types can share a
+    provider (`github` for a PAT and an App key), so the provider alone can't tell. The canary's
+    class has no type, and the `fake` adapter runs on it alone."""
+    if adapter_name == fake.NAME:
+        return credential_class == fake.CLASS
+    row_type = CLASS_TYPES.get(str(credential_class))
+    return row_type is not None and FIXED_PLAN_TYPES.get(adapter_name, adapter_name) == row_type

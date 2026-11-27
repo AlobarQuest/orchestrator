@@ -24,6 +24,11 @@ each registry repository holds the `credential_rotation` grant. Exit 0, or 2 whe
 else to stdout: the one verb that prints a value (increment 7, D-75 B). It refuses a stdout that
 isn't a pipe or a socket, and exits 2 on any failure, naming only the secret's id and the error's
 class.
+`probe <credential>` is a one-off, read-only proof of a key already kept, for an Anthropic API key
+(ADR-0055 amendment 36 exit check 1) or a GitHub App key (amendment 35 exit check 2). It reads the
+row's keeper with this instance's own store, sends only its adapter's confined requests, and prints
+one JSON line of statuses and non-secret ids. It stores, mints, revokes and records nothing. Exit 0
+when the line's `passed` is true, 1 when it's false, 2 when it can't run.
 """
 
 from __future__ import annotations
@@ -37,13 +42,20 @@ import re
 import secrets
 import stat
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from getpass import getpass
 from pathlib import Path
-from typing import Final, TextIO
+from typing import Any, Final, TextIO
 
-from rotation_worker.adapters import ADAPTERS, AdapterContext, fake, postgres_role
+from rotation_worker.adapters import (
+    ADAPTERS,
+    AdapterContext,
+    anthropic_key,
+    fake,
+    github_app_key,
+    postgres_role,
+)
 from rotation_worker.compare import Comparison, report
 from rotation_worker.config import (
     DEFAULT_PATH,
@@ -98,6 +110,11 @@ CREDENTIAL_ID: Final = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # A Postgres role's password: what `PostgresRoleProvider.mint` makes and the helper accepts.
 POSTGRES_PASSWORD: Final = re.compile(r"^[0-9a-f]{64}$")
 POSTGRES_CLASS: Final = "postgres-role-password"
+# The classes `probe` reads: each adapter's one-off proof of a key already kept.
+PROBES: Final[dict[str, Callable[[Mapping[str, Any], Value], dict[str, Any]]]] = {
+    anthropic_key.CLASS: lambda _row, key: anthropic_key.probe_current(key),
+    github_app_key.CLASS: github_app_key.probe_current,
+}
 BEARER_BYTES: Final = 48
 LOG = logging.getLogger("rotation_worker")
 
@@ -481,6 +498,55 @@ def _discard(out: TextIO) -> None:
     os.close(devnull)
 
 
+def probe(config: Config, credential_id: str, mirror: RepoMirror, out: TextIO) -> int:
+    """Prove a kept key without minting, storing or recording anything: read the row at its
+    repository's `main`, read its keeper with this instance's own store, and print the adapter's
+    one-off answer as one JSON line. Never a value, a header carrying one, or a response body."""
+    try:
+        entry = find_credential(mirror, credential_id)
+        keeper = parse(entry.keeper)
+    except (MirrorError, RegistryError, DestinationError) as error:
+        print(f"probe: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    credential_class = entry.credential.get("class")
+    prove = PROBES.get(str(credential_class))
+    if prove is None:
+        print(
+            f"probe: {credential_id} is a {credential_class!r} row; the probe reads "
+            f"{' and '.join(sorted(PROBES))} rows",
+            file=sys.stderr,
+        )
+        return EXIT_UNREADABLE
+    try:
+        store = open_store(config)
+    except (ConfigError, StoreError) as error:
+        print(f"probe: {scrub(str(error))}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    try:
+        keeper_id = store.locate(keeper)
+        if keeper_id is None:
+            raise StoreError("the keeper isn't kept in this instance's store")
+        key = store.read(keeper_id)
+    except Exception:
+        # The store's own identity is the only one read through; whatever it can't read, the
+        # cause stays unnamed, because a value read in this process might stand in its message.
+        print(f"probe: {credential_id}'s keeper is not readable by this identity", file=sys.stderr)
+        return EXIT_UNREADABLE
+    try:
+        found = prove(entry.credential, key)
+    except ContractError as refusal:
+        print(f"probe: {scrub(str(refusal))}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    except Exception as error:
+        # An unforeseen failure names only its class: the key is in this process, and a
+        # traceback or a message might show it.
+        print(f"probe: {credential_id} unprobed: {type(error).__name__}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    line = {"credential_id": credential_id, "class": credential_class, "keeper": keeper_id, **found}
+    out.write(scrub(json.dumps(line)) + "\n")
+    return EXIT_EQUAL if found.get("passed") is True else EXIT_DIFFERENT
+
+
 def pg_restore(setup: Setup, credential_id: str) -> int:
     """Put the keeper's value back everywhere a host step writes it. For a host whose undo
     failed too: it needs no `/review`, no requeue and no value in an argument."""
@@ -562,6 +628,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "emit-secret", help="write one BWS secret's value to a pipe, read with the root"
     )
     emitting.add_argument("secret_id")
+    probing = commands.add_parser(
+        "probe", help="prove a kept Anthropic or GitHub App key once; print statuses and ids"
+    )
+    probing.add_argument("credential_id")
     for command in (
         running,
         seeding,
@@ -573,6 +643,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         restoring,
         reading_grants,
         emitting,
+        probing,
     ):
         command.add_argument("--config", type=Path, default=DEFAULT_PATH)
     arguments = parser.parse_args(argv)
@@ -585,6 +656,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as error:
         print(f"{arguments.command}: {error}", file=sys.stderr)
         return EXIT_UNREADABLE
+    if arguments.command == "probe":
+        return probe(config, arguments.credential_id, RepoMirror(config.mirror_root), sys.stdout)
     return _command(arguments, config)
 
 

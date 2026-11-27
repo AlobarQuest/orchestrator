@@ -72,7 +72,7 @@ def _row(**changes: Any) -> dict[str, Any]:
 
 @dataclass
 class Anthropic:
-    """Anthropic's `GET /v1/models`, answering by which workspace issued the bearer."""
+    """Anthropic's `GET /v1/models`, answering by which workspace issued the key it was sent."""
 
     # Key -> the workspace it is scoped to, or `None` for a key scoped to none.
     keys: dict[str, str | None] = field(default_factory=dict)
@@ -85,6 +85,8 @@ class Anthropic:
     no_header: bool = False
     # A status Anthropic answers whatever the key (429, 5xx).
     every: int | None = None
+    # Whether a key sent as `Authorization: Bearer` is taken, as one sent as `x-api-key` is.
+    takes_bearer: bool = False
 
     def issue(self, workspace: str | None = WORKSPACE) -> str:
         key = _key()
@@ -100,14 +102,21 @@ class Anthropic:
             raise httpx.ConnectError("no route", request=request)
         if self.every is not None:
             return httpx.Response(self.every)
-        bearer = request.headers.get("Authorization", "").removeprefix("Bearer ")
-        if bearer not in self.keys:
+        key = _sent(request) if self.takes_bearer else request.headers.get("x-api-key", "")
+        if key not in self.keys:
             return httpx.Response(self.refused, json={"type": "error"})
-        workspace = self.keys[bearer] or request.headers.get("anthropic-workspace-id")
+        workspace = self.keys[key] or request.headers.get("anthropic-workspace-id")
         if workspace is None:
             return httpx.Response(400, json={"type": "error"})
         headers = {} if self.no_header else {"anthropic-workspace-id": workspace}
         return httpx.Response(200, headers=headers, json={"data": [], "has_more": False})
+
+
+def _sent(request: httpx.Request) -> str:
+    """The key a request carries, in whichever header form it was sent."""
+    return request.headers.get("x-api-key") or request.headers.get(
+        "Authorization", ""
+    ).removeprefix("Bearer ")
 
 
 class Rotating:
@@ -152,9 +161,8 @@ class Rotating:
         return [evidence for step, evidence in self.filed if step.kind == kind]
 
     def controls(self) -> list[str]:
-        """Every bearer sent that Anthropic never issued: the known-bad controls."""
-        sent = [r.headers["Authorization"].removeprefix("Bearer ") for r in self.anthropic.requests]
-        return [bearer for bearer in sent if bearer not in self.issued]
+        """Every key sent that Anthropic never issued: the known-bad controls."""
+        return [key for key in map(_sent, self.anthropic.requests) if key not in self.issued]
 
 
 def _rotating(anthropic: Anthropic | None = None) -> tuple[Rotating, str, str]:
@@ -351,14 +359,14 @@ def test_no_evidence_refusal_or_log_line_carries_a_key_or_a_control(
 # ---- the probe's request and the control ----------------------------------------------------
 
 
-def test_the_probe_sends_the_key_as_a_bearer_with_a_version_and_nothing_else() -> None:
+def test_the_probe_sends_the_key_as_x_api_key_with_a_version_and_nothing_else() -> None:
     rotating, _, new = _rotating()
     assert rotating.provider.probe(Value(new)) == 200
     [request] = rotating.anthropic.requests
     assert (request.method, str(request.url)) == ("GET", "https://api.anthropic.com/v1/models")
-    assert request.headers["Authorization"] == f"Bearer {new}"
+    assert request.headers["x-api-key"] == new
     assert request.headers["anthropic-version"] == "2023-06-01"
-    assert "x-api-key" not in request.headers
+    assert "Authorization" not in request.headers
     assert "anthropic-workspace-id" not in request.headers
     assert request.content == b""
 

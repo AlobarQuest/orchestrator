@@ -1227,7 +1227,7 @@ new key:
 Neither row is `rotated_by_sds` yet. Both keepers are in `SDS / Lane Apps`, which the executor
 can't write; Devon moves them into `Rotation / Keepers` after Phase C's revoke sitting (D-84 item
 8 A). Each row is handed over after that move and amendment 35's exit checks 2 (the working proof
-on the current keys) and 3 (one real rotation).
+on the current keys, by "Probe a kept key once") and 3 (one real rotation).
 
 ## Anthropic API keys
 
@@ -1237,8 +1237,10 @@ and the executor proves and stores. The type is `anthropic-key`, with Bitbucket'
 act mints and stages, then `store` (AC-001, AC-002: verify-new, store), `verify` (AC-003), a
 human act that deletes the old key, and `confirm` (AC-004). The adapter's provider is `anthropic`
 and it reads no admin secret. Its client may send exactly one request,
-`GET https://api.anthropic.com/v1/models`, with the key being proved as `Authorization: Bearer`
-and an `anthropic-version` header (D-85 7 A).
+`GET https://api.anthropic.com/v1/models`, with the key being proved as `x-api-key` and an
+`anthropic-version` header (D-85 7 A). Anthropic's API examples send a regular key as `x-api-key`
+and keep `Authorization: Bearer` for OAuth tokens; the one-off probe ("Probe a kept key once")
+measures both forms.
 
 ### Create a key
 
@@ -1290,9 +1292,10 @@ accepted it: the window exits 0 whatever each item's outcome, so a refused key s
 digest's items failing (`tests/scripts/test_run_change_window.py`).
 
 The row isn't `rotated_by_sds` and declares no `workspace_id` yet, so the adapter refuses it.
-Amendment 36's exit checks come first: 1, a one-off probe of the current key that records the
-200, the control's 401 and the `anthropic-workspace-id` value, which Devon confirms is
-`sds-change-window`'s in the Console before the row declares it; and 2, one real rotation.
+Amendment 36's exit checks come first: 1, a one-off probe of the current key ("Probe a kept key
+once") that records the 200, the control's 401 and the `anthropic-workspace-id` value, which Devon
+confirms is `sds-change-window`'s in the Console before the row declares it; and 2, one real
+rotation.
 
 ### What the root reaches through this keeper
 
@@ -1303,6 +1306,86 @@ key, which calls the Claude API in workspace `sds-change-window`. By Anthropic's
 (amendment 36, Context), a key scoped to one workspace runs only there and can't call the Admin
 API, and the executor refuses any other key. The executor's process sends it to
 `https://api.anthropic.com/v1/models` alone. The route adds no grant and moves no keeper.
+
+## Probe a kept key once
+
+`rotation-worker probe <credential-id>` proves a key already in its keeper without a rotation. It
+serves amendment 36's exit check 1 (an `anthropic-api-key` row) and amendment 35's exit check 2
+(each `github-app-private-key` row's working proof). It reads the row at its repository's `main`,
+reads the keeper with the instance's own store, sends only the adapter's confined requests, and
+prints one JSON line to stdout. It stores, mints, revokes and records nothing, and opens no
+orchestrator client. It needs neither `rotated_by_sds` nor, for an Anthropic row, a
+`workspace_id`, and it builds no provider, so the rotation's refusals of such a row stand.
+
+A session runs it on `prod-vps`, as root through infraops' `vps_exec`, as the `rotation` user
+with only `PATH` and `HOME`, so the store is the root identity's:
+
+```sh
+runuser -u rotation -- env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker \
+  /opt/rotation-worker/venv/bin/rotation-worker probe <credential-id> \
+  --config /etc/rotation-worker/config.toml
+```
+
+The host must run a commit that has the verb ("Install or update it on the VPS host").
+
+- **Exit 0**: the line's `passed` is true. For an Anthropic key, all four requests answered, the
+  key answered 200 as `x-api-key` with an `anthropic-workspace-id`, and both controls answered
+  401. For a GitHub App key, the working proof passed.
+- **Exit 1**: the line is printed with `passed` false: a status is wrong, a request got no answer,
+  or the GitHub proof was refused. Read the line for which.
+- **Exit 2**: nothing is printed to stdout. The row can't be read, its class isn't one of the two,
+  its keeper is unreadable, or the probe failed unforeseen (`probe: <id> unprobed: <class>`). For
+  an unreadable keeper the one message is `probe: <id>'s keeper is not readable by this
+  identity`, and the probe never reads through another identity's token, the secrets broker's
+  included. The same message covers a keeper the store reads but that is empty or has
+  surrounding whitespace, which no credential value may have: check the secret before the grant.
+
+The line carries statuses, the keeper's secret id and the row's non-secret ids, never a key, a
+control, a header carrying either, or a response body.
+
+### Exit check 1: the Anthropic key
+
+The probe sends `GET https://api.anthropic.com/v1/models` four times: the key as `x-api-key`, the
+key as `Authorization: Bearer`, then a control of the key's shape in each form. Each request
+carries one of the two headers, never both. The line has this shape:
+
+```json
+{"credential_id": "anthropic-change-window-key", "class": "anthropic-api-key", "keeper": "<uuid>",
+ "key_x_api_key": {"status": 200, "anthropic-workspace-id": "wrkspc_..."},
+ "key_bearer": {"status": 401, "anthropic-workspace-id": null},
+ "control_x_api_key": {"status": 401, "anthropic-workspace-id": null},
+ "control_bearer": {"status": 401, "anthropic-workspace-id": null}, "passed": true}
+```
+
+A request with no answer reads `{"status": null, "no_answer": "<httpx exception type>"}`. A
+workspace header that isn't a `wrkspc_` id reads `(a malformed id)`. Exit check 1 reads:
+
+- `key_x_api_key.status` 200 beside `control_x_api_key.status` 401: the rotation's form works.
+- `key_bearer` beside `control_bearer`: whether Anthropic also takes the bearer form. The rotation
+  sends only `x-api-key`, so this settles the sources' disagreement and changes nothing.
+- `key_x_api_key`'s `anthropic-workspace-id`: the value Devon confirms is `sds-change-window`'s in
+  the Console before a PR adds it to the row as `workspace_id`. If it's `null` on the 200, the
+  identity check comes back as its own amendment.
+
+### Exit check 2: a GitHub App key
+
+The probe runs the working proof `check_scope` runs at verify-new, without the comparison with an
+old key: `GET /repos/<proof>/installation`, the mint's own installation read and `POST
+/app/installations/<id>/access_tokens` for that repository with `metadata: read`, `GET
+/installation/repositories`, and `DELETE /installation/token`, whatever the reach check found.
+The token lives only in memory. The line has this shape:
+
+```json
+{"credential_id": "lanes-read-app-private-key", "class": "github-app-private-key",
+ "keeper": "<uuid>", "app_id": <the row's app_id>, "installation_id": <the row's installation_id>,
+ "proof_repository": "<the row's proof_repository>", "status": "ok", "passed": true}
+```
+
+A refused proof reads `"status": "refused"` and `"passed": false`, with a `refusal` naming the request, its status or
+the ids, and exits 1. Exit check 2 reads `status` per row. Both keepers are in
+`SDS / Lane Apps` until Devon moves them (D-84 item 8 A), which the root can't read, so until then
+the probe exits 2 with "not readable by this identity". That is the answer to record, not a
+failure to work around.
 
 ## BWS machine tokens: the Keychain instance
 

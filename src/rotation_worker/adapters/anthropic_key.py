@@ -7,9 +7,10 @@ pastes it into the inbox; the executor proves and stores it, waits unclaimed unt
 reader has run since the keeper's revision, and, after the person deletes the old key in the
 Console, proves the old key refused.
 
-* **Probe** is `GET /v1/models` on `https://api.anthropic.com` with the key as
-  `Authorization: Bearer` and an `anthropic-version` header, and nothing else: the client permits
-  that one request (D-85 7 A). Live is exactly 200. The known-bad control is a random value of the
+* **Probe** is `GET /v1/models` on `https://api.anthropic.com` with the key as `x-api-key` (the
+  form Anthropic's API examples use for a regular key; `Authorization: Bearer` is for OAuth tokens)
+  and an `anthropic-version` header, and nothing else: the client permits that one request (D-85
+  7 A). Live is exactly 200. The known-bad control is a random value of the
   key's shape, the documented regular-key prefix and random characters of the old key's length
   from the key's alphabet, made in memory and discarded. Anthropic documents 401 for a key that is
   "malformed, revoked, or expired", so `dead_statuses` is `{401}`; the first real rotation measures
@@ -20,6 +21,9 @@ Console, proves the old key refused.
   probe sends no `anthropic-workspace-id` request header, so a key not scoped to a workspace never
   binds whatever status it gets.
 * **Mint, host, consumer_loaded and revoke** are never the executor's.
+* **The one-off probe** (`probe_current`, `rotation-worker probe`) sends the same request with the
+  key and with a control, once in each header form, so amendment 36's exit check 1 measures which
+  form Anthropic accepts. It needs no declared workspace and builds no provider.
 
 Nothing here logs, keeps or raises with a key or its header, and no response body is read: a
 refusal names the request, the status, the workspace or the failure's type.
@@ -51,6 +55,11 @@ API: Final = "https://api.anthropic.com"
 MODELS_PATH: Final = "/v1/models"
 USER_AGENT: Final = "rotation-worker/1 (+AlobarQuest/orchestrator)"
 HEADERS: Final = {"anthropic-version": "2023-06-01"}
+# The two forms a key can be sent in. The rotation sends `x-api-key` alone; the one-off probe
+# sends each in turn, never both in one request.
+API_KEY_HEADER: Final = "x-api-key"
+BEARER_HEADER: Final = "Authorization"
+HEADER_FORMS: Final = (API_KEY_HEADER, BEARER_HEADER)
 TIMEOUT_SECONDS: Final = 30.0
 WORKSPACE_HEADER: Final = "anthropic-workspace-id"
 WORKSPACE_FIELD: Final = "workspace_id"
@@ -97,6 +106,79 @@ def check_row(credential: Mapping[str, Any]) -> None:
             raise ContractError(f"each {READER_KIND} reader of a {CLASS} row names its check")
 
 
+def confined_client(transport: httpx.BaseTransport | None = None) -> ConfinedClient:
+    """The client every Anthropic request goes through: it permits `GET /v1/models` alone."""
+    try:
+        return ConfinedClient(
+            base_url=API,
+            user_agent=USER_AGENT,
+            headers=HEADERS,
+            timeout=TIMEOUT_SECONDS,
+            permits=lambda method, path: (method, path) == ("GET", MODELS_PATH),
+            refuse=lambda method, path: ContractError(f"the probe may not {method} {path}"),
+            transport=transport,
+        )
+    except TransportFailure as failure:
+        raise ContractError(f"Anthropic's client couldn't be built: {failure.error_type}") from None
+
+
+def control_like(key: Value) -> Value:
+    """A key Anthropic never issued: the regular-key prefix, then random characters of the key's
+    alphabet, as long as `key`."""
+    length = max(len(key.reveal()) - len(KEY_PREFIX), 1)
+    return Value(KEY_PREFIX + "".join(secrets.choice(KEY_ALPHABET) for _ in range(length)))
+
+
+def models(
+    client: ConfinedClient, value: Value, header: str = API_KEY_HEADER
+) -> tuple[int, str | None]:
+    """`GET /v1/models`'s status with `value` sent in the `header` form and, on 200, the workspace
+    header it names. A request with no answer raises `TransportFailure`, which names its type."""
+    if header not in HEADER_FORMS:
+        raise ContractError(f"a key is sent as {' or '.join(HEADER_FORMS)}")
+    sent = f"Bearer {value.reveal()}" if header == BEARER_HEADER else value.reveal()
+    response = client.request("GET", MODELS_PATH, headers={header: sent})
+    if response.status_code != 200:
+        return response.status_code, None
+    return 200, response.headers.get(WORKSPACE_HEADER)
+
+
+def probe_current(key: Value, transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
+    """The one-off probe of a key already kept (amendment 36 exit check 1): `GET /v1/models` with
+    the key and with a control of its shape, each once per header form. Statuses and the
+    workspace header only; a request with no answer is `null` beside its failure's type.
+    `passed` is exit check 1's verdict: every request answered, the key answers 200 as
+    `x-api-key` naming a workspace, and each control answers 401 (`dead_statuses`)."""
+    client = confined_client(transport)
+    control = control_like(key)
+    found: dict[str, Any] = {}
+    for subject, value in (("key", key), ("control", control)):
+        for header in HEADER_FORMS:
+            try:
+                status, workspace = models(client, value, header)
+                found[f"{subject}_{_slug(header)}"] = {
+                    "status": status,
+                    WORKSPACE_HEADER: None if workspace is None else _shown(workspace),
+                }
+            except TransportFailure as failure:
+                found[f"{subject}_{_slug(header)}"] = {
+                    "status": None,
+                    "no_answer": failure.error_type,
+                }
+    live = found["key_x_api_key"]
+    passed = (
+        all(isinstance(answer["status"], int) for answer in found.values())
+        and live["status"] == 200
+        and live[WORKSPACE_HEADER] is not None
+        and all(found[f"control_{_slug(header)}"]["status"] == 401 for header in HEADER_FORMS)
+    )
+    return {**found, "passed": passed}
+
+
+def _slug(header: str) -> str:
+    return "bearer" if header == BEARER_HEADER else "x_api_key"
+
+
 def build_provider(
     *,
     rotation: Rotation | None,
@@ -114,26 +196,17 @@ def build_provider(
         quarantine = store.find(rotation.work_project_id, rotation.quarantine_key)
         return store.read(quarantine.id if quarantine is not None else rotation.keeper_id)
 
-    try:
-        client = ConfinedClient(
-            base_url=API,
-            user_agent=USER_AGENT,
-            headers=HEADERS,
-            timeout=TIMEOUT_SECONDS,
-            permits=lambda method, path: (method, path) == ("GET", MODELS_PATH),
-            refuse=lambda method, path: ContractError(f"the probe may not {method} {path}"),
-            transport=transport,
-        )
-    except TransportFailure as failure:
-        raise ContractError(f"Anthropic's client couldn't be built: {failure.error_type}") from None
     return AnthropicKeyProvider(
-        client, workspace=workspace, old=old, stored_on=lambda: store.revised(rotation.keeper_id)
+        confined_client(transport),
+        workspace=workspace,
+        old=old,
+        stored_on=lambda: store.revised(rotation.keeper_id),
     )
 
 
 class AnthropicKeyProvider:
     name = PROVIDER
-    probe_target = "Anthropic's GET /v1/models, with the key as a bearer"
+    probe_target = "Anthropic's GET /v1/models, with the key as x-api-key"
     revoke_probe_target = probe_target
     dead_statuses = frozenset({401})
     hosts_destinations = False
@@ -157,10 +230,8 @@ class AnthropicKeyProvider:
         raise ContractError("a person creates an Anthropic API key, in the Claude Console")
 
     def known_bad(self) -> Value:
-        """A key Anthropic never issued: the regular-key prefix, then random characters of the
-        key's alphabet, as long as the old key."""
-        length = max(len(self._old().reveal()) - len(KEY_PREFIX), 1)
-        return Value(KEY_PREFIX + "".join(secrets.choice(KEY_ALPHABET) for _ in range(length)))
+        """A key Anthropic never issued, as long as the old key (`control_like`)."""
+        return control_like(self._old())
 
     def probe(self, value: Value) -> int | None:
         status, workspace = self._models(value)
@@ -180,16 +251,11 @@ class AnthropicKeyProvider:
         return self.probe(value)
 
     def _models(self, value: Value) -> tuple[int | None, str | None]:
-        """`GET /v1/models`'s status with `value` and, on 200, the workspace header it names."""
+        """`models` with `value` as `x-api-key`; a request with no answer is a `None` status."""
         try:
-            response = self._client.request(
-                "GET", MODELS_PATH, headers={"Authorization": f"Bearer {value.reveal()}"}
-            )
+            return models(self._client, value)
         except TransportFailure:
             return None, None
-        if response.status_code != 200:
-            return response.status_code, None
-        return 200, response.headers.get(WORKSPACE_HEADER)
 
     # ---- identity ----------------------------------------------------------------------------
 

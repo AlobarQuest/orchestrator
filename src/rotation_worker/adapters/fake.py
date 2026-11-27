@@ -36,6 +36,8 @@ from rotation_worker.contract import (
 from rotation_worker.values import Value
 
 NAME: Final = "fake"
+# The canary's registry class: a class with no credential type, which only this adapter runs.
+CLASS: Final = "rotation-canary"
 PROBE_TARGET: Final = "fake-provider/key"
 VALUE_BYTES: Final = 32
 

@@ -6586,6 +6586,8 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
     2. **One real rotation** is the proof: the bind, `verify_new`, the reader's green ping,
        Devon's deletion and `confirm_dead`, with the deleted key's status recorded (item 11 A).
 
+    **Header, changed 2026-11-27 (HQ, #829 concern 1):** the rotation sends the key as `x-api-key`, not item 2's `Authorization: Bearer`, as Anthropic's API examples send a regular key, and exit check 1's `rotation-worker probe` sends the key and the control in both forms and records each status.
+
 ### What it grants, and nothing more
 
 Nothing. No BWS identity, project, grant or scope, no Anthropic key, Admin API key, workspace or
