@@ -1456,16 +1456,20 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    Increment 7's cut-over installs one consumers-only target for each lane that loads its own
    token, in the preceding shape, each with one `consumer` whose `env` is `BWS_ACCESS_TOKEN`. The
    target name is the lane's name, which its registry row's `helper_target` names. A broker lane
-   gets none, since its container loads no `BWS_ACCESS_TOKEN`. Each container name is read from
-   this repository: a compose lane container is `<service>-<resource uuid>`, where the service is
-   the lane's one service in `lanes/<lane>/compose.yaml` and the uuid is the row's `coolify-env`
-   consumer `uuid`. Confirm each with `docker ps` on the VPS at the cut-over before writing it.
+   gets none, since its container loads no `BWS_ACCESS_TOKEN`. The secrets broker gets one,
+   `secrets-broker`, in the same shape: its one service loads its token as `BWS_ACCESS_TOKEN`
+   (ADR-0055 amendment 34 item 4; `docs/operations/secrets-broker.md`, "Rotate the broker's
+   token", writes it). Each container name is read from this repository: a compose container is
+   `<service>-<resource uuid>`, where the service is the one service in
+   `lanes/<lane>/compose.yaml` that loads the token and the uuid is the row's `coolify-env`
+   consumer `uuid`. Confirm each with `docker ps` on the VPS before writing it.
 
    | Target | Container |
    |---|---|
    | `revision-watcher` | `revision-watcher-kmjkrhlmv6c7ee76g77a8491` |
    | `work-carrier` | `work-carrier-am99g0klcsa7u8dpb4t19xjr` |
    | `bump-proposer` | `bump-proposer-dsmi1mj0xbjrsu8kamdxocp8` |
+   | `secrets-broker` | `secrets-broker-wogvks6obmvv9fdotlgnw7r3` |
 3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
    run a short script as that user through `orb -m rotation-executor -u root runuser -u rotation --
    env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/python -`.
@@ -1684,7 +1688,9 @@ reads either field as a rotation date (`rotationAnchor` in infraops-mcp-server
 proposer's `_first_issue` then reads the credential as already issued, so `plan_for` picks the
 rotation plan, or refuses a type that has none, and the issue never runs. With neither field, the
 first issue is due from `rotate_requested` alone. For more information, see
-`docs/superpowers/reports/lanes-inc-2-registry-rows-report.md`.
+`docs/superpowers/reports/lanes-inc-2-registry-rows-report.md`. A token a person already issued by
+hand carries `created`, the date of that issue, for the same reason in reverse: its first unit must
+be a reissue. `secrets-broker-bws-token` is the one such row.
 
 ### What each unit does
 
@@ -1753,9 +1759,21 @@ A reissue's `verify` proves that start one of two ways, chosen by the lane token
 Every `rotated_by_sds` `bws-lane-token` row whose lane loads its own token names `helper_target`,
 the lane's name, so a reissue of those tokens takes the `loaded` proof. The rows of the broker
 lanes (the tables in `lanes/secrets-broker/allowlist.toml`) name none and keep the `PATCH` proof,
-since their containers load no `BWS_ACCESS_TOKEN`, and so does `secrets-broker-bws-token`, which
-the SDS doesn't rotate. `tests/rotation_worker/test_lane_token_helper_targets.py` holds that rule
-on the real file.
+since their containers load no `BWS_ACCESS_TOKEN`. The broker's own token,
+`secrets-broker-bws-token`, is the one row that isn't a lane and names a target, `secrets-broker`
+(ADR-0055 amendment 34 item 4): its reissue proves the broker's restarted container by `loaded`.
+`tests/rotation_worker/test_lane_token_helper_targets.py` holds both rules on the real file.
+
+The broker's token rotates through this adapter's rotation plan (amendment 34 item 2, D-81 (2)
+B), with three differences from a lane token. A session, not the lane phases, restarts the broker,
+with `coolify_deploy` at its running tag. Its `loaded` proof reads the broker's container. Its
+bind compares a token that has project grants. The row carries `created`, the date Devon pasted
+its first token, so infraops serves it a `last_rotated` and the proposer derives the rotation
+plan, never the issue plan, whose `store` would refuse the hand-pasted keeper. No standing
+approval covers a rotation plan, so Devon approves each revision by name. The row stays
+`rotated_by_sds = false`, which the executor refuses, until amendment 34 item 9's exit checks 1 to
+3 pass. The steps are in
+`docs/operations/secrets-broker.md`, "Rotate the broker's token".
 
 The rows gained the field at increment 7's cut-over, and the change merges only once both of the
 following hold:

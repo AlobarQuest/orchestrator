@@ -3,9 +3,10 @@
 ADR-0055 amendment 29 item 3 (D-63 C): a lane token's reissue proves the restarted lane loaded the
 new token by the VPS helper's `loaded` fingerprint, through one consumers-only helper target per
 lane. Every lane that loads its own token names its target; a broker lane's container loads no
-`BWS_ACCESS_TOKEN`, so its row names none. The field is the `bws_lane_token` adapter's alone: the
-package's destinations, plan and rendered revision are the same with it and without it, and every
-other in-repo loader of the file reads it unchanged.
+`BWS_ACCESS_TOKEN`, so its row names none. The broker's own token is the one row that isn't a lane
+and names a target, `secrets-broker`, the broker's container (amendment 34 item 4). The field is
+the `bws_lane_token` adapter's alone: the package's destinations, plan and rendered revision are
+the same with it and without it, and every other in-repo loader of the file reads it unchanged.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from tests.rotation_worker.conftest import Origins
 
 ROOT = Path(__file__).resolve().parents[2]
 BROKER_TOKEN = "secrets-broker-bws-token"
+BROKER_TARGET = "secrets-broker"
 TOKEN_SUFFIX = "_BWS_ACCESS_TOKEN"
 
 
@@ -105,17 +107,19 @@ def test_every_lane_holding_its_own_token_names_its_helper_target(
     assert missing == []
 
 
-def test_no_broker_lane_and_not_the_broker_s_own_token_names_one(
+def test_no_broker_lane_names_one_and_the_broker_s_own_token_names_the_broker(
     rows: dict[str, RegistryEntry],
 ) -> None:
+    """A broker lane's container loads no token, so its `loaded` could never match; the broker's
+    own container loads its token as `BWS_ACCESS_TOKEN` (ADR-0055 amendment 34 item 4)."""
     brokered = _broker_lanes()
     naming = sorted(
         cid
         for cid, credential in _lane_tokens(rows).items()
-        if bws_lane_token.HELPER_TARGET_FIELD in credential
-        and (cid == BROKER_TOKEN or _lane(credential) in brokered)
+        if bws_lane_token.HELPER_TARGET_FIELD in credential and _lane(credential) in brokered
     )
     assert naming == []
+    assert bws_lane_token.helper_target(rows[BROKER_TOKEN].credential) == BROKER_TARGET
 
 
 def test_each_target_is_the_service_that_loads_the_row_s_variable(
@@ -190,3 +194,4 @@ def test_the_install_page_lists_each_target_s_container_as_derived(
             (variable,) = [c for c in credential["consumer"] if c["kind"] == "coolify-env"]
             derived[target] = f"{_loading_service(credential)}-{variable['uuid']}"
     assert listed == derived
+    assert listed[BROKER_TARGET] == "secrets-broker-wogvks6obmvv9fdotlgnw7r3"
