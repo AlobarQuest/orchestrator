@@ -510,6 +510,9 @@ TABLE: dict[str, Row] = {
         "base64",
         "bitwarden_sdk",
         "collections",
+        # The GitHub App key adapter reads a key's public half and makes its never-issued control
+        # key (ADR-0055 amendment 35).
+        "cryptography",
         "dataclasses",
         "datetime",
         "enum",
