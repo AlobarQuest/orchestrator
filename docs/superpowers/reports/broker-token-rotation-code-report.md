@@ -184,6 +184,10 @@ then; check 4 can't (see Concerns):
 
 - `make check` in the worktree, with the worktree's own database `orchestrator_test_hq_w_324`
   migrated to head, `SECURITY_STANDARDS_DIR` at the fixture, and `PGTZ=UTC`: exit 0. Ruff reported "All checks passed!", pyright 0 errors, and pytest **14935 passed, 1 skipped** (11 warnings, 5 min 38 s). The first run, before the review fixes, was 14934 passed, 1 skipped..
+- **CI on PR #822** (run 45916301219, `Quality`, at `117e8d6c`): passed, with **14922 passed, 14
+  skipped**. That's 14936 collected, the same as locally (14935 + 1). CI skips 13 more tests than
+  my machine does, and the job log doesn't print their reasons. The new script tests don't import
+  the SDK (they use a fake), so CI's sync without the `rotation-worker` extra doesn't skip them.
 - The two named row-test files and the new script test: `test_secrets_broker_row.py`, `test_lane_token_helper_targets.py`, `test_bws_reach_probe.py` and `test_layer_manifest.py` together gave 25 passed. One mutation checked the leak test: making the script append each secret's key to its id failed both `test_no_token_key_or_value_reaches_the_output` and the listing test, and the file was restored.
 - In-process: `check_row` accepts the row with `helper_target`, `helper_target` answers
   `secrets-broker`, and `_first_issue({id: "2026-11-20"}, id)` is `False`.
