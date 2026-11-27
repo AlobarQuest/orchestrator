@@ -44,8 +44,8 @@ both validators' cases, the `lanes-finish` and `--restored` dispatch for the new
 5. **`secrets-broker.md`** "Prove a lane's reads" gives the run's three steps and what its record
    shows. Line 205 no longer says the run is refused. "What the broker doesn't change" says the
    revoke waits for each lane's proof.
-6. **`deploy.md`**: the `--token` bullet, the plan's recorded-UUIDs note, and "Before a lane
-   token's revoke" describe the broker case.
+6. **`deploy.md`**: the `--token` bullet, the plan's recorded-UUIDs note, the lane phases'
+   write, read and finish steps, and "Before a lane token's revoke" describe the broker case.
 
 ## The command a cycle runs per lane, and what its record shows
 
@@ -85,11 +85,10 @@ is `closed_failed`, and `last_finished` reads past it.
 
 ## Tests and checks
 
-- `make check` on `orchestrator_test_hq_w_329`: **14976 passed, 1 skipped**, ruff and pyright
-  clean, exit 0. One readability edit (the control-list expression, behaviour unchanged) and the
-  review's follow-ups landed after this run. After them, `tests/scripts/test_deploy_lanes.py`
-  passed 149 of 149, and ruff, ruff format and pyright are clean on both changed files.
-- `tests/scripts/`: 1556 passed.
+- `make check` on `orchestrator_test_hq_w_329`, clean tree at `da63919b` (every code, test and
+  doc change, before this report's final edit): **14976 passed, 1 skipped**, ruff and pyright
+  clean, exit 0. An earlier run before the review follow-ups had the same counts.
+- `tests/scripts/` (before the review follow-ups): 1556 passed.
 - `code-standards risk`: `normal`.
 - **New tests**, replacing `test_a_broker_lanes_token_run_is_refused_at_plan_time`, which no exit
   manifest or evidence names:
@@ -116,8 +115,10 @@ is `closed_failed`, and `last_finished` reads past it.
   | M5, the fallback control ignored | 2 failed |
   | M6, the inverse's brokered branch removed | survived, then 1 failed after I added an assertion |
 
-  M1 is HQ's check: with the brokered branch removed, the no-write test fails because it finds
-  `coolify_update_service(` in the printed steps.
+  M1 is HQ's check. I reran it on the committed file: with the next steps' brokered branch
+  removed, `test_a_broker_lanes_token_run_proves_its_reads_and_writes_nothing` fails at
+  `assert write not in err, write` with `AssertionError: coolify_update_service(`, because the
+  printed steps hold the compose write.
 - **Token-shape grep** of the diff's added lines (`0.` + UUID + `.`/`:`): 0 matches. The same
   pattern matches a known-bad synthetic line, so the grep can find one.
 
@@ -141,6 +142,11 @@ question). None of W-328's files is touched.
 - `lane-run --read` prints the same `refused` for the broker's `not_allowed` and for a
   `bws_failed`. The pinned controls make `not_allowed` the expected cause, but the line doesn't
   prove it. The broker's log line (`outcome: not_allowed`) does, if a session wants to confirm.
+- The token-present read prints `false` when `docker exec` itself fails, and `false` is the
+  passing value for a proof. The step before it, the exactly-one container check, exits 1 when
+  the container isn't there. But a `docker exec` that fails on a running container still reads
+  `false`. The `lane-run --read` read on the same container would also fail in that case, so
+  the proof as a whole still fails. That read is the token check's backstop.
 - The run keeps the quiet-slot wait in production mode, so a proof can wait for the slot. HQ
   ruled no new branch.
 - Construction-mode ruling: I read the handoff's pointer and didn't need to open the file. Item
