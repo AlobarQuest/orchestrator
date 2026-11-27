@@ -146,12 +146,18 @@ approval written with a non-`policy:` approver reads as a person's) applies here
 
 ## Self-review
 
+- **Other rows of the class.** The type applies to every `anthropic-api-key` row. A read-only grep
+  of `~/Projects/*/.cred-consumers.toml` finds two: this repository's `anthropic-change-window-key`
+  and factory-runner's `anthropic-api-key` (keeper `b74bf8b3-…`, a `gh-actions-secret` copy). Neither
+  has `rotated_by_sds = true`, and `check_row` refuses factory-runner's by its consumer kinds.
+
 - Every step runs through `contract.py`; the adapter re-implements none.
 - The workspace refusal raises from `probe`, so it fails `verify_new`, `confirm_dead` (when the new
   key is probed) and the inbox's bind alike. The inbox catches it as a refusal and leaves the value
   in the inbox (`worker._bind_inbox` catches `REFUSALS`).
 - `test_no_evidence_refusal_or_log_line_carries_a_key_or_a_control` runs a rotation and three
-  failing confirms (403, no header, no answer) and checks that no evidence row, refusal or log line
+  failing confirms (a 403 control, a 200 with no workspace header, no answer), asserts that each
+  refusal is the one intended, and checks that no evidence row, refusal or log line
   carries the old key, the new key, any control sent, or a 16-character slice of any of them.
 
 - **Mutations**, each run against `tests/rotation_worker/test_anthropic_key.py` with
@@ -172,12 +178,16 @@ approval written with a non-`policy:` approver reads as a person's) applies here
 
 ## Concerns
 
-1. **Bearer or `x-api-key`.** The amendment's probe sends the key as `Authorization: Bearer`, from
-   the List Models page's example, and I built it that way. Anthropic's API reference generally
-   shows a regular API key in the `x-api-key` header, with `Authorization: Bearer` for OAuth
-   tokens. If a regular key isn't accepted as a bearer on `GET /v1/models`, exit check 1 records a
-   non-200 for the current key and nothing rotates: the probe fails closed, and switching the
-   header is a one-line change plus the tests that pin it. Exit check 1 measures it.
+1. **Bearer or `x-api-key` (the most likely way exit check 1 fails).** The amendment's probe
+   sends the key as `Authorization: Bearer`, citing the List Models page's example, and I built it
+   that way. The `claude-api` skill's reference disagrees for a regular API key: its cURL examples
+   send one as `-H "x-api-key: $ANTHROPIC_API_KEY"` (`curl/examples.md`, line 18 and on), and its
+   authentication note says "OAuth tokens go on `Authorization: Bearer`, not `x-api-key:` -
+   converting a curl from an API key is a header change, not a key swap". So a live regular key may
+   answer 401 to this probe. That fails closed (verify-new and exit check 1 see a dead key, and
+   nothing is stored), but the route can't work until it's settled. The change is one header in
+   `_models` and the tests that pin it, plus the confined client's headers; it changes what the
+   adapter sends, so it's HQ's call or an amendment's, and exit check 1 measures it either way.
 2. **Exit check 1 has no entry point** (preceding section): a small CLI or script is needed before
    it can run.
 3. **The T1 note's home.** I put it in the operations page, as `secrets-broker.md` holds D-83's,

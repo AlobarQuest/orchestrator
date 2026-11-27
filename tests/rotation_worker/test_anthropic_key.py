@@ -322,14 +322,24 @@ def test_no_evidence_refusal_or_log_line_carries_a_key_or_a_control(
     refusals = []
     rotating.run("store")
     rotating.run("verify")
-    for change in ({"refused": 403}, {"no_header": True}, {"down": True}):
+    for change in (
+        {"refused": 403},
+        {"refused": 401, "no_header": True},
+        {"no_header": False, "down": True},
+    ):
         for name, value in change.items():
             setattr(rotating.anthropic, name, value)
         try:
             rotating.run("confirm")
         except ContractError as error:
             refusals.append(str(error))
-    assert len(refusals) == 3
+    assert [refusal.split(" ")[:3] for refusal in refusals] == [
+        ["the", "probe", "didn't"],
+        ["GET", "/v1/models", "answered"],
+        ["the", "probe", "didn't"],
+    ]
+    assert "(403)" in refusals[0] and "(None)" in refusals[2]
+    assert "no anthropic-workspace-id header" in refusals[1]
     controls = rotating.controls()
     assert controls
     text = " ".join([*(repr(evidence) for _, evidence in rotating.filed), *refusals, caplog.text])

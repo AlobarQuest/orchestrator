@@ -31,7 +31,7 @@ import re
 import secrets
 import string
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Final
 
 import httpx
@@ -203,7 +203,7 @@ class AnthropicKeyProvider:
     def revoke_guide(self, new: Value) -> str:
         """The revoke alert's text (amendment 36 item 5), naming the day the new key was stored."""
         del new
-        stored = self._stored_on().date().isoformat()
+        stored = self._stored_on().astimezone(UTC).date().isoformat()
         return (
             "Every reader has run with the new key. In the Claude Console, in workspace "
             f"{self._workspace}, Delete (not Disable: a disabled key can be re-enabled) every API "
