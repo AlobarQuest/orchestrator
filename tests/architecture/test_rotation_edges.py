@@ -1308,6 +1308,7 @@ def test_each_child_login_imports_only_the_named_sdk(tmp_path: Path) -> None:
     assert {name: child_imports(script, tmp_path) for name, script in scripts.items()} == {
         "_LOGIN": {"bitwarden_sdk", "sys"},
         "_REACH": {"bitwarden_sdk", "hashlib", "sys"},
+        "_REACH_IDS": {"bitwarden_sdk", "json", "sys"},
     }
 
 
