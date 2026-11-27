@@ -1527,20 +1527,144 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
 # ---- the broker review follow-ups (R1, R2, R4, R6) -----------------------------------------
 
 
-def test_a_broker_lanes_token_run_is_refused_at_plan_time(lanes: Lanes) -> None:
-    sha = _broker_commit(lanes, BROKER_COMPOSE, ALLOWLIST)
+CONTROL, FALLBACK_CONTROL = deploy.BROKER_READ_CONTROLS
+WRITES = (
+    "coolify_update_service(",
+    "coolify_update_service_env",
+    "coolify_create_service_env",
+    "coolify_deploy",
+)
+
+
+def _added_broker_lane(lanes: Lanes, allowlist: str = ALLOWLIST) -> str:
+    """Execution watch added as a broker lane: its `--add` finished with no token."""
+    sha = _broker_commit(lanes, BROKER_COMPOSE, allowlist)
     change = ("--add", "--tag", tag(sha))
     assert lanes.add("execution-watch", sha) == EXIT_OK
     assert lanes.recheck("execution-watch", *change) == EXIT_OK
     reads = (*_watch_reads(sha), "--token-present", "false")
     assert lanes.finish("execution-watch", *change, *reads) == EXIT_OK
+    return sha
+
+
+def _prepare_proof(lanes: Lanes, sha: str) -> int:
     running = ["--running-tag", tag(sha), "--running-volume", WATCH_VOLUME]
-    assert lanes.main("lanes-prepare", "--lane", "execution-watch", "--token", *running) == (
-        EXIT_REFUSED
-    )
-    assert "a broker lane has no token; its --token run is not supported" in (
-        lanes.runs("execution-watch")[-1].reason
-    )
+    return lanes.main("lanes-prepare", "--lane", "execution-watch", "--token", *running)
+
+
+def _proof_reads(
+    lanes: Lanes, sha: str, *, present: str = "false", result: str | None = None
+) -> list[str]:
+    result = f"{OBSERVER} ok\n{CONTROL} refused\n" if result is None else result
+    return [
+        *_watch_reads(sha),
+        "--token-present",
+        present,
+        "--read-result",
+        lanes.read_result(result),
+    ]
+
+
+def test_a_broker_lanes_token_run_proves_its_reads_and_writes_nothing(
+    lanes: Lanes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ADR-0055 Amendment 32 item 10: the run plans the allowlist table's reads and a refused
+    control, and prints no resource write, no variable write and no redeploy."""
+    sha = _added_broker_lane(lanes)
+    capsys.readouterr()
+    assert _prepare_proof(lanes, sha) == EXIT_OK
+    err = capsys.readouterr().err
+    run = lanes.runs("execution-watch")[-1]
+    assert run.brokered and (run.change, run.status) == ("token", "waiting")
+    assert (run.read_uuids, run.control_uuid) == ([OBSERVER], CONTROL)
+    for write in WRITES:
+        assert write not in err, write
+    assert "--redeploy-failed" not in err and "writes nothing" in err
+    # Its inverse is the failed close alone: the executor wrote no token for it.
+    assert "is a read proof and wrote nothing" in err and "the executor wrote the token" not in err
+    assert f'docker exec "$C" lane-run --read {OBSERVER} {CONTROL}\n' in err
+    assert 'test -n "$BWS_ACCESS_TOKEN"' in err
+
+    assert lanes.recheck("execution-watch", "--token") == EXIT_OK
+    assert lanes.finish("execution-watch", "--token", *_proof_reads(lanes, sha)) == EXIT_OK
+    assert _status(lanes, "execution-watch") == ["finished", "finished"]
+    last = deploy.last_finished(lanes.runs("execution-watch"))
+    assert last is not None and (last.change, last.commit) == ("token", sha)
+
+
+@pytest.mark.parametrize(
+    ("reads", "mismatch"),
+    [
+        ({"present": "true"}, "reads through the broker"),
+        ({"result": f"{OBSERVER} refused\n{CONTROL} refused\n"}, f"{OBSERVER} refused, not ok"),
+        ({"result": f"{OBSERVER} ok\n{CONTROL} ok\n"}, f"{CONTROL} ok, not refused"),
+        ({"result": f"{OBSERVER} ok\n"}, f"didn't read {CONTROL}"),
+    ],
+)
+def test_a_read_proof_fails_and_closes_on_a_failed_read_a_read_control_or_a_token(
+    lanes: Lanes, reads: dict[str, str], mismatch: str
+) -> None:
+    sha = _added_broker_lane(lanes)
+    assert _prepare_proof(lanes, sha) == EXIT_OK
+    assert lanes.recheck("execution-watch", "--token") == EXIT_OK
+    failing = _proof_reads(lanes, sha, **reads)
+    assert lanes.finish("execution-watch", "--token", *failing) == EXIT_CONDITION
+    assert mismatch in lanes.runs("execution-watch")[-1].reason
+    assert lanes.finish("execution-watch", "--token", "--restored") == EXIT_OK
+    runs = lanes.runs("execution-watch")
+    assert [r.status for r in runs] == ["finished", "closed_failed"]
+    last = deploy.last_finished(runs)
+    assert last is not None and last.change == "add"
+
+
+def test_a_read_proof_refuses_a_result_naming_an_unplanned_uuid(lanes: Lanes) -> None:
+    sha = _added_broker_lane(lanes)
+    assert _prepare_proof(lanes, sha) == EXIT_OK
+    assert lanes.recheck("execution-watch", "--token") == EXIT_OK
+    result = f"{OBSERVER} ok\n{CONTROL} refused\n{ALERT} refused\n"
+    reads = _proof_reads(lanes, sha, result=result)
+    assert lanes.finish("execution-watch", "--token", *reads) == EXIT_USAGE
+
+
+def test_a_lane_listing_the_first_control_takes_the_second_and_one_listing_both_is_refused(
+    lanes: Lanes,
+) -> None:
+    listing_first = f'[lanes.execution-watch]\nread = ["{OBSERVER}", "{CONTROL}"]\n'
+    sha = _added_broker_lane(lanes, listing_first)
+    assert _prepare_proof(lanes, sha) == EXIT_OK
+    run = lanes.runs("execution-watch")[-1]
+    assert (run.read_uuids, run.control_uuid) == (sorted([OBSERVER, CONTROL]), FALLBACK_CONTROL)
+
+    run = deploy.LaneRun("execution-watch", "token", "token", "waiting", "", "", tag="sha-x")
+    with pytest.raises(deploy.Refused, match="lists every read-proof control"):
+        deploy._plan_read_proof(run, frozenset({OBSERVER, CONTROL, FALLBACK_CONTROL}))
+
+
+def test_every_broker_lane_has_a_control_outside_its_table() -> None:
+    """The tracked allowlist: estate-landing lists the first control, so its proof reads the
+    second, as its cut-over proof did; every other lane's reads the first."""
+    allowlist = load_allowlist(ROOT / deploy.BROKER_ALLOWLIST)
+    # Each control is a live secret another lane reads, so a `refused` is the broker's
+    # `not_allowed` for this lane, never a secret that no longer exists.
+    manifest = (ROOT / ".bws-secrets.toml").read_text()
+    for control in deploy.BROKER_READ_CONTROLS:
+        assert any(control in listed for listed in allowlist.values()), control
+        assert f'uuid = "{control}"' in manifest, control
+    for lane, listed in allowlist.items():
+        run = deploy.LaneRun(lane, "token", "token", "waiting", "", "")
+        deploy._plan_read_proof(run, listed)
+        expected = FALLBACK_CONTROL if lane == "estate-landing" else CONTROL
+        assert run.control_uuid == expected, lane
+        assert run.read_uuids == sorted(listed)
+
+
+def test_a_token_lanes_token_run_reads_no_control(lanes: Lanes) -> None:
+    lanes.added_watch()
+    assert lanes.prepare_token() == EXIT_OK
+    run = lanes.runs("execution-watch")[-1]
+    assert not run.brokered and run.control_uuid == ""
+    [command] = [c for name, c in deploy.lane_reads(run) if name == "--read-result"]
+    assert command.endswith(f"lane-run --read {OBSERVER} {ALERT}")
 
 
 def _failing_git(stderr: str, failing: str):

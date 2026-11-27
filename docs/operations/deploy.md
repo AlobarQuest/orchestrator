@@ -202,7 +202,8 @@ Each phase takes `--lane <lane>` and exactly one change:
   "Development mode").
 - `--token`: redeploy the lane after the VM rotation executor wrote its `<LANE>_BWS_ACCESS_TOKEN`
   (ADR-0059 Amendment 2). It keeps the running tag, digest and schedule, writes the tracked compose
-  at that tag, and writes no variable. It refuses a lane with no passed `--add`.
+  at that tag, and writes no variable. It refuses a lane with no passed `--add`. On a broker lane
+  it is a read proof that writes nothing ("Before a lane token's revoke").
 
 A `--tag` takes the release's sha tag only. The command resolves it to its full commit on
 `origin/main`, finds that commit's one successful `Release image` run (in the newest 200), and
@@ -277,7 +278,7 @@ run of its lane is `unfinished`.
 
    A `--token` run records the UUIDs `.bws-secrets.toml` lists for the lane at its running tag:
    each `[[secret]]` whose `lanes` field names the lane. It refuses a lane the manifest lists no
-   secret for.
+   secret for. A broker lane's records its allowlist table's UUIDs and a control instead.
 
    Exit 2 means the quiet slot is unmet: re-run it on a later cycle. Exit 4 means the wait timed
    out. Exit 0 prints, on stderr, how the compose differs from the recorded one, the exact calls of
@@ -346,6 +347,15 @@ between the `PATCH` and the `--token` run, still run `--token` after it passes: 
 values are the ones the lane already runs, so the second redeploy changes nothing but proves the
 reads on the container that holds the token. Report that `lanes-finish`, not the other change's,
 as the revoke's precondition.
+
+A broker lane has no token to redeploy on, so its token's retirement (ADR-0055 Amendment 32 item 5)
+needs its recorded read proof instead: a `--token` run that writes nothing and reads the running
+container. It reads `lane-run --read` over the lane's allowlist table at the commit it runs plus
+one control outside it, and the token-present read. Its `lanes-finish` passes only when every
+listed UUID is `ok`, the control is `refused`, and the token read is `false`; the run file records
+the UUIDs, the control and `finished`. A session runs it in the revoke sitting's gate, since HQ's
+deploy gate passes no `lane-run --read`. The steps are in `secrets-broker.md`, "Prove a lane's
+reads".
 
 ### Registered lanes and the lane-token matcher
 
