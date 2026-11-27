@@ -23,7 +23,7 @@ import yaml
 
 from rotation_proposer import cli, standing_approval
 from rotation_proposer.findings import FindingsError
-from rotation_proposer.generate import render
+from rotation_proposer.generate import plan_for, render
 from rotation_proposer.standing_approval import (
     AUTHORITY,
     DESTINATIONS,
@@ -35,6 +35,7 @@ from rotation_proposer.standing_approval import (
     carry,
     standard_authority,
 )
+from rotation_worker.adapters import bws_lane_token
 from rotation_worker.canonical import package_hash
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.registry import (
@@ -202,6 +203,14 @@ def _run(
 def _refused(lines: list[dict[str, Any]]) -> list[str]:
     (verdict,) = [line for line in lines if line["event"] == "standing_approval.verdict"]
     return verdict["refused"]
+
+
+def test_the_lane_token_row_is_one_the_executor_acts_on_with_the_issue_plan() -> None:
+    """`LANE_TOKEN_ROW` stands in for a real row, so it must stay one the lane-token adapter
+    accepts and the proposer would issue."""
+    bws_lane_token.check_row(LANE_TOKEN_ROW)
+    _, plan = plan_for(RegistryEntry(REGISTRY, "0" * 40, _row(TOKEN)), first_issue=True)
+    assert plan.issue
 
 
 # ---- every condition holds ----------------------------------------------------------------------

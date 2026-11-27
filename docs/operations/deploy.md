@@ -367,8 +367,8 @@ A lane is registered while, at `origin/main`, this repository's `.cred-consumers
 token entry or the secrets broker's allowlist (`lanes/secrets-broker/allowlist.toml`) holds its
 table (`registered_lanes`; ADR-0055 Amendment 32 item 4). A broker lane has no token entry, so its
 table registers it; a lane with both is registered once. ADR-0055 Amendment 32 item 5.3 removed the
-thirteen lanes' token entries, so every lane is registered by its table. The matcher (`lanes_in_registry`) takes
-any `[[credential.consumer]]` with `kind = "coolify-env"`, `resource_type = "service"` and
+thirteen lanes' token entries, so every lane is registered by its table. The matcher
+(`lanes_in_registry`) takes any `[[credential.consumer]]` with `kind = "coolify-env"`, `resource_type = "service"` and
 `key = "<LANE>_BWS_ACCESS_TOKEN"`, and reads the lane as `<LANE>` lower-cased with `_` as `-`
 (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is `execution-watch`). It refuses a key that names no lane the
 command knows, and two entries for one lane. `_allowlist_at` reads the allowlist with the
