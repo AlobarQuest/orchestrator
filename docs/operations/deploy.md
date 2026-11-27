@@ -366,8 +366,9 @@ reads".
 A lane is registered while, at `origin/main`, this repository's `.cred-consumers.toml` holds its
 token entry or the secrets broker's allowlist (`lanes/secrets-broker/allowlist.toml`) holds its
 table (`registered_lanes`; ADR-0055 Amendment 32 item 4). A broker lane has no token entry, so its
-table registers it; a lane with both is registered once. The matcher (`lanes_in_registry`) takes
-any `[[credential.consumer]]` with `kind = "coolify-env"`, `resource_type = "service"` and
+table registers it; a lane with both is registered once. ADR-0055 Amendment 32 item 5.3 removed the
+thirteen lanes' token entries, so every lane is registered by its table. The matcher
+(`lanes_in_registry`) takes any `[[credential.consumer]]` with `kind = "coolify-env"`, `resource_type = "service"` and
 `key = "<LANE>_BWS_ACCESS_TOKEN"`, and reads the lane as `<LANE>` lower-cased with `_` as `-`
 (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is `execution-watch`). It refuses a key that names no lane the
 command knows, and two entries for one lane. `_allowlist_at` reads the allowlist with the
@@ -382,7 +383,7 @@ fails while a broker compose has no table or a table's compose maps a token. A l
 token entry and a table stays registered until both are gone.
 
 `execution-watch`'s tracked files (`lanes/execution-watch/compose.yaml` and `crontab`) don't
-register it: its token entry lands with its cut-over. Its compose names
+register it: its table in the secrets broker's allowlist does. Its compose names
 `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of the lane's ping-URL secret; until the executor
 writes the URL there, that secret holds the inbox's empty marker and the container's dead-man
 helper pings nothing (`scripts/sds-deadman.sh`). It reads every secret through the lane secrets broker (ADR-0055 Amendment 32, item 4): its compose maps no token and mounts `/data/sds/broker/execution-watch` read-only at `/run/sds-broker`, and its table in `lanes/secrets-broker/allowlist.toml` lists those secrets (`docs/operations/secrets-broker.md`). The secrets a lane reads are listed in `.bws-secrets.toml` by each

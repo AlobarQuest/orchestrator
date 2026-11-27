@@ -3,8 +3,9 @@
 A rotation revision a policy approved is carried only when the carry form refuses nothing and the
 lineage's approval is the one the emitter verified in the chain; the carrier then records its check,
 under its own identity, before it posts the intake. Each refusal below is driven from the passing
-control by changing one input. The package is the one `generate.render` writes for the landing
-ledger's real lane-token row, approved by the standing approval's policy approver.
+control by changing one input. The package is the one `generate.render` writes for the standing
+approval tests' `LANE_TOKEN_ROW` (the landing ledger's lane-token row, with placeholder UUIDs),
+approved by the standing approval's policy approver.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import yaml
 
 from rotation_worker.canonical import package_hash
 from rotation_worker.registry import RegistryEntry, RegistryError
-from tests.rotation_proposer.test_standing_approval import REGISTRY, _generated, _real_row
+from tests.rotation_proposer.test_standing_approval import REGISTRY, _generated, _real_row, _row
 from tests.work_carrier.test_workability import _Source, member, portfolio, project
 from work_carrier import cli as cli_module
 from work_carrier import standing
@@ -46,7 +47,7 @@ SENTINEL = "placeholder-secret-value-not-a-token"
 
 
 def _package(**overrides: Any) -> dict[str, Any]:
-    return {**_generated(_real_row(TOKEN)), "status": "approved", **overrides}
+    return {**_generated(_row(TOKEN)), "status": "approved", **overrides}
 
 
 def _lineage(package: dict[str, Any], **approval: Any) -> dict[str, Any]:
@@ -98,7 +99,7 @@ def _write(directory: Path, package: dict[str, Any], lineage: dict[str, Any]) ->
 
 
 def _entry(row: dict[str, Any] | None = None) -> Callable[[str], RegistryEntry]:
-    found = RegistryEntry(REGISTRY, REGISTRY_COMMIT, row if row is not None else _real_row(TOKEN))
+    found = RegistryEntry(REGISTRY, REGISTRY_COMMIT, row if row is not None else _row(TOKEN))
     return lambda credential_id: found
 
 
@@ -169,7 +170,7 @@ def test_two_passes_over_one_revision_and_registry_compose_the_same_record(tmp_p
 
 def test_a_registry_that_moved_is_a_new_reference(tmp_path: Path) -> None:
     first = _check(tmp_path / "one")
-    moved = RegistryEntry(REGISTRY, "c" * 40, _real_row(TOKEN))
+    moved = RegistryEntry(REGISTRY, "c" * 40, _row(TOKEN))
     second = _check(tmp_path / "two", find_entry=lambda credential_id: moved)
     assert isinstance(first, standing.Checked) and isinstance(second, standing.Checked)
     assert first.observation["source_reference"] != second.observation["source_reference"]
@@ -199,7 +200,7 @@ def test_a_checkout_that_no_longer_hashes_to_the_payload_refuses(tmp_path: Path)
 
 def test_a_carry_form_refusal_names_its_conditions(tmp_path: Path) -> None:
     """A registry that moved since the approval makes the re-render differ."""
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     for consumer in row["consumer"]:
         if consumer["kind"] == "coolify-env":
             consumer["key"] = "LANDING_LEDGER_MOVED_VARIABLE"

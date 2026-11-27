@@ -1,8 +1,11 @@
 """`rotation-proposer standing-approval`: ADR-0055 amendment 22 item 2's conditions, as refusals.
 
-The rows are the landing ledger's two registry rows from this repository's `.cred-consumers.toml`,
-and each package is the one `generate.render` writes for its row, as the proposer generated the
-landing ledger's two packages. The registry and intent-packages are throwaway git origins read
+The ping URL's row is the landing ledger's registry row from this repository's
+`.cred-consumers.toml`. The token's row is `LANE_TOKEN_ROW`, the landing ledger's lane-token row in
+the shape the registry held it, with placeholder UUIDs: ADR-0055 Amendment 32 item 5.3 removed every
+lane's token row, and the standing approval still reads a lane token on the issue plan. Each
+package is the one `generate.render` writes for its row, as the proposer generated the landing
+ledger's two packages. The registry and intent-packages are throwaway git origins read
 through the real mirror, as the command reads them.
 """
 
@@ -20,7 +23,7 @@ import yaml
 
 from rotation_proposer import cli, standing_approval
 from rotation_proposer.findings import FindingsError
-from rotation_proposer.generate import render
+from rotation_proposer.generate import plan_for, render
 from rotation_proposer.standing_approval import (
     AUTHORITY,
     DESTINATIONS,
@@ -32,6 +35,7 @@ from rotation_proposer.standing_approval import (
     carry,
     standard_authority,
 )
+from rotation_worker.adapters import bws_lane_token
 from rotation_worker.canonical import package_hash
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.registry import (
@@ -55,10 +59,46 @@ EVERY = [GENERATED, REVISION_1, ISSUE_PLAN, LANE_TYPE, DESTINATIONS, AUTHORITY]
 SENTINEL = "placeholder-secret-value-not-a-token"
 
 
+LANE_TOKEN_ROW: dict[str, Any] = {
+    "id": TOKEN,
+    "class": "bws-lane-token",
+    "provider": "bws-lane-token",
+    "bws_uuid": "55555555-5555-4555-8555-555555555555",
+    "rotated_by_sds": True,
+    "rotate_requested": "2026-11-09",
+    "reach_secrets": [
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+    ],
+    "reach_projects": [],
+    "consumer": [
+        {
+            "kind": "bws-secret",
+            "uuid": "55555555-5555-4555-8555-555555555555",
+            "note": "the keeper",
+        },
+        {
+            "kind": "coolify-env",
+            "instance": "prod",
+            "resource_type": "service",
+            "uuid": "lanetokenservice00000000",
+            "key": "LANDING_LEDGER_BWS_ACCESS_TOKEN",
+            "redeploy": False,
+            "note": "the lane's service variable",
+        },
+    ],
+}
+
+
 def _real_row(credential_id: str) -> dict[str, Any]:
     document = tomllib.loads((ROOT / REGISTRY_PATH).read_text())
     (row,) = [c for c in document["credential"] if c["id"] == credential_id]
     return copy.deepcopy(row)
+
+
+def _row(credential_id: str) -> dict[str, Any]:
+    """The row a test publishes: `LANE_TOKEN_ROW` for the token, the registry's own otherwise."""
+    return copy.deepcopy(LANE_TOKEN_ROW) if credential_id == TOKEN else _real_row(credential_id)
 
 
 def _toml_value(value: object) -> str:
@@ -121,7 +161,7 @@ class Rig:
         last_rotated: str | None = None,
     ) -> tuple[str, str]:
         """Commit the row, the package and its lineage; return the two commits."""
-        row = row if row is not None else _real_row(credential_id)
+        row = row if row is not None else _row(credential_id)
         registry_commit = ""
         for repository in REGISTRY_REPOSITORIES:
             text = _registry_text(row) if repository == REGISTRY else "version = 1\n"
@@ -165,6 +205,14 @@ def _refused(lines: list[dict[str, Any]]) -> list[str]:
     return verdict["refused"]
 
 
+def test_the_lane_token_row_is_one_the_executor_acts_on_with_the_issue_plan() -> None:
+    """`LANE_TOKEN_ROW` stands in for a real row, so it must stay one the lane-token adapter
+    accepts and the proposer would issue."""
+    bws_lane_token.check_row(LANE_TOKEN_ROW)
+    _, plan = plan_for(RegistryEntry(REGISTRY, "0" * 40, _row(TOKEN)), first_issue=True)
+    assert plan.issue
+
+
 # ---- every condition holds ----------------------------------------------------------------------
 
 
@@ -198,7 +246,7 @@ def test_a_generated_revision_1_on_the_issue_plan_refuses_nothing(
 def test_a_package_edited_after_generation_is_not_proposer_generated(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    package = {**_generated(_real_row(TOKEN)), "title": "Standing rotation, edited"}
+    package = {**_generated(_row(TOKEN)), "title": "Standing rotation, edited"}
     rig.publish(TOKEN, package=package)
     code, lines = _run(capsys, TOKEN)
     assert (code, _refused(lines)) == (1, [GENERATED])
@@ -207,7 +255,7 @@ def test_a_package_edited_after_generation_is_not_proposer_generated(
 def test_a_package_another_author_wrote_is_not_proposer_generated(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rig.publish(TOKEN, package={**_generated(_real_row(TOKEN)), "created_by": "devon"})
+    rig.publish(TOKEN, package={**_generated(_row(TOKEN)), "created_by": "devon"})
     code, lines = _run(capsys, TOKEN)
     assert (code, _refused(lines)) == (1, [GENERATED])
     (generated,) = [line for line in lines if line.get("condition") == GENERATED]
@@ -238,7 +286,7 @@ def test_a_lineage_that_isn_t_one_unapproved_revision_1_refuses(
 def test_a_package_revision_other_than_1_refuses_and_fails_the_re_render_too(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rig.publish(TOKEN, package={**_generated(_real_row(TOKEN)), "revision": 2})
+    rig.publish(TOKEN, package={**_generated(_row(TOKEN)), "revision": 2})
     code, lines = _run(capsys, TOKEN)
     assert (code, _refused(lines)) == (1, [GENERATED, REVISION_1])
 
@@ -248,7 +296,7 @@ def test_a_lane_token_infraops_records_rotated_is_not_on_the_issue_plan(
 ) -> None:
     """A revision 1 rendered for a reissue, of a credential infraops dates: the amendment's
     default leaves it for Devon."""
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     rig.publish(TOKEN, package=_generated(row, first_issue=False), last_rotated="2026-11-10")
     code, lines = _run(capsys, TOKEN)
     assert (code, _refused(lines)) == (1, [ISSUE_PLAN])
@@ -270,7 +318,7 @@ def test_a_package_stating_the_issue_plan_for_a_dated_lane_token_refuses_twice(
 def test_a_lane_class_whose_provider_names_another_type_refuses(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    row = {**_real_row(TOKEN), "provider": "another-provider"}
+    row = {**_row(TOKEN), "provider": "another-provider"}
     rig.publish(TOKEN, row=row, package=_generated(row))
     code, lines = _run(capsys, TOKEN)
     assert (code, _refused(lines)) == (1, [LANE_TYPE])
@@ -317,7 +365,7 @@ def test_a_github_app_key_package_refuses_as_no_lane_type(
 def test_a_lane_token_variable_that_redeploys_refuses(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     row["consumer"][1]["redeploy"] = True
     rig.publish(TOKEN, row=row, package=_generated(row))
     code, lines = _run(capsys, TOKEN)
@@ -341,8 +389,8 @@ def test_a_registry_that_moved_since_generation_refuses_the_destinations(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Unequal destinations break the re-render too, so both are named."""
-    package = _generated(_real_row(TOKEN))
-    row = _real_row(TOKEN)
+    package = _generated(_row(TOKEN))
+    row = _row(TOKEN)
     row["consumer"][0]["uuid"] = "33333333-3333-4333-8333-333333333333"
     row["bws_uuid"] = "33333333-3333-4333-8333-333333333333"
     rig.publish(TOKEN, row=row, package=package)
@@ -367,7 +415,7 @@ def test_an_authority_widened_past_the_standard_set_refuses_by_name(
 
 @pytest.mark.parametrize("field", ["allowed", "requires_approval", "prohibited", "budgets"])
 def test_the_authority_is_compared_whole(field: str) -> None:
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     entry = RegistryEntry(REGISTRY, "0" * 40, row)
     package = _generated(row)
     assert standard_authority(entry, package, first_issue=True).passed
@@ -555,12 +603,12 @@ def _carry_refused(
 
 @pytest.mark.parametrize("credential_id", [TOKEN, PING_URL])
 def test_the_carry_form_refuses_nothing_on_a_policy_approved_revision_1(credential_id: str) -> None:
-    row = _real_row(credential_id)
+    row = _row(credential_id)
     assert _carry_refused(row, *_approved(row)) == []
 
 
 def _approval_edit(edit: Callable[[dict[str, Any]], None]) -> list[str]:
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     package, lineage, content_hash = _approved(row)
     edit(lineage)
     return _carry_refused(row, package, lineage, content_hash)
@@ -594,7 +642,7 @@ def test_each_lineage_difference_refuses_alone(edit: Callable[[dict[str, Any]], 
 
 
 def test_a_package_hash_other_than_the_approval_s_refuses_alone() -> None:
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     package, lineage, _ = _approved(row)
     assert _carry_refused(row, package, lineage, "0" * 64) == [POLICY_REVISION_1]
 
@@ -602,7 +650,7 @@ def test_a_package_hash_other_than_the_approval_s_refuses_alone() -> None:
 def test_a_registry_that_moved_since_the_approval_refuses() -> None:
     """The carry form reads the registry at `main`; a row edited since the approval no longer
     re-renders the package, so the carrier refuses and a person decides."""
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     approved = _approved(row)
     moved = copy.deepcopy(row)
     for consumer in moved["consumer"]:
@@ -613,7 +661,7 @@ def test_a_registry_that_moved_since_the_approval_refuses() -> None:
 
 def test_the_carry_form_accepts_only_the_issue_plan() -> None:
     """It reads no infraops, so a revision 1 stating the rotation plan refuses."""
-    row = _real_row(TOKEN)
+    row = _row(TOKEN)
     package = {**_generated(row, first_issue=False), "status": "approved"}
     _, lineage, _ = _approved(row)
     content_hash = package_hash(package)
