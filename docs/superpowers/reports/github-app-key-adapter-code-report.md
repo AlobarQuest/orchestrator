@@ -6,8 +6,9 @@ Worker W-328, branch `hq/github-app-key-adapter-code`, based on orchestrator `or
 `5c3631b0`. No call to GitHub, BWS, Coolify, or Healthchecks was made, and no production act was
 taken. The pull request is open and not merged.
 
-- **PR:** PR_URL
-- **Head:** PR_HEAD
+- **PR:** https://github.com/AlobarQuest/orchestrator/pull/826
+- **Head:** the commit that adds this report's PR link, on top of code head `c75ac384`, where
+  `make check` ran. `gh pr view 826 --json headRefOid` gives the exact head.
 
 ## What I built
 
