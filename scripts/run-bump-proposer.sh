@@ -82,11 +82,14 @@
 # must not supply it: an operator reaching for "just look at what it would do" would otherwise
 # mint package revisions in a tamper-evident chain that has no undo.
 #
-# THE LANE'S CONTAINER ONLY (ADR-0059 increments 4 and 6). A set `BWS_ACCESS_TOKEN` means the
-# lane's container: `lane-run` passes the lane's own token as its one secret. Anywhere else the
-# launcher refuses. The container runs the image's own code, clones its packages checkout fresh
-# each pass, and reads every secret with that one token, in the environment, never as a process
-# argument:
+# THE LANE'S CONTAINER ONLY (ADR-0059 increments 4 and 6). `sds_in_lane_container` means the
+# lane's container: `lane-run` names the secrets broker's mounted socket in `SDS_SECRETS_SOCKET`
+# (ADR-0055 amendment 30), or passes a lane's own token as its one secret. Without a socket or a
+# token the launcher refuses with exit 1, before the outcome alarm begins. The container runs the
+# image's own code, clones its packages checkout fresh each pass, and reads every secret with
+# `sds_bws_value` and one argument, through the socket or with that token in the environment, never
+# as a process argument; the broker serves this lane only the UUIDs its entry in
+# `lanes/secrets-broker/allowlist.toml` lists:
 #   - every pass: the change-manager READ bearer (`314f276d-…`), the orchestrator OBSERVER bearer
 #     (`f793576f-…`), the `sds-bridge` alert sender (`b415d03b-…`) and the read-only App's key
 #     (`314a966c-…`, piped straight into the mint);
@@ -102,7 +105,8 @@
 # one fails the pass; there is no file mode). intent-packages' lifecycle runs under the image's
 # interpreter with the clone's `src` on `PYTHONPATH`, as `package_sources` runs it for the carrier,
 # because a venv built in the clone can't append to the chain (the lane report says why). The
-# launcher unsets `BWS_ACCESS_TOKEN` before git or any program runs.
+# launcher removes `BWS_ACCESS_TOKEN` and `SDS_SECRETS_SOCKET` from every child and unsets both
+# before git or any program runs; the socket itself stays reachable, as the design accepts.
 #
 # Usage:
 #   scripts/run-bump-proposer.sh              # dry run: reports, writes nothing
@@ -164,10 +168,17 @@ PACKAGES_REMOTE="https://github.com/AlobarQuest/intent-packages.git"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Outside the lane's container this refuses before arming the dead-man switch or reading anything:
-# armed here, the switch would ping the production check.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: no BWS_ACCESS_TOKEN: the bump-proposer lane runs only in its container, through lane-run" >&2
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard: `--color no` and an
+# environment with the forcing variables removed, since FORCE_COLOR / CLICOLOR_FORCE make
+# `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe. Sourced first: the host
+# test below is its `sds_in_lane_container`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# Outside the lane's container this refuses before the outcome alarm begins or anything is read:
+# begun here, the alarm would ping the production check.
+if ! sds_in_lane_container; then
+  echo "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the bump-proposer lane runs only in its container, through lane-run" >&2
   exit 1
 fi
 
@@ -189,21 +200,14 @@ esac
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" bump-proposer "$SUBMITTING"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
-# CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
-# pipe, which breaks the parse below. The IDENTITY IS THE SECOND ARGUMENT rather than an ambient
-# export -- see the block underneath.
-# shellcheck disable=SC1091
-source "$REPO_ROOT/scripts/sds-bws.sh"
-
 unset CHAIN_DB_HOST CHAIN_DB_PORT CHAIN_DB_NAME CHAIN_PASSWORD PACKAGES_CLONE _PUSH_TOKEN
 CHAIN_MODE="file"
-if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+if sds_in_lane_container; then
   # ---- THE LANE'S CONTAINER (ADR-0059 increment 4, step 3f-4) ---------------------------------
-  # Every read takes the lane's one token from the environment (`sds_bws_value` with one argument),
-  # so it never appears in a process argument. Each secret is always
-  # read, never taken from the environment, which `lane-run` passes nothing else through.
-  FROM=" (the lane's token)"
+  # Every read goes through the lane's socket, or takes the lane's one token from the environment
+  # (`sds_bws_value` with one argument), so no credential appears in a process argument. Each secret
+  # is always read, never taken from the environment, which `lane-run` passes nothing else through.
+  FROM=" (the lane's socket or token)"
 
   # THE CHAIN'S SETTINGS COME FROM THE COMPOSE, and a missing one fails the pass, a dry run too,
   # before anything is read. There is no file mode to fall back to: an approval emitted anywhere
@@ -263,8 +267,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # code is passed through verbatim. Its reason, the subcommand's last stderr line, is in the
   # failure's message, which `/fail` carries.
   _DERIVE_ERR="$SDS_OUTCOME_REPORT.derive"
-  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/bump-proposer" repositories \
-    2> "$_DERIVE_ERR")"
+  REPOSITORIES="$(env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET \
+    "$REPO_ROOT/.venv/bin/bump-proposer" repositories 2> "$_DERIVE_ERR")"
   derive_rc=$?
   _derive_reason="$(tail -n 1 "$_DERIVE_ERR")"
   rm -f -- "$_DERIVE_ERR"
@@ -282,14 +286,14 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
 
   # THE READ TOKEN IS MINTED EACH PASS, dry or writing. The App's key goes from the BWS read
   # straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a variable,
-  # an argument or a file, and the mint runs without the lane's token. The four permissions are
-  # what the pass's reads use: each repository's record (`metadata`), its open pull requests and
-  # their first commits (`pull_requests`), their workflow runs and jobs (`actions`,
-  # `landing_ledger/github.py::_concluded_checks`), and the clone (`contents`). Only the clone needs
+  # an argument or a file, and the mint runs without the lane's token or the socket's marker. The
+  # four permissions are what the pass's reads use: each repository's record (`metadata`), its open
+  # pull requests and their first commits (`pull_requests`), their workflow runs and jobs
+  # (`actions`, `landing_ledger/github.py::_concluded_checks`), and the clone (`contents`). Only the clone needs
   # `contents`, on intent-packages alone; one mint carries one permission set, so the token holds it
   # on every listed repository.
   BUMP_PROPOSER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
-    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+    | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
         --permission metadata=read --permission contents=read \
         --permission pull_requests=read --permission actions=read)"
@@ -304,7 +308,7 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # credential takes it below, and never in `BUMP_PROPOSER_GITHUB_TOKEN`, which an HTTP client reads.
   if [ "$SUBMITTING" -eq 1 ]; then
     _PUSH_TOKEN="$(sds_bws_value "$PUSH_APP_KEY_UUID" \
-      | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+      | env -u BWS_ACCESS_TOKEN -u SDS_SECRETS_SOCKET "$REPO_ROOT/.venv/bin/sds-github-mint" \
           --app-id "$PUSH_APP_ID" --repository AlobarQuest/intent-packages \
           --permission metadata=read --permission contents=write --allow-write)"
     push_rc=$?
@@ -314,8 +318,8 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   fi
 
   # EVERY BWS READ IS DONE, and nothing after this needs a BWS identity, git and the programs
-  # included, so the lane's token reaches none of them.
-  unset BWS_ACCESS_TOKEN
+  # included, so neither the lane's token nor the socket's marker reaches any of them.
+  unset BWS_ACCESS_TOKEN SDS_SECRETS_SOCKET
 
   # THE PACKAGES CLONE, shallow, at `main`, into a directory the pass discards (decision 1), with
   # the read token. `BUMP_PROPOSER_CLONE_ROOT` is a test seam: `lane-run` never passes it.

@@ -132,3 +132,38 @@ read = [
   "b8f547b9-67d7-4417-adc0-b4fd0126b0f0",  # lanes-push-app-private-key (--submit only)
   "506a5436-4643-4040-8a8b-b50601312be2",  # rotation-proposer-ping-url
 ]
+
+[lanes.work-carrier]
+read = [
+  "314f276d-55ca-4ddc-a24d-b4a3013508cd",  # change-manager/M2M_TOKEN_READ
+  "221a48d5-3f29-4898-b300-b4820140c880",  # orchestrator-system-bearer
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "2f708d08-ea5d-4d11-bde0-b50200c9a60b",  # factory-events-read-password
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "a9843d17-e599-4e80-ab1b-b4ff0164d8e2",  # work-carrier-observer-bearer (--register only)
+  "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE (--register only)
+  "acccb346-4baa-43ec-a1d4-b4a400c048ee",  # change-manager/M2M_TOKEN_PROPOSE (--register only)
+  "55fbae20-e503-4eb5-b75c-b5040164d394",  # work-carrier-ping-url
+]
+
+[lanes.bump-proposer]
+read = [
+  "314f276d-55ca-4ddc-a24d-b4a3013508cd",  # change-manager/M2M_TOKEN_READ
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "acccb346-4baa-43ec-a1d4-b4a400c048ee",  # change-manager/M2M_TOKEN_PROPOSE (--submit only)
+  "2ce0dbc7-eeac-4bf0-8204-b50200c97516",  # factory-events-append-password (--submit only)
+  "b8f547b9-67d7-4417-adc0-b4fd0126b0f0",  # lanes-push-app-private-key (--submit only)
+  "786f75e2-3d02-4667-8607-b50601312a9d",  # bump-proposer-ping-url
+]
+
+[lanes.revision-watcher]
+read = [
+  "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",  # orchestrator-observer
+  "0bf066e9-28c1-4aa7-8c3d-b50300d492a6",  # prod-coolify-read-token
+  "726a18ba-7a38-4ecc-aa03-b49a015fd302",  # APP_BRAIN_READ_KEY
+  "b415d03b-f92d-46b1-8a9d-b4f10103df49",  # ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE (acting passes only)
+  "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
+  "9b2722ea-8ec1-425b-ac2e-b4ff00cba931",  # revision-watcher-ping-url
+]

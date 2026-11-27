@@ -11,13 +11,17 @@
 # Mac's `sds/bump-proposer` file is copied in at cut-over, before the first acting pass, or the
 # alerts the Mac left firing never resolve. Its intent-packages clone isn't state: the launcher
 # clones it each pass under `/var/tmp` and discards it (ADR-0059 decision 1).
-# The lane's token is the resource's own `BUMP_PROPOSER_BWS_ACCESS_TOKEN` variable, which the VM
-# rotation executor writes; this file names it and never holds a value. With it the launcher reads
-# every secret the pass needs (`scripts/run-bump-proposer.sh`, "TWO HOSTS, ONE LAUNCHER").
+# It holds no token: the launcher reads every secret the pass needs, the chain's append password
+# included, through the lane secrets broker (ADR-0055 amendment 30), whose socket directory
+# `/data/sds/broker/bump-proposer` it mounts read-only at `/run/sds-broker`. `lane-run` names the
+# socket to the launcher (`scripts/run-bump-proposer.sh`), and the broker serves it only the UUIDs
+# its entry in `lanes/secrets-broker/allowlist.toml` lists. The resource keeps its
+# `BUMP_PROPOSER_BWS_ACCESS_TOKEN` variable until the lane tokens are revoked, and this file maps it
+# to nothing.
 # `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
 # `bump-proposer-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
-# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
-# the lane's own token on a `--submit` pass (`scripts/sds-deadman.sh`); a bare pass pings nothing.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret
+# through the broker on a `--submit` pass (`scripts/sds-deadman.sh`); a bare pass pings nothing.
 # The VM rotation executor writes the URL there from its inbox; while the secret holds the inbox's
 # empty marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
@@ -26,7 +30,6 @@ services:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
     command: ["bump-proposer"]
     environment:
-      BWS_ACCESS_TOKEN: ${BUMP_PROPOSER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       BUMP_PROPOSER_STATE_DIR: /var/lib/sds/bump-proposer
       SDS_DEADMAN_PING_URL_UUID: 786f75e2-3d02-4667-8607-b50601312a9d
@@ -35,6 +38,7 @@ services:
       FACTORY_EVENTS_DB_NAME: postgres
     volumes:
       - sds-lanes-bump-proposer-state:/var/lib/sds/bump-proposer
+      - /data/sds/broker/bump-proposer:/run/sds-broker:ro
     networks:
       - coolify
     restart: unless-stopped

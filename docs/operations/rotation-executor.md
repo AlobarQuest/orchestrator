@@ -1466,9 +1466,6 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
 
    | Target | Container |
    |---|---|
-   | `revision-watcher` | `revision-watcher-kmjkrhlmv6c7ee76g77a8491` |
-   | `work-carrier` | `work-carrier-am99g0klcsa7u8dpb4t19xjr` |
-   | `bump-proposer` | `bump-proposer-dsmi1mj0xbjrsu8kamdxocp8` |
    | `secrets-broker` | `secrets-broker-wogvks6obmvv9fdotlgnw7r3` |
 3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
    run a short script as that user through `orb -m rotation-executor -u root runuser -u rotation --

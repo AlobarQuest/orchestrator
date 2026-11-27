@@ -1,11 +1,12 @@
 """`scripts/run-work-carrier.sh` in the lane's container, and the lane's files.
 
 The real launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it in the
-container: the lane's token as `BWS_ACCESS_TOKEN`, the state directory, the chain's three settings,
-`PATH` and `HOME`. `bws`, `git`, `gh` and `curl` are stubs on PATH. In the venv, `work-watcher`,
-`work-carrier` and `sds-github-mint` are stubs that log what reached them, and `python` runs the
-real interpreter except for the chain verify, which it answers itself. Nothing reads BWS,
-GitHub, change-manager, the orchestrator, the chain database or Healthchecks.
+container: the lane's token as `BWS_ACCESS_TOKEN`, or the secrets broker's socket as
+`SDS_SECRETS_SOCKET` (a stand-in broker, `conftest.py`'s), the state directory, the chain's three
+settings, `PATH` and `HOME`. `bws`, `git`, `gh` and `curl` are stubs on PATH. In the venv,
+`work-watcher`, `work-carrier` and `sds-github-mint` are stubs that log what reached them, and
+`python` runs the real interpreter except for the chain verify, which it answers itself. Nothing
+reads BWS, GitHub, change-manager, the orchestrator, the chain database or Healthchecks.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import yaml
 
 from scripts import deploy_orchestrator as deploy
 from scripts import lane_run
+from scripts.secrets_broker import load_allowlist
 from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-work-carrier.sh")
@@ -36,6 +38,7 @@ PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 CHAIN_UUID = "2f708d08-ea5d-4d11-bde0-b50200c9a60b"
 APP_KEY_UUID = "314a966c-5654-4e3c-8358-b4fd01268775"
+PING_URL_KEEPER = "55fbae20-e503-4eb5-b75c-b5040164d394"
 EVERY_PASS = (READ_UUID, SYSTEM_UUID, OBSERVER_UUID, CHAIN_UUID)
 REGISTER_ONLY = (OBSERVATION_UUID, ALERT_UUID, PROPOSE_UUID)
 LANE_SECRETS = (*EVERY_PASS, *REGISTER_ONLY, APP_KEY_UUID)
@@ -88,7 +91,8 @@ _CURL = '#!/bin/sh\necho curl >> "$PING_LOG"\nexit 1\n'
 _GIT = """#!/bin/bash
 echo "git $* | global=${GIT_CONFIG_GLOBAL:-} nosystem=${GIT_CONFIG_NOSYSTEM:-} \\
 prompt=${GIT_TERMINAL_PROMPT:-} count=${GIT_CONFIG_COUNT:-} key0=${GIT_CONFIG_KEY_0:-} \\
-value0=${GIT_CONFIG_VALUE_0:-} lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$GIT_LOG"
+value0=${GIT_CONFIG_VALUE_0:-} lane_token=${BWS_ACCESS_TOKEN:+set} \\
+socket=${SDS_SECRETS_SOCKET:+set}" >> "$GIT_LOG"
 [ -n "${FAKE_CLONE_FAILS:-}" ] && { echo "fatal: repository not found" >&2; exit 128; }
 target="${@: -1}"
 # As real git does, a clone into a non-empty directory refuses.
@@ -99,7 +103,8 @@ fi
 mkdir -p "$target/src" "$target/packages"
 """
 _COMMON = (
-    "lane_token=${BWS_ACCESS_TOKEN:+set} cm=${CHANGE_MANAGER_TOKEN:-} "
+    "lane_token=${BWS_ACCESS_TOKEN:+set} socket=${SDS_SECRETS_SOCKET:+set} "
+    "cm=${CHANGE_MANAGER_TOKEN:-} "
     "password=${FACTORY_EVENTS_READ_PASSWORD:-} host=${FACTORY_EVENTS_DB_HOST:-} "
     "port=${FACTORY_EVENTS_DB_PORT:-} name=${FACTORY_EVENTS_DB_NAME:-} "
     "github=${WORK_CARRIER_GITHUB_TOKEN:-} sec=${SECURITY_STANDARDS_DIR:-} "
@@ -107,7 +112,7 @@ _COMMON = (
 )
 _WATCHER = f"""#!/bin/bash
 if [ "$1" = repositories ]; then
-  echo "derive lane_token=${{BWS_ACCESS_TOKEN:+set}} \\
+  echo "derive lane_token=${{BWS_ACCESS_TOKEN:+set}} socket=${{SDS_SECRETS_SOCKET:+set}} \\
 cm=${{WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}}" >> "$LANE_LOG"
   [ -n "${{FAKE_DERIVE_RC:-}}" ] && exit "$FAKE_DERIVE_RC"
   printf '%s' "${{FAKE_REPOSITORIES-AlobarQuest/intent-packages
@@ -136,6 +141,7 @@ exit "${{FAKE_CARRIER_RC:-0}}"
 _MINT = """#!/bin/bash
 key="$(cat)"
 echo "mint args=$* key=$key lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+echo "mint-child socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
 [ -n "${FAKE_MINT_RC:-}" ] && exit "$FAKE_MINT_RC"
 echo "%s"
 """
@@ -145,7 +151,7 @@ _PYTHON = """#!/bin/bash
 if [ "$1 $2" = "-m orchestrator.factory_chain_read" ]; then
   echo "verify password=${FACTORY_EVENTS_READ_PASSWORD:-} host=${FACTORY_EVENTS_DB_HOST:-} \\
 port=${FACTORY_EVENTS_DB_PORT:-} name=${FACTORY_EVENTS_DB_NAME:-} pythonpath=${PYTHONPATH:-} \\
-lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
+lane_token=${BWS_ACCESS_TOKEN:+set} socket=${SDS_SECRETS_SOCKET:+set}" >> "$LANE_LOG"
   echo "psycopg.OperationalError: connection to server at b82fa1vg5whecgnjreuqb5tk failed" >&2
   printf '%%s\n' "$FAKE_VERIFY_RECORD"
   exit "${FAKE_VERIFY_RC:-0}"
@@ -318,7 +324,7 @@ def test_an_unreadable_secret_fails_the_pass_before_any_program(
     assert run.code == 1
     assert run.lines("watcher") == [] and run.lines("carrier") == []
     if refused != APP_KEY_UUID:
-        assert "(the lane's token)" in run.result.stderr
+        assert "(the lane's socket or token)" in run.result.stderr
         assert run.lines("mint") == []
 
 
@@ -327,7 +333,7 @@ def test_no_program_gets_the_lanes_token(tmp_path: Path) -> None:
     assert run.code == 0, run.output
     for prefix in ("derive", "mint", "verify", "watcher", "carrier"):
         assert run.field(prefix, "lane_token") == "", prefix
-    assert all(line.endswith("lane_token=") for line in run.logs["git"])
+    assert all(line.endswith("lane_token= socket=") for line in run.logs["git"])
 
 
 # ---- the chain: the read password and settings reach the carrier's side alone ----------------
@@ -541,6 +547,7 @@ def test_the_clone_carries_the_token_only_in_its_environment(tmp_path: Path) -> 
         "basic",
         header,
         "lane_token=",
+        "socket=",
     ]
     assert header not in run.output
 
@@ -618,12 +625,130 @@ def test_a_bare_pass_asks_neither_to_act_and_still_runs_both(tmp_path: Path) -> 
     assert "--register" not in run.lines("carrier")[0]
 
 
-def test_outside_the_container_it_refuses_and_runs_and_reads_nothing(tmp_path: Path) -> None:
-    run = _run(tmp_path, "--register", BWS_ACCESS_TOKEN=None)
+@pytest.mark.parametrize("token", [None, ""], ids=["unset", "empty"])
+def test_outside_the_container_it_refuses_and_runs_and_reads_nothing(
+    tmp_path: Path, token: str | None
+) -> None:
+    run = _run(tmp_path, "--register", BWS_ACCESS_TOKEN=token)
     assert run.code == 1
-    assert "the work-carrier lane runs only in its container, through lane-run" in run.output
-    assert run.logs["lane"] == run.logs["bws"] == run.logs["gh"] == run.logs["git"] == []
+    assert (
+        "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN: the work-carrier lane runs only in"
+        " its container, through lane-run"
+    ) in run.result.stderr
+    assert all(lines == [] for lines in run.logs.values()), run.logs
+
+
+def test_a_socket_variable_naming_no_socket_refuses_and_reads_nothing(tmp_path: Path) -> None:
+    """`SDS_SECRETS_SOCKET` alone isn't the container: it must name a socket."""
+    not_a_socket = tmp_path / "broker.sock"
+    not_a_socket.write_text("")
+    run = _run(tmp_path, "--register", BWS_ACCESS_TOKEN=None, SDS_SECRETS_SOCKET=str(not_a_socket))
+    assert run.code == 1
+    assert "FATAL: no secrets-broker socket or BWS_ACCESS_TOKEN" in run.result.stderr
+    assert all(lines == [] for lines in run.logs.values()), run.logs
+
+
+# ---- the container on the secrets broker (ADR-0055 amendment 30) ------------------------------
+
+# The ping-URL secret a broker pass names, so the dead-man helper reads by id through the socket and
+# never looks the check up by name with a broad identity.
+BROKER_PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
+# Every child the pass starts that logs what reached it, git aside.
+CHILDREN = ("derive", "mint-child", "verify", "watcher", "carrier")
+
+
+def _brokered(tmp_path: Path, socket_path: Path, *args: str) -> Run:
+    """The container as `lane-run` starts it on the broker: no token, and the socket's marker."""
+    return _run(
+        tmp_path,
+        *args,
+        BWS_ACCESS_TOKEN=None,
+        BWS_ACCESS_TOKEN_BROAD=None,
+        SDS_SECRETS_SOCKET=str(socket_path),
+        SDS_DEADMAN_PING_URL_UUID=BROKER_PING_URL_UUID,
+    )
+
+
+def _served() -> dict[str, str | None]:
+    return {
+        **{uuid: value(uuid) for uuid in LANE_SECRETS},
+        BROKER_PING_URL_UUID: "https://hc.example/ping/work-carrier",
+    }
+
+
+def test_on_the_socket_without_a_token_a_registering_pass_reads_every_secret_through_it(
+    tmp_path: Path, broker
+) -> None:
+    """The socket serves the ping URL and the eight secrets, the chain's read password among them;
+    `bws` never runs, and no child, git included, gets the lane's token or the socket's marker."""
+    run = _brokered(tmp_path, broker(_served()), "--register")
+    assert run.code == 0, run.output
+    assert run.logs["bws"] == []
+    assert run.field("watcher", "wcm") == value(PROPOSE_UUID)
+    assert run.field("watcher", "alert") == value(ALERT_UUID)
+    assert run.field("carrier", "observation") == value(OBSERVATION_UUID)
+    assert run.field("carrier", "members") == value(OBSERVER_UUID)
+    assert run.field("carrier", "password") == value(CHAIN_UUID)
+    assert run.field("verify", "password") == value(CHAIN_UUID)
+    assert run.field("mint", "key") == value(APP_KEY_UUID)
+    for prefix in CHILDREN:
+        assert run.field(prefix, "socket") == "", prefix
+    for prefix in ("derive", "mint", "verify", "watcher", "carrier"):
+        assert run.field(prefix, "lane_token") == "", prefix
+    (clone,) = run.logs["git"]
+    assert clone.endswith("lane_token= socket=")
+    for uuid in LANE_SECRETS:
+        assert value(uuid) not in run.output
+
+
+def test_on_the_socket_a_bare_pass_reads_no_register_only_secret(tmp_path: Path, broker) -> None:
+    served = _served()
+    for uuid in REGISTER_ONLY:
+        del served[uuid]
+    run = _brokered(tmp_path, broker(served))
+    assert run.code == 0, run.output
+    assert run.logs["bws"] == []
+    assert run.field("carrier", "observation") == ""
+    assert run.field("watcher", "alert") == "unset"
+    for prefix in CHILDREN:
+        assert run.field(prefix, "socket") == "", prefix
     assert run.logs["ping"] == []
+
+
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [
+        (CHAIN_UUID, "bws_failed"),
+        (SYSTEM_UUID, "not_allowed"),
+        (OBSERVATION_UUID, "not_allowed"),
+    ],
+    ids=["chain-read-failed", "system-not-on-the-allowlist", "observation-not-on-the-allowlist"],
+)
+def test_a_secret_the_socket_refuses_fails_the_pass_before_any_program(
+    tmp_path: Path, broker, refused: str, reason: str
+) -> None:
+    served = _served()
+    if reason == "bws_failed":
+        served[refused] = None
+    else:
+        del served[refused]
+    run = _brokered(tmp_path, broker(served), "--register")
+    assert run.code == 1, run.output
+    assert f"the secrets broker gave no value for {refused}: {reason}" in run.result.stderr
+    assert "(the lane's socket or token)" in run.result.stderr
+    assert run.logs["bws"] == []
+    assert run.lines("watcher") == [] and run.lines("carrier") == []
+
+
+def test_a_dead_socket_fails_the_pass_and_never_falls_back_to_bws(
+    tmp_path: Path, dead_socket: Path
+) -> None:
+    run = _brokered(tmp_path, dead_socket, "--register")
+    assert run.code == 1, run.output
+    assert f"the secrets broker gave no value for {READ_UUID}: no_reply" in run.result.stderr
+    assert "FATAL: could not read the change-manager credential" in run.result.stderr
+    assert run.logs["bws"] == []
+    assert run.logs["lane"] == []
 
 
 # ---- the lane's tracked files ----------------------------------------------------------------
@@ -631,19 +756,27 @@ def test_outside_the_container_it_refuses_and_runs_and_reads_nothing(tmp_path: P
 
 def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
     service = deploy.lane_service(COMPOSE.read_text(), "work-carrier")
-    assert deploy.add_refusals(service, "work-carrier") == []
+    # A broker lane: it mounts its socket and the allowlist names it.
+    allowlist = load_allowlist(Path(deploy.BROKER_ALLOWLIST))
+    assert deploy.broker_lane(service, "work-carrier", allowlist)
+    assert deploy.add_refusals(service, "work-carrier", allowlist) == []
+    assert deploy.compose_broker_refusals(COMPOSE.read_text(), "work-carrier") == []
+    assert allowlist["work-carrier"] == {*LANE_SECRETS, PING_URL_KEEPER}
     assert service == {
         "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
         "command": ["work-carrier"],
+        # No `BWS_ACCESS_TOKEN`: the lane reads through its secrets-broker socket.
         "environment": {
-            "BWS_ACCESS_TOKEN": "${WORK_CARRIER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "WORK_WATCHER_STATE_DIR": "/var/lib/sds/work-carrier",
             # The BWS secret id of `work-carrier-ping-url`: not a secret, not the ping URL.
-            "SDS_DEADMAN_PING_URL_UUID": "55fbae20-e503-4eb5-b75c-b5040164d394",
+            "SDS_DEADMAN_PING_URL_UUID": PING_URL_KEEPER,
             **CHAIN,
         },
-        "volumes": ["sds-lanes-work-carrier-state:/var/lib/sds/work-carrier"],
+        "volumes": [
+            "sds-lanes-work-carrier-state:/var/lib/sds/work-carrier",
+            "/data/sds/broker/work-carrier:/run/sds-broker:ro",
+        ],
         "networks": ["coolify"],
         "restart": "unless-stopped",
     }
@@ -685,7 +818,7 @@ def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
     ping-URL secret. The launcher names each secret it reads, except the ping-URL secret, whose id
     reaches it from the compose through `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
-    ping_url_secret = "55fbae20-e503-4eb5-b75c-b5040164d394"
+    ping_url_secret = PING_URL_KEEPER
     secrets = deploy.lane_secrets(manifest, "work-carrier")
     assert sorted(secrets) == sorted([*LANE_SECRETS, ping_url_secret])
     launcher = LAUNCHER.read_text()
