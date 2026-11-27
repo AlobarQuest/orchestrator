@@ -91,26 +91,58 @@ It uses only abilities the repository already uses: `bitwarden_sdk` (the executo
 Keychain read (`scripts/exit_probe.py`), and the BWS API the SDK reaches. A session runs it this
 way:
 
-1. **Devon prepares a project and a token.** In the BWS web app, Devon creates a scratch project
-   holding at least one secret of no value. Then he creates a throwaway machine account with read
-   on that project, **and no single-secret grant**, and mints its access token. He stores the token
-   in the Keychain (service `Claude`, an item name he gives the session). The project must hold a
-   secret, or both outcomes list zero secrets and the run can't tell them apart.
-2. **The session syncs the extra** in a worktree: `uv sync --frozen --extra rotation-worker`.
-3. **The session runs the script** with the organization id (the executor's `organization_id`, a
-   non-secret id), the project id and the scratch secret's id:
+1. **Devon prepares a project and a token, in the BWS web app only.** Devon creates a scratch
+   project holding at least one secret of no value. Then he creates a throwaway machine account
+   with read on that project, **and no single-secret grant**, and mints its access token. He stores
+   the token as a secret in the BWS project `SDS HQ`, which SDS HQ's own machine account already
+   reads, so no grant is needed. Then he clears the clipboard. He gives the session only that
+   secret's name. The project must hold a secret, or both outcomes list zero secrets and the run
+   can't tell them apart. Devon runs no terminal step (D-54 A).
+2. **The session finds the secret's id** with SDS HQ's account (Keychain service `Claude`, account
+   `BWS_ACCESS_TOKEN_SDS_HQ`). The listing carries values, so the filter keeps only the id and the
+   listing never reaches the output:
 
    ```sh
-   BWS_REACH_PROBE_TOKEN="$(security find-generic-password -s Claude -a <item> -w)" \
-     .venv/bin/python -I scripts/bws_reach_probe.py --organization <org id> \
+   HQ_TOK=$(/usr/bin/security find-generic-password -s Claude -a BWS_ACCESS_TOKEN_SDS_HQ -w)
+   BWS_ACCESS_TOKEN="$HQ_TOK" bws secret list --output json --color no \
+     | jq -r --arg k '<secret name>' '.[] | select(.key == $k) | .id'
+   unset HQ_TOK
+   ```
+
+   Then it syncs the extra in a worktree: `uv sync --frozen --extra rotation-worker`.
+3. **The session runs the script** with the organization id (the executor's `organization_id`, a
+   non-secret id), the project id and the scratch secret's id. The token is read in-process from
+   the `SDS HQ` secret by UUID, straight into `BWS_REACH_PROBE_TOKEN` for this one command. It's
+   never printed, never in an argument list, and never written to a file or the Keychain.
+   `HQ_TOK` lives only in the command substitution's subshell, so the script's process doesn't
+   inherit SDS HQ's token:
+
+   ```sh
+   BWS_REACH_PROBE_TOKEN="$(
+     HQ_TOK=$(/usr/bin/security find-generic-password -s Claude -a BWS_ACCESS_TOKEN_SDS_HQ -w)
+     BWS_ACCESS_TOKEN="$HQ_TOK" bws secret get <token secret id> --output json --color no \
+       | jq -r .value
+   )" .venv/bin/python -I scripts/bws_reach_probe.py --organization <org id> \
      --expect <project id> --expect <scratch secret id>
    ```
 
+   The script's docstring shows a Keychain read as its generic usage; this is the session's form.
+   A failed BWS read leaves the variable empty, and the script exits 2 ("no token"), so it can't be
+   mistaken for a refused login (exit 3).
 4. **The session reads the result.** It's measured only if `expected.projects[<project id>]` is
    `true`. Then `expected.secrets[<scratch secret id>]` decides item 5, as the following section
    describes. The
    session records the JSON line (ids and counts) in its report.
-5. **Devon revokes the token** and deletes the machine account. Then he deletes the Keychain item.
+5. **Devon removes everything, and the session proves it.** The proof of the revoke needs the token
+   secret, so the secret goes last:
+   1. Devon revokes the token, and deletes the throwaway machine account and the scratch project.
+   2. The session proves the revoke: it reruns step 3's command unchanged. The script logs in with
+      a new client and an empty, throwaway `HOME`, so `bws`'s cached session per token id can't
+      answer. The expected result is exit 3 with a `bws_reach_probe.failed` line; exit 2 means the
+      read failed, and proves nothing.
+   3. Devon deletes the token secret from `SDS HQ`.
+   4. The session proves the secret is gone: `bws secret get <token secret id>` with SDS HQ's
+      account, its output sent to `/dev/null`, exits non-zero.
 
 ## Item 5's two outcomes
 
@@ -184,8 +216,9 @@ then; check 4 can't (see Concerns):
 
 - `make check` in the worktree, with the worktree's own database `orchestrator_test_hq_w_324`
   migrated to head, `SECURITY_STANDARDS_DIR` at the fixture, and `PGTZ=UTC`: exit 0. Ruff reported "All checks passed!", pyright 0 errors, and pytest **14935 passed, 1 skipped** (11 warnings, 5 min 38 s). The first run, before the review fixes, was 14934 passed, 1 skipped..
-- **CI on PR #822** (run 45916301219, `Quality`, at `117e8d6c`): passed, with **14922 passed, 14
-  skipped**. That's 14936 collected, the same as locally (14935 + 1). CI skips 13 more tests than
+- **CI on PR #822** (run 45917694028, `Quality`, at `c33ac444`): passed, with **14922 passed, 14
+  skipped**; run 45916301219 at `117e8d6c` gave the same counts. The run on fix round 1's head is
+  pending at its push; "Fix round 1" names it. That's 14936 collected, the same as locally (14935 + 1). CI skips 13 more tests than
   my machine does, and the job log doesn't print their reasons. The new script tests don't import
   the SDK (they use a fake), so CI's sync without the `rotation-worker` extra doesn't skip them.
 - The two named row-test files and the new script test: `test_secrets_broker_row.py`, `test_lane_token_helper_targets.py`, `test_bws_reach_probe.py` and `test_layer_manifest.py` together gave 25 passed. One mutation checked the leak test: making the script append each secret's key to its id failed both `test_no_token_key_or_value_reaches_the_output` and the listing test, and the file was restored.
@@ -245,6 +278,12 @@ then; check 4 can't (see Concerns):
 - **Code Brain has no `secrets` road.** The handoff says so too. The script follows the BLOCK rules
   the handoff lists, and the following section states how.
 
+## Follow-ups
+
+- `scripts/bws_reach_probe.py` `_uuid` lets argparse echo a malformed `--expect` or
+  `--organization` value to stderr. Printing only "not a UUID" would keep a token pasted into the
+  wrong flag out of the output. Not changed in fix round 1.
+
 ## Standards followed
 
 - **Code Brain 3 (structured JSON logs to stdout):** the script prints exactly one JSON line to
@@ -260,9 +299,35 @@ then; check 4 can't (see Concerns):
 - **Infra Brain 591, 592 and 593 (no token in tracked files, git history or inline):** no token or
   token-shaped literal appears in the diff (the grep in "Tests and checks run"). The test fakes
   build random values at run time with `secrets.token_urlsafe` and `token_hex`. The runbook reads
-  the throwaway token from the Keychain at run time, and the docs describe shapes only.
+  the throwaway token from its BWS secret at run time, and the docs describe shapes only.
 - **Infra Brain 1032 (`cred.exposure-rotate`):** the row's exposure and consumer fields are
   unchanged and valid (`check_row` and `lane_variable` pass on the real row). R10 is the
   route's `loaded` proof: the runbook's step 6 says no revoke alert is sent before the broker's
   loaded fingerprint equals the keeper's.
 - **Infra Brain 212 (HTTPS for public FQDNs):** not applicable. No endpoint is added.
+
+## Fix round 1
+
+Worker W-325, report text only, on #822's head `c33ac444`. The per-task review found that steps 1
+and 5 of "The measurement script, and how a session runs it" had Devon store the throwaway token in
+the Keychain and delete the item, against his standing rule (D-54 A): his part of a credential is
+generating it, storing it in BWS and granting read, with no terminal step.
+
+- **Steps 1 to 5 rewritten.** Devon stores the token as a secret in BWS project `SDS HQ` and gives
+  the session its name only. The session finds the id, then runs the script with the token read
+  from that secret by UUID with SDS HQ's account, straight into `BWS_REACH_PROBE_TOKEN` for one
+  command. Devon removes the token, the account, the project and the secret, and the session proves
+  the revoke and the deletion. The script's docstring is unchanged.
+- **One ordering change from the handoff's step 5.** The handoff has Devon delete the BWS secret
+  before the session proves the revoke. The proof needs the token, which lives only in that secret,
+  so step 5 deletes the secret after the revoke is proved.
+- **CI line** names run 45917694028 at `c33ac444`, and says the fix round's run is pending at push.
+- **Follow-ups** gains the `_uuid` echo line. The "Standards followed" line for 591 to 593 now says
+  the runbook reads the token from BWS, not the Keychain.
+- **Head:** the commit that adds this section, pushed fast-forward to
+  `hq/broker-token-rotation-code`.
+
+**Standards followed (this round):** Code Brain 5 and Infra Brain 591 to 593: the rewritten steps
+never print, store or pass the token as an argument; it moves from a BWS read to one process's
+environment. The shell forms hold placeholders only, and the diff's token-shape grep matches nothing.
+Code Brain 3 and 4 and Infra Brain 1032 and 212 are unchanged by this round.
