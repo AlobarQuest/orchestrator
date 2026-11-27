@@ -310,6 +310,7 @@ EXISTING_PLANS: dict[str, list[tuple[str, list[str]]]] = {
     "bws-machine-token": BY_PERSON,
     "coolify-api-token": BY_PERSON,
     "github-app-key": BY_PERSON,
+    "anthropic-key": BY_PERSON,
 }
 
 

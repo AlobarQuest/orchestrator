@@ -1485,8 +1485,15 @@ abilities = ["read", "write", "deploy"]
 # ── The change-window lane's Anthropic API key ───────────────────────────────────
 # ADR-0059 increment 8, Amendment 14. Created by Devon at HQ gate G-88 (2026-11-22) in an Anthropic
 # workspace of its own, `sds-change-window`, and stored in `Rotation / Keepers` with a single-secret
-# read grant for `lane-secrets-broker`. No fingerprint: no session has read the value. No adapter
-# rotates this class, so it is not rotated_by_sds and falls to the manual checklist.
+# read grant for `lane-secrets-broker`. No fingerprint: no session has read the value.
+# The executor's route (ADR-0055 amendment 36, D-85): the `anthropic-key` adapter. Devon creates a
+# key scoped to `sds-change-window` in the Claude Console and pastes it into the inbox; the executor
+# proves it (`GET /v1/models` answering 200 with `anthropic-workspace-id` equal to the row's
+# `workspace_id`, beside a never-issued key's 401), stores it, waits for the reader's green ping,
+# and after Devon deletes the old key in the Console proves it refused. The row isn't
+# rotated_by_sds yet, so it still falls to the manual checklist: exit check 1 (the probe on the
+# current key, which reads the `workspace_id` the row then declares) and exit check 2 (one real
+# rotation) come first, and until the row declares `workspace_id` the adapter refuses it.
 [[credential]]
 id = "anthropic-change-window-key"
 class = "anthropic-api-key"

@@ -362,6 +362,21 @@ def test_a_github_app_key_package_refuses_as_no_lane_type(
     assert lane["reason"] == "class 'github-app-private-key' is no lane type"
 
 
+def test_an_anthropic_key_package_refuses_as_no_lane_type(
+    rig: Rig, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ADR-0055 amendment 36 item 13 and D-85: no standing approval covers the change window's
+    Anthropic key package, so every revision is Devon's to approve by name."""
+    credential_id = "anthropic-change-window-key"
+    row = {**_real_row(credential_id), "rotated_by_sds": True}
+    rig.publish(credential_id, row=row, package=_generated(row, first_issue=False))
+    code, lines = _run(capsys, credential_id)
+    assert code == 1
+    assert {ISSUE_PLAN, LANE_TYPE, DESTINATIONS} <= set(_refused(lines))
+    (lane,) = [line for line in lines if line.get("condition") == LANE_TYPE]
+    assert lane["reason"] == "class 'anthropic-api-key' is no lane type"
+
+
 def test_a_lane_token_variable_that_redeploys_refuses(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:

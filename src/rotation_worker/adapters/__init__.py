@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from rotation_worker.adapters import (
+    anthropic_key,
     bitbucket,
     bws_lane_token,
     bws_machine_token,
@@ -275,6 +276,16 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         ),
         capabilities=TYPES[github_app_key.NAME].capabilities,
         check_row=github_app_key.check_row,
+        revoke_may_come_first=True,
+    ),
+    anthropic_key.NAME: Adapter(
+        anthropic_key.PROVIDER,
+        anthropic_key.PLAN,
+        lambda context: anthropic_key.build_provider(
+            rotation=context.rotation, credential=context.credential, store=context.store
+        ),
+        capabilities=TYPES[anthropic_key.NAME].capabilities,
+        check_row=anthropic_key.check_row,
         revoke_may_come_first=True,
     ),
     change_manager.ATTESTED_NAME: Adapter(

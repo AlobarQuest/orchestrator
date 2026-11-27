@@ -242,8 +242,10 @@ def test_a_revision_other_than_1_refuses(migrated_session: Session) -> None:
         (KEEPER, LANE, 'provider name="bws-lane-token"'),
         # A GitHub App key's package (ADR-0055 amendment 35 item 15, D-84).
         (KEEPER, 'provider name="github"'),
+        # An Anthropic API key's package (ADR-0055 amendment 36 item 13, D-85).
+        (KEEPER, 'provider name="anthropic"'),
     ],
-    ids=["another-type", "no-provider", "both-types", "github-app-key"],
+    ids=["another-type", "no-provider", "both-types", "github-app-key", "anthropic-key"],
 )
 def test_a_package_naming_no_one_lane_type_refuses(
     migrated_session: Session, destinations: tuple[str, ...]

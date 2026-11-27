@@ -205,6 +205,9 @@ HTTP_CLIENTS = frozenset(
         # `https://api.github.com` alone, with a JWT the key being rotated signs and the narrow
         # token it mints (ADR-0055 amendment 35).
         "adapters/github_app_key.py",
+        # `https://api.anthropic.com/v1/models` alone, with the key being rotated (ADR-0055
+        # amendment 36).
+        "adapters/anthropic_key.py",
     }
 )
 
