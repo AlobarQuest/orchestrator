@@ -54,8 +54,8 @@ Item 15 doesn't list the following changes, but items 6 and 7 need them:
   180257215 for the read App, 5684778 and 180257673 for the push App. A test holds each pair to
   its `provider_identity` text.
 - **`proof_repository`** is `AlobarQuest/intent-packages` for both rows:
-  - The push App is installed only on intent-packages and the forks (`.bws-secrets.toml` 381-382,
-    and both launchers' `--repository AlobarQuest/intent-packages`).
+  - The push App is installed only on intent-packages and the forks (`.bws-secrets.toml` 395-396
+    at `5c3631b0`, and both launchers' `--repository AlobarQuest/intent-packages`).
   - The read App is installed on intent-packages by HQ D-17 (ADR-0059, lines 612-619 and
     1572-1573 at `5c3631b0`).
 
@@ -84,10 +84,10 @@ Item 15 doesn't list the following changes, but items 6 and 7 need them:
 
   The other checks still run: `accepts`, `same_identity`, and `other_keepers`. Two tests in
   `test_github_app_key.py` cover the real provider: binding beside another App's waiting rotation,
-  and the refusal when two waiting rotations declare the same App id. Five tests in
+  and the refusal when two waiting rotations declare the same App id. Six tests in
   `test_inbox.py` drive the worker and `bind`: a waiting rotation of another type, the same
   declared identity, a waiting rotation that can't be resolved, a value naming another identity,
-  and a provider without the protocol.
+  a provider without the protocol, and a waiting row of this type whose `app_id` can't be read.
 
 ### Request reach (item 10)
 
@@ -111,22 +111,30 @@ None of the routes in the following table would approve a `rotation-<row id>` pa
 |---|---|---|---|
 | Standing approval, carry form (the proposer's CLI and the work carrier) | `src/rotation_proposer/standing_approval.py` `carry` (253), run by `src/work_carrier/standing.py` 128 | `lane_type` (187-191: the class isn't in `LANE_KINDS`, 38), `lane_destinations` (199-213), and `stated_issue_plan` (166-170: the type has no issue plan) | New: `tests/rotation_proposer/test_standing_approval.py::test_a_github_app_key_package_refuses_as_no_lane_type` (both rows) and `tests/work_carrier/test_standing.py::test_a_github_app_key_revision_the_policy_approved_is_refused` |
 | Standing approval, decomposition gate | `src/orchestrator/services/intake/decomposition.py` 374-379 | `standing_approval.py` 70-71 (`_names_one_lane_type`, 94): the snapshot names neither lane provider. Also 69 (`not_revision_1`) for any later revision. | New case `github-app-key` (destinations `KEEPER, 'provider name="github"'`, with a carrier record present) in `tests/services/test_standing_approval_gate.py::test_a_package_naming_no_one_lane_type_refuses`. `not_revision_1` is pinned by `test_a_revision_other_than_1_refuses`. |
-| The lane-credential policy actor (sds-hq `standing_approve.py`, approver `policy:non-software-operational@v<N>`) | Writes the same approver string, so in this repository it's the first two rows | The same two refusals. In sds-hq, `_LANE_PACKAGE` (87) and `lane_of` (863-869) also accept only `rotation-<lane>-bws-token` or `rotation-<lane>-ping-url` | The two rows' pins |
-| The D-76 canary (sds-hq `standing-answers.md`, "one canary reissue per new executor home") | HQ may start one canary reissue: revision 2 or later of a `bws-lane-token` row with a `helper_target`. No code route in this repository carries that name. | A canary is a lane-token reissue, never this class. Any policy-approved revision 2 is refused at `standing_approval.py` 69. | `test_a_revision_other_than_1_refuses` |
+| The lane-credential policy actor (sds-hq `standing_approve.py`, approver `policy:non-software-operational@v<N>`) | Writes the same approver string, so in this repository it's the first two rows | sds-hq runs `rotation-proposer standing-approval <credential>` and passes only on exit 0 (631-649), which is the CLI the new proposer test pins refusing. It also refuses any revision but 1 (416-417) and any reissue history (`check_first_issue`, 433-445). Then the gate refuses it as the second row does. | The first two rows' pins |
+| The D-76 canary (sds-hq `standing-answers.md` 229-238) | No code implements it, in either repository. It's HQ's act: HQ records the approval in an intent-packages PR that cites the rule. sds-hq's only approving code, `standing_approve.py`, refuses any revision but 1 (416-417). | The limit to one `bws-lane-token` reissue on a `helper_target` row is the rule's text only; nothing enforces it, so no test here can pin it. What the orchestrator does depends on the approver string HQ writes, which nothing fixes. With the `policy:` prefix, `standing_approval.py` 69 refuses a revision 2, and the carry form refuses it too. With any other string, `decomposition.py` 374 reads it as a person (concern 1). | `test_a_revision_other_than_1_refuses` (the `policy:` case) |
 | Any other `policy:` approver on the rotation branch | `decomposition.py` 375-376 | `revision_approved_by_policy` | `tests/services/test_rotation_decomposition_policy.py::test_a_revision_an_approval_policy_approved_waits_for_a_person` |
 | The bump branch | `decomposition.py` 345, `bump_policy.py` 31 | `bump_policy.py` 40 `revision_not_dependency_update`: a rotation revision's profile is `non-software-operational` | `tests/services/test_bump_decomposition_policy.py::test_a_revision_of_another_profile_waits_for_a_person` |
 
 None needed a fix, so I added only the pins.
 
+The pins reach `test_rotation_decomposition_policy.py` and `test_bump_decomposition_policy.py`; I
+confirmed both files and test names exist (358 and 280 at `5c3631b0`). Neither CLI build site in
+`src/rotation_worker/cli.py` can reach this adapter: 286 builds `fake` and 500 builds
+`postgres-role`. So the adapter's refusal to build without a rotation needs no other home.
+
 **What these routes don't cover (concern 1).** `decomposition.py` 374 treats any approver without
-the `policy:` prefix as a named person. That person is proved outside this repository: the
-carrier matches the lineage's approval to a verified factory-events chain event
-(`src/work_carrier/standing.py`, `_verified_approval`), and the chain's event actor is
-self-declared (ADR-0055 amendment 24, "Threat model"). The broker's account holds a single-secret
+the `policy:` prefix as a named person. For every approval, person-named or policy, the carrier
+shells out to `orchestrator emit-intake-payload` (`src/work_carrier/prepare.py` 12-27 and 119).
+That emitter accepts an approver only with a `package.approved` event carrying the exact hash and
+revision in a verified factory-events chain (`src/orchestrator/package_sources.py`,
+`_is_recognised_approver` 201-214 and `_database_package_approval_events` 261). The chain's event
+actor is self-declared (ADR-0055 amendment 24, "Threat model"). The broker's account holds a single-secret
 read grant on the chain's append password (`.cred-consumers.toml`, `factory-events-append-password`,
 the bump proposer's note, HQ G-109). The root reads the broker's token (amendment 34). So whoever
 holds the root can reach the append password, and under 9 A the push App's `contents: write` on
-intent-packages. That could produce a person-named approval without a person. This isn't a
+intent-packages. That could produce a person-named approval without a person. A D-76 canary
+approval written with a non-`policy:` approver would reach the gate the same way. This isn't a
 no-person route, and the fix would be more than a refusal in a route. It's the reach that
 amendment 34's Open item 10 and D-84's 9 A ("reopened in the security phase") already put to
 Devon, so I didn't stop.
@@ -155,6 +163,9 @@ Devon, so I didn't stop.
   (13 minutes 29 seconds). An earlier run failed two tests: the isolation guard
   (`test_out_of_process_isolation.py`, fixed by naming `cryptography` in the rotation executor's
   row) and one test I had edited mid-run.
+- **CI on PR #826** at head `377f2304`: all three checks pass. The `Quality` job collected 15,075
+  tests: 15,061 passed and 14 skipped (run 46034754615). The total matches the local run; the
+  skipped count differs because CI's environment skips more.
 - **Targeted runs**, all passing:
   - `tests/rotation_worker/test_github_app_key.py`: 36 tests.
   - `tests/rotation_worker/test_github_app_key_readers.py`: 45 tests.
@@ -262,7 +273,12 @@ green ping without the read (concern 2).
    recommend a `check_unit` term (the adapter must be the row's class type, or a fixed-plan name of
    that type) before either row is handed over.
 4. **Exit check 2 has no entry point.** See the exit checks section.
-5. **Standards the handoff doesn't cover.** The inbox change (item 6 B) is a check's form, settled
+5. **ADR-0059's "no executor" statement is left as it stands.** Amendment 35's Consequences calls
+   it stale until this pull request, but item 15 doesn't list ADR-0059, and the handoff scopes the
+   change to item 15's list. HQ can amend it when the rows are handed over.
+6. **Teardown is HQ's.** The worktree and `orchestrator_test_hq_w_328` remain for HQ to tear down
+   after merge, as the handoff leaves the merge to HQ.
+7. **Standards the handoff doesn't cover.** The inbox change (item 6 B) is a check's form, settled
    by HQ, and no Code Brain road covers it. I kept it to the existing protocol pattern
    (`BindsByItself`).
 
