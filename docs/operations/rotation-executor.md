@@ -1771,7 +1771,8 @@ bind compares a token that has project grants. The row carries `created`, the da
 its first token, so infraops serves it a `last_rotated` and the proposer derives the rotation
 plan, never the issue plan, whose `store` would refuse the hand-pasted keeper. No standing
 approval covers a rotation plan, so Devon approves each revision by name. The row stays
-`rotated_by_sds = false` until amendment 34 item 9's exit checks pass. The steps are in
+`rotated_by_sds = false`, which the executor refuses, until amendment 34 item 9's exit checks 1 to
+3 pass. The steps are in
 `docs/operations/secrets-broker.md`, "Rotate the broker's token".
 
 The rows gained the field at increment 7's cut-over, and the change merges only once both of the

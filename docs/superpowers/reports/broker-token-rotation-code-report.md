@@ -114,9 +114,22 @@ way:
 
 ## Item 5's two outcomes
 
-- **A, the secret isn't listed.** The listing excludes a granted project's secrets. The live side of
-  the bind (`_REACH`) then lists the two projects and the 25 single-secret grants, which equals the
-  row's declared reach exactly. Nothing changes: no code, no `reach_secrets` change, and no test.
+- **A, the project is listed and its secret isn't.** The listing excludes a granted project's
+  secrets. The live side of the bind (`_REACH`) then lists the two projects and the 25
+  single-secret grants, which equals the row's declared reach exactly. Nothing changes: no code, no
+  `reach_secrets` change, and no test. That equality also assumes a single-secret grant doesn't
+  list its project. Every other lane-token row holds only single-secret grants with
+  `reach_projects = []`, and those rows' binds have passed on issued tokens. That's evidence for the
+  assumption, though not a measurement of it. The script's `projects` list shows it directly: on
+  the throwaway account, which holds no single-secret grant, the list must hold the one project
+  only.
+- **The project isn't listed at all.** That's a result, not a failed measurement. A project grant
+  doesn't appear in `projects().list`, so the row's two `reach_projects` would never match a live
+  listing, and the bind refuses every broker token as written. Item 5 then needs a third form,
+  which HQ decides: `reach_projects` emptied and the projects' secrets listed in `reach_secrets`
+  (if they're listed), or a bind that ignores projects. Under that form, a run that lists neither
+  the project nor its secret means a token whose project grant shows nothing. Then rerun the
+  measurement with one single-secret grant added, to confirm the login works.
 - **C, the secret is listed.** The bind refuses every broker token as written, because the live
   listing then holds every secret in `SDS Operator` and `SDS / Lane Apps`, for example
   `b415d03b-…`, and none of those is in `reach_secrets`. The change:
@@ -150,7 +163,8 @@ way:
 
 ## The four exit checks, the session's later steps
 
-Each runs before the commit that sets `rotated_by_sds = true`:
+Amendment 34 puts each before the commit that sets `rotated_by_sds = true`. Checks 1 to 3 can run
+then; check 4 can't (see Concerns):
 
 1. **The target answers for the running broker, with no mint.** As root on `prod-vps`, after the
    `docker ps` and the target install in `secrets-broker.md`, run
@@ -163,7 +177,8 @@ Each runs before the commit that sets `rotated_by_sds = true`:
    section. If the result is C, the bind change lands before step 4.
 4. **One real rotation** through "Rotate the broker's token": the bind passes, `verify` passes on
    the `loaded` match, Devon revokes, and `confirm_dead` passes. After the restart, every
-   allowlisted lane logs `listening`, and one lane's `lane-run --read` prints `ok`.
+   allowlisted lane logs `listening`, and one lane's `lane-run --read` prints `ok`. This one can
+   only follow the flip (see Concerns).
 
 ## Tests and checks run
 
@@ -206,6 +221,16 @@ Each runs before the commit that sets `rotated_by_sds = true`:
   SDK error message can echo request detail.
 
 ## Concerns
+
+- **Exit check 4 can't run before `rotated_by_sds = true`.** Amendment 34 item 9 puts all four
+  exit checks before the flip. But the executor refuses a row that isn't `rotated_by_sds`
+  (`src/rotation_worker/checks.py` line 119, `worker.py` line 1068), and the proposer sends such a
+  row to the manual checklist (`src/rotation_proposer/cli.py` line 529). So one real rotation
+  through the route can't happen while the row is `false`. The workable order: run checks 1 to 3,
+  then flip the row and add `rotate_requested`, and then run check 4, the first rotation. Devon's
+  revision approval and mint stay gates on it. The route itself is unchanged, so this isn't a stop
+  point. HQ decides the order, or another trigger. The row's comment and both operations pages say
+  that check 4 follows the flip.
 
 - **The run must discriminate.** The throwaway project must hold at least one secret, and the
   account must hold no single-secret grant. Otherwise both outcomes look the same. The run steps

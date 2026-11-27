@@ -1488,7 +1488,8 @@ healthchecks_check = "sds-follow-up-mint"
 # on 2026-11-20, with the keeper copy in Rotation / Keepers. infraops serves it as `last_rotated`,
 # so the proposer reads the token as issued and derives the rotation plan, never the issue plan.
 # The row stays `rotated_by_sds = false`, with no `rotate_requested`, until amendment 34 item 9's
-# exit checks pass and item 5's bind on a project grant is settled.
+# exit checks 1-3 pass and item 5's bind on a project grant is settled; the executor refuses the
+# row until then, so check 4, the first real rotation, follows the flip.
 # Its reach is project-level for SDS Operator and SDS / Lane Apps, plus single-secret grants:
 # - Rotation / Keepers: change-manager/M2M_TOKEN_READ, inert-landing-ping-url,
 #   estate-landing-ping-url, bump-driver-ping-url, follow-up-mint-ping-url,

@@ -68,8 +68,9 @@ ADR-0055 amendment 34 (D-81 (2) B, D-83). The broker's token, row `secrets-broke
 loaded-fingerprint proof. Devon mints and revokes; the executor binds, stores, writes the variable
 and proves; a session restarts the broker. The row's `created` is the age anchor, so the proposer
 generates a rotation plan, and Devon approves each package revision by name: no standing approval
-covers a rotation plan. The row is `rotated_by_sds = false` until amendment 34 item 9's exit checks
-pass, so until then the proposer doesn't generate the package.
+covers a rotation plan. While the row is `rotated_by_sds = false`, the proposer generates no
+package and the executor refuses the row (`src/rotation_worker/checks.py`), so "Run a rotation"
+runs only after the commit that sets it `true`.
 
 ### Install the helper target
 
@@ -113,9 +114,10 @@ reads the broker's loaded token only through a target in its root-owned
    running on the old token. The claim waits for the `live_estate` window.
 5. **Restart** (session). After `store` completes, and well inside the `verify` unit's 48-hour
    clock:
-   1. Read the self-hosted Healthchecks listing for every broker lane's check (each lane's
-      `sds-<lane>`). Hold while any of them shows `started`, as the deploy command waits for a
-      lane's quiet slot.
+   1. Read the self-hosted Healthchecks listing for every broker lane's check, named by
+      `LANE_CHECKS` in `scripts/deploy_orchestrator.py` (the change window's is
+      `Change Manager OPs Check`). Hold while any of them shows `started`, as the deploy command
+      waits for a lane's quiet slot.
    2. Don't restart near the change window's daily 04:00 New York `--submit` pass
       (`lanes/change-window/crontab`): its broker read is fatal to the pass.
    3. Announce the act, then run infraops `coolify_deploy` on `wogvks6obmvv9fdotlgnw7r3` at the tag
@@ -152,9 +154,10 @@ and the adapter accepts the old token refused. For the broker, the running token
 every broker lane's reads fail (`bws_failed`) until `store` completes and the session restarts the
 broker. Three things bound that outage: the executor's five-minute pass picks up the paste, the
 `store` claim waits for the `live_estate` window, and the outage lasts at least until Devon mints
-and pastes the new token. An exposure response can therefore need the hand route instead (Devon
-pastes the token into the variable and the keeper, and a session restarts the broker), outside
-the window. That's Devon's call at the time.
+and pastes the new token. An exposure response can therefore need the hand route instead (D-81
+(2) option A in `docs/superpowers/reports/broker-phase-c-adr-question-answered.md`: Devon pastes
+the token into the variable and the keeper, and a session redeploys the broker), outside the
+window. That's Devon's call at the time.
 
 ### What the root reaches through this keeper
 
