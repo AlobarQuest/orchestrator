@@ -3,7 +3,7 @@ Outcome: done
 # Build report: the Anthropic API-key rotation adapter (ADR-0055 Amendment 36 item 13, D-85)
 
 Branch `hq/anthropic-key-adapter-code`, based on orchestrator `origin/main` at `e7016cb8`.
-PR: https://github.com/AlobarQuest/orchestrator/pull/829 (the code at `16e749e3`; this line is the commit after it). Not merged: HQ reviews and merges.
+PR: https://github.com/AlobarQuest/orchestrator/pull/829 (the code's last change is `f5098649`; later commits touch this report only). Not merged: HQ reviews and merges.
 
 No live call was made to Anthropic, BWS, Coolify or Healthchecks, and no production act was taken.
 Every test runs against fakes.
@@ -119,6 +119,12 @@ approval written with a non-`policy:` approver reads as a person's) applies here
 - `make check` at commit `d8c8b110`, on a clean tree, against
   `orchestrator_test_hq_w_332`: exit 0. Ruff and the formatter clean (1,057 files), pyright 0
   errors, and **15,069 passed, 1 skipped** collected in one run.
+- CI's `Quality` job on PR #829 at `f5098649` (the code's last change; later commits touch this
+  report only): green, **15,056 passed, 14 skipped** in its log (run 46061092545). The skips are
+  CI's environment, against 1 locally.
+- `make check` was rerun only in part after `d8c8b110`'s follow-up commit (`f5098649`: the leak
+  test's states and the alert date's `astimezone(UTC)`): the adapter's 35 tests, ruff, the
+  formatter and pyright on the two files, all clean; CI ran the whole suite on it.
 - Before it, the targeted run (`tests/architecture`, `tests/rotation_worker`,
   `tests/rotation_proposer`, `tests/work_carrier`, the gate tests and the launcher tests): 4,538
   passed.
