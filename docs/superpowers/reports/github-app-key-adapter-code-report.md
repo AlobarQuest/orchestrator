@@ -42,8 +42,10 @@ Item 15 doesn't list the following changes, but items 6 and 7 need them:
   registry row. The revoke `Act` body comes from `_revoke_guide`, which asks a provider that
   `GuidesTheRevoke` and otherwise sends the earlier text unchanged.
 - **`src/rotation_worker/CLAUDE.md`.** The inbox rule now states the item 6 B exception.
-- **Guard lists that name every adapter:** `tests/rotation_worker/test_client_surface.py`
-  (`HTTP_CLIENTS`) and `tests/rotation_worker/test_postgres_role.py` (`EXISTING_PLANS`).
+- **Guard lists that name every adapter or import:** `tests/rotation_worker/test_client_surface.py`
+  (`HTTP_CLIENTS`), `tests/rotation_worker/test_postgres_role.py` (`EXISTING_PLANS`), and
+  `tests/architecture/test_out_of_process_isolation.py` (`cryptography` in the rotation executor's
+  row).
 
 ### Values the rows use, and where the repository states them
 
@@ -147,21 +149,39 @@ Devon, so I didn't stop.
 
 ## Tests and checks run
 
-- **`make check`** on `orchestrator_test_hq_w_328`: MAKE_CHECK_RESULT.
+- **`make check`** on `orchestrator_test_hq_w_328`, on a clean tree at `c75ac384`: exit 0. Lint,
+  format and pyright are clean, and pytest collected 15,075 tests: 15,074 passed and 1 skipped
+  (13 minutes 29 seconds). An earlier run failed two tests: the isolation guard
+  (`test_out_of_process_isolation.py`, fixed by naming `cryptography` in the rotation executor's
+  row) and one test I had edited mid-run.
 - **Targeted runs**, all passing:
-  - `tests/rotation_worker/test_github_app_key.py`: 35 tests.
+  - `tests/rotation_worker/test_github_app_key.py`: 36 tests.
   - `tests/rotation_worker/test_github_app_key_readers.py`: 45 tests.
-  - `tests/rotation_worker/test_inbox.py`: 67 tests.
+  - `tests/rotation_worker/test_inbox.py`: 68 tests.
   - The three approval pins: 4 tests.
   - `tests/rotation_worker`, `tests/rotation_proposer`, `tests/estate_clients`, and the three
     rotation architecture files: 3,547 passed before the new files.
-- **Mutation checks:** MUTATION_RESULT.
+- **Mutation checks:** I ran 12 mutants on the new guards, clearing `__pycache__` around each and
+  restoring each one by its inverse edit. They covered the clash, unresolved-row, and own-identity
+  refusals; the public-half, installation, App-id, and reach-name checks; the `finally` revoke;
+  the 204 check; the consumer-kind refusal; the malformed waiting-row refusal; and
+  `dead_statuses`. Eleven were killed on the first run. The survivor was the reach check's
+  repository name, for a token reaching one other repository. I added
+  `test_a_proof_token_reaching_one_other_repository_is_refused`, and it now kills that mutant.
 - **Token-shape grep of the diff:** I ran `git diff 5c3631b0..HEAD`, filtered to added lines, and
   grepped for BWS access tokens, PEM headers, base64-of-PEM headers (`LS0tLS1CRUdJTi`), `ghs_`,
   `ghp_`, and `github_pat_` tokens, and JWT headers (`eyJ`). There were no matches. Test keys are
   generated at run time (`_pem`, `_new_rsa_pem`), and no PEM is committed.
 - **`code-standards risk --repo .`:** `normal`, so the vendor review isn't required.
-- **`/code-review`:** CODE_REVIEW_RESULT.
+- **`/code-review` (medium, `5c3631b0..HEAD`):** three findings.
+  - **Fixed:** a waiting row of this class with an unreadable `app_id` read as "another type" and
+    let a key bind beside it. `declared_app` now raises, the worker leaves that row out, and the
+    inbox refuses (`test_a_waiting_row_of_this_type_whose_identity_can_t_be_read_binds_nothing`).
+  - **Not changed:** `check_row` requires `healthchecks_check` on every reader, which is item 11's
+    rule.
+  - **Not a defect:** unit keys could collide. A unit key is `<credential>-<unit>`
+    (`rotation_decomposer/decompose.py` 79), so two waiting units sharing a key are one
+    credential's and declare one identity.
 
 ## What a reader's green ping proves (item 5's carried check)
 
@@ -196,7 +216,8 @@ green ping without the read (concern 2).
   `tests/rotation_worker/test_inbox.py`, `tests/rotation_worker/test_client_surface.py`,
   `tests/rotation_worker/test_postgres_role.py`
 - `tests/architecture/test_rotation_agreement.py`, `tests/architecture/test_rotation_edges.py`,
-  `tests/architecture/test_wsp21_invariant_scan.py`
+  `tests/architecture/test_wsp21_invariant_scan.py`,
+  `tests/architecture/test_out_of_process_isolation.py`
 - `tests/rotation_proposer/test_standing_approval.py`, `tests/work_carrier/test_standing.py`,
   `tests/services/test_standing_approval_gate.py`
 - `docs/superpowers/reports/github-app-key-adapter-code-report.md` (this report)
