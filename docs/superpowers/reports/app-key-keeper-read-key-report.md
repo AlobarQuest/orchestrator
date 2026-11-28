@@ -4,8 +4,8 @@ Outcome: done
 
 Worker W-339. Handoff: `sds-hq/state/handoffs/app-key-keeper-read-key.md`.
 PR: https://github.com/AlobarQuest/orchestrator/pull/834, branch `hq/app-key-keeper-read-key`,
-base `b1b4bd2c`. The PR is open and unmerged. Its head is the commit that adds this report; the
-code head is `1b23388a`.
+base `b1b4bd2c`. The PR is open and unmerged. Its head is the commit that last changed this report; the
+last code commit is `1b23388a`.
 
 ## What I built
 
@@ -127,13 +127,11 @@ of `test_other_keepers_…` and the lane-token guard) and the Anthropic probe ex
 
 ### Checks
 
-- `make check` at `d87f16ff`, with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` set to
-  `orchestrator_test_hq_w_339`, `SECURITY_STANDARDS_DIR` set to the fixture, and `PGTZ=UTC`:
-  rc 0, **15,193 passed, 1 skipped**. The first run failed on `ruff format --check` in my own
-  `contract.py` edit. I fixed it in `d87f16ff`.
-- Last commit `1b23388a` (the two review nits): `ruff check`, `ruff format --check` and `pyright`
-  on `src/rotation_worker` are clean, and `tests/rotation_worker` passes (1,995 passed). I didn't
-  rerun the full `make check` after this commit. CI's `Quality` job runs it on the PR.
+- `make check` at `f77bd3e6` (the final code, on a clean tree), with `TEST_DATABASE_URL` and
+  `ORCHESTRATOR_DATABASE_URL` set to `orchestrator_test_hq_w_339`, `SECURITY_STANDARDS_DIR` set
+  to the fixture, and `PGTZ=UTC`: rc 0, **15,193 passed, 1 skipped**. An earlier run failed on
+  `ruff format --check` in my own `contract.py` edit, which I fixed in `d87f16ff`. A run at
+  `d87f16ff` was also green, with the same count.
 - `code-standards risk`: `high-risk` (secrets: `src/rotation_worker/secret_store.py`).
 - `/code-review` (medium): no correctness findings and three nits. I fixed two in `1b23388a`
   (issue-fact reads through `read_as`, and the class passed unconverted in `cli.py`). The third
@@ -180,6 +178,11 @@ of `test_other_keepers_…` and the lane-token guard) and the Anthropic probe ex
   the new revision. I made no BWS or GitHub call.
 
 ## Follow-ups
+
+- The PR #834 body miscounts the red proof: it says "Seven new tests" and "six padded
+  App-key tests". There are eight new tests, and the red is five App-key tests plus the probe.
+  This report is the correct account. I didn't edit the PR body, because the handoff allows no
+  GitHub call beyond `git push` and `gh pr create`.
 
 None needed in `.cred-consumers.toml`, ADR-0055 or `rotation-executor.md`. Optional text for
 `rotation-executor.md` (#833 owns it), if HQ wants the rule written down:
