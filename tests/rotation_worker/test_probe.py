@@ -619,8 +619,9 @@ def test_a_padded_app_key_keeper_is_read_stripped_and_proved(
     github = GitHub()
     _paste(pasted, _stored(github.issue()))
     _registry(origins, GITHUB_ROW)
-    code, _, [line] = _probe(tmp_path, mirror, GITHUB_ID, github.handle, answers)
-    assert (code, line["status"], line["passed"]) == (0, "ok", True)
+    code, _, lines = _probe(tmp_path, mirror, GITHUB_ID, github.handle, answers)
+    assert code == 0
+    assert [(line["status"], line["passed"]) for line in lines] == [("ok", True)]
 
 
 def test_a_padded_keeper_of_another_class_is_still_not_readable(
