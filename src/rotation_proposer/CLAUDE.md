@@ -5,8 +5,16 @@
   proposes. A named person approves every rotation revision except a lane credential's revision 1
   that the standing approval's policy approved and the work carrier checked with
   `standing_approval.carry` (ADR-0055 amendment 22), which works only once intent-packages'
-  schema-4 grant and the carrier's identity exist. The carrier imports `standing_approval` and no
-  other module of this package. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never
+  schema-4 grant and the carrier's identity exist, and a reissue (revision 2 or later) of an
+  `orchestrator` or `change-manager` bearer the policy approved and the carrier checked with
+  `standing_approval.carry_reissue` (amendment 39, D-88 A), which works only once intent-packages'
+  reissue grant exists. `standing-approval` runs `reissue` above revision 1: revision 1 approved
+  by a name in `NAMED_APPROVERS`, the tip equal to the last approved revision (read at its
+  approval's commit) apart from `revision`, `status`, `occurrence` and `destinations`, and no
+  written copy added; `last_rotated` is reported there, never a condition. At a reissue the
+  carrier also requires the emitter's `earlier_approvals`, revision 1's and the last earlier
+  approval matched to verified chain events (`work_carrier/standing.py`). The carrier imports
+  `standing_approval` and no other module of this package. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never
   re-implemented here. The occurrence comes from that answer's structured fields and never
   contains today's date. It acts only on a credential its registry entry marks `rotated_by_sds`; a
   package without that flag is a finding and is never acted on. Each `--submit` pass also walks rotation records, due or not, through its own GET-only

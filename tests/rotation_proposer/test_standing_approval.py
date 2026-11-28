@@ -283,12 +283,16 @@ def test_a_lineage_that_isn_t_one_unapproved_revision_1_refuses(
     assert (code, _refused(lines)) == (1, [REVISION_1])
 
 
-def test_a_package_revision_other_than_1_refuses_and_fails_the_re_render_too(
+def test_a_lane_package_at_revision_2_runs_the_reissue_form_and_refuses_its_type(
     rig: Rig, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Revision 2 or later is amendment 39's form, which covers no lane type; amendment 22's
+    conditions never run on it (`test_reissue_approval.py` holds the rest of that form)."""
     rig.publish(TOKEN, package={**_generated(_row(TOKEN)), "revision": 2})
     code, lines = _run(capsys, TOKEN)
-    assert (code, _refused(lines)) == (1, [GENERATED, REVISION_1])
+    assert code == 1
+    assert "reissue_type" in _refused(lines)
+    assert not {GENERATED, REVISION_1} & set(_refused(lines))
 
 
 def test_a_lane_token_infraops_records_rotated_is_not_on_the_issue_plan(

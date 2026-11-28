@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -29,6 +29,12 @@ _POLICY_APPROVER_RE: Final = re.compile(r"^policy:[a-z0-9][a-z0-9-]*@v[1-9][0-9]
 _CHAIN_VERIFY_TIMEOUT_SECONDS = 30
 _EXECUTABLE_INTAKE_STATE = "approved"
 _PROTOCOL_FIXTURE_STATE = "closed"
+# An earlier approval's fields as the payload states them, the ones the tip's event is matched on,
+# and the one profile whose later revisions state them. The work carrier's copies are held equal
+# by `tests/work_carrier/test_standing.py`.
+_APPROVAL_FIELDS: Final = ("revision", "approver", "approved_hash", "commit", "event_id")
+_EARLIER_ROLES: Final = ("revision_1", "last_earlier")
+_ROTATION_PROFILE: Final = "non-software-operational"
 
 
 @dataclass(frozen=True)
@@ -411,6 +417,7 @@ def _verify_current_approval(
     approved_hash: str,
     revision: object,
     approval: Mapping[str, Any],
+    chain: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> VerifiedApproval:
     approver = approval.get("approver")
     commit = approval.get("commit")
@@ -429,7 +436,7 @@ def _verify_current_approval(
     if not sibling_verification:
         raise _approval_refused("intent-packages verify-approval failed")
     return _verified_approval_from_events(
-        _verified_package_approval_events(),
+        (chain or _verified_package_approval_events)(),
         package_id=package_id,
         approved_hash=approved_hash,
         revision=revision,
@@ -437,6 +444,84 @@ def _verify_current_approval(
         commit=commit,
         event_id=event_id,
     )
+
+
+class _ChainRead:
+    """The verified chain's events, read once per emitted payload and shared by every approval
+    the payload states, so stating earlier approvals adds no chain read."""
+
+    def __init__(self) -> None:
+        self._events: list[dict[str, Any]] | None = None
+
+    def __call__(self) -> list[dict[str, Any]]:
+        if self._events is None:
+            self._events = _verified_package_approval_events()
+        return self._events
+
+
+def _earlier_approvals(
+    package_id: str, revision: object, approvals: object, chain: Callable[[], list[dict[str, Any]]]
+) -> list[dict[str, object]]:
+    """ADR-0055 amendment 39 (HQ's call on D-88's R1 and R2): revision 1's approval and the last
+    approval before the tip, each as the lineage states it and whether a verified
+    `package.approved` event backs it, by the tip's rules (approver, hash, revision, commit and
+    event id). The emitter refuses nothing here: a policy-approved reissue is refused by its
+    reader (the work carrier) when either entry is unbacked, and no other intake reads them."""
+    listed = approvals if isinstance(approvals, list) else []
+    earlier = [
+        item
+        for item in listed
+        if isinstance(item, dict)
+        and isinstance(item.get("revision"), int)
+        and not isinstance(item.get("revision"), bool)
+        and isinstance(revision, int)
+        and item["revision"] < revision
+    ]
+    first = [item for item in earlier if item["revision"] == 1]
+    last = max((item["revision"] for item in earlier), default=None)
+    latest = [item for item in earlier if item["revision"] == last]
+    return [
+        _earlier_entry(role, package_id, candidates, chain)
+        for role, candidates in zip(_EARLIER_ROLES, (first, latest), strict=True)
+    ]
+
+
+def _earlier_entry(
+    role: str,
+    package_id: str,
+    candidates: list[dict[str, Any]],
+    chain: Callable[[], list[dict[str, Any]]],
+) -> dict[str, object]:
+    if len(candidates) != 1:
+        return {"role": role, "verified": False, "reason": "not exactly one approval"}
+    approval = candidates[0]
+    stated: dict[str, object] = {
+        "role": role,
+        **{name: approval.get(name) for name in _APPROVAL_FIELDS},
+    }
+    approver, approved_hash = approval.get("approver"), approval.get("approved_hash")
+    commit, event_id = approval.get("commit"), approval.get("event_id")
+    if not isinstance(approver, str) or not _is_recognised_approver(approver):
+        return {**stated, "verified": False, "reason": "approver is not recognised"}
+    if not isinstance(approved_hash, str) or not approved_hash:
+        return {**stated, "verified": False, "reason": "approval hash is empty"}
+    if not isinstance(commit, str) or not commit:
+        return {**stated, "verified": False, "reason": "approval commit is empty"}
+    if not isinstance(event_id, str) or not event_id:
+        return {**stated, "verified": False, "reason": "approval event id is empty"}
+    try:
+        _verified_approval_from_events(
+            chain(),
+            package_id=package_id,
+            approved_hash=approved_hash,
+            revision=approval["revision"],
+            approver=approver,
+            commit=commit,
+            event_id=event_id,
+        )
+    except PackageSourceError as error:
+        return {**stated, "verified": False, "reason": str(error)}
+    return {**stated, "verified": True, "reason": None}
 
 
 def _matching_approvals(
@@ -599,12 +684,14 @@ def _load_intake_payload(
     if len(matching_approvals) != 1:
         raise PackageSourceError("package revision has ambiguous matching approvals")
     approval = matching_approvals[0]
+    chain = _ChainRead()
     verified_approval = _verify_current_approval(
         resolved_path,
         str(package["package_id"]),
         approved_hash,
         revision,
         approval,
+        chain,
     )
     verification_limitations = {
         "api_recomputes_remote_git_object": False,
@@ -660,4 +747,16 @@ def _load_intake_payload(
     # being missing from the stored event.
     if originating_observation_id is not None:
         payload["originating_observation_id"] = originating_observation_id
+    # Stated only for a rotation package's later revision a policy approved, the one shape whose
+    # reader builds on an earlier approval (a reissue, ADR-0055 amendment 39); every other
+    # payload, a policy-approved bump's among them, is unchanged. The intake route ignores the key.
+    if (
+        package.get("profile") == _ROTATION_PROFILE
+        and isinstance(revision, int)
+        and revision > 1
+        and _POLICY_APPROVER_RE.match(verified_approval.approved_by) is not None
+    ):
+        payload["earlier_approvals"] = _earlier_approvals(
+            str(package["package_id"]), revision, lineage.get("approvals"), chain
+        )
     return payload

@@ -7608,3 +7608,53 @@ This amendment edits none of them.
 | Decision 4, the hand-rotated set and the SYSTEM and VERIFIER bearers | Stand, and are refused by name (decision item 6). |
 | intent-packages `approval-policy.toml`, the rotation grant's rationale ("Revision 2 and later, and every other type, stay Devon's", line 151) | Changes with R3. |
 | Root `CLAUDE.md` line 377, `src/rotation_proposer/CLAUDE.md` line 5, `src/orchestrator/services/intake/CLAUDE.md` lines 24-35 | Change with R2. |
+
+### Correction to R1 and exit check 2 (2026-11-28, HQ's call, Opus review of #838)
+
+HQ settled three changes to R1 after an Opus review of #838, and R1 and R2 are built with them.
+First, `reissue` and `carry_reissue` gain `rotated_by_sds`: the credential's registry row sets
+`rotated_by_sds = true` (the standing answer's condition 1), and a row without it refuses. Second,
+`rotated_before` isn't a condition. The command reports it as a fact (a `standing_approval.fact`
+line giving infraops' `last_rotated`, the day revision 1 was approved, and whether the first is on
+or after the second), because reading 2 defines a first hand-over as no earlier approved revision,
+which `reissue_lineage` already checks, and refusing on a missing infraops date would narrow
+Devon's rule. An infraops read that fails still exits 2 (Code Brain rule 4). So R1's test list
+loses "`last_rotated` null" and "`last_rotated` before revision 1's approval" as refusals; both
+are tested as passes that report the fact. Exit check 2's last sentence becomes: "A covered row
+whose `last_rotated` is null, or earlier than revision 1's approval, passes and is reported by the
+`rotated_before` fact." Third, `reissue_lineage` requires revision 1's approver to be a name in a
+fixed list in code, `NAMED_APPROVERS` (`devon`, the only approver in these packages' lineages),
+not merely an approver without the `policy:` prefix; any other approver refuses.
+
+Building R1 and R2 settled four details the plan left open. Each approval before the tip must also
+be on its listed revision's hash, at most one per revision, by a named person or the policy. The
+carry form's lineage condition is named `policy_approved_reissue`, and it takes the emitter's
+verified approval, so a tip approval the verified chain event doesn't back refuses there as well
+as in the carrier's `_verified_approval`. `machine_plan` drops a separate "not the issue plan"
+check, because the plan it must equal is `plan_for`'s rotation plan, which is never an issue. The
+carrier puts the form in the observation's `source_reference` and idempotency key as well as its
+facts, so a row recorded before facts named the form is never replayed into
+`observation_conflict`. `REISSUE_TYPES` is sorted, `("change-manager", "orchestrator")`: a tuple
+headed by `"orchestrator"` reads as an invocation of the orchestrator's console script to the
+producer guard (`test_external_content_observes_only.py`). The carrier's `_verified_approval`
+matches the lineage's one approval on the payload's revision, not its last-listed one, and refuses
+an approval of a later revision. The gate requires the record's `form` to fit the revision
+(`reissue` above revision 1; `issue`, or none for an earlier row, at revision 1).
+
+HQ's answer to W-346's question (2026-11-28, option B, in the same pull request) closes one more
+path. `intent-packages verify-approval` and the emitter matched only the tip's approval to the
+chain, so revision 1's named approval, and the last earlier approval `proposer_revised` compares
+against, were the lineage's word. A writer to intent-packages `main` with no append password (the
+rotation proposer lane's push, for example) could write both. For a rotation package's later
+revision a policy approved, `orchestrator emit-intake-payload` now matches revision 1's approval and the last
+earlier approval to verified `package.approved` events, by the tip's rules and in its one chain
+read, and states each in the payload's `earlier_approvals`. The carrier refuses a reissue unless
+both are verified and equal the lineage's, naming which is unbacked, and records the two events
+it relied on in its observation. It adds no credential and no chain read.
+
+Two residuals stay, and neither is a new acceptance. First, the rotation root can append a
+`package.approved` event itself, through the broker's token and the append password (W-328's #826
+concern 1, D-84 (9) A, the D-83 standing answer item 1). It reopens in the security phase. Second,
+nothing ties the command's passing run to the tip's approval. The carrier can't run
+`proposer_revised` or `no_new_copy` (reading 8), so a tip the command never saw is checked only for
+its shape. This is D-34's position for a lane revision 1, which #207's Opus review also raised.

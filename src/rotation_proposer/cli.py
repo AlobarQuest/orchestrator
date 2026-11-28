@@ -50,8 +50,10 @@ dead.
 
 **`standing-approval <credential_id>` ONLY READS AND REPORTS** (ADR-0055 amendment 22, increment
 2). It reads the registry row and the standing package with its lineage into this program's
-mirrors, and infraops' `last_rotated`, and checks amendment 22 item 2's conditions
-(`standing_approval.py`), logging each as a JSON line on stdout. Exit 0 when no condition refuses,
+mirrors, and infraops' `last_rotated`, and checks the conditions (`standing_approval.py`), logging
+each as a JSON line on stdout: amendment 22 item 2's at revision 1, and amendment 39's reissue
+conditions at revision 2 or later, for which it also reads the package at the last approval's
+commit and reports `last_rotated` as a fact, never a condition. Exit 0 when no condition refuses,
 1 when any does, 2 when a read or anything else fails. It approves nothing.
 
 **A REPEAT PASS IS A REPLAY.** A package whose tip already carries the occurrence is not revised
@@ -116,10 +118,21 @@ from rotation_proposer.standing import (
     document,
     to_review,
 )
-from rotation_proposer.standing_approval import evaluate
+from rotation_proposer.standing_approval import (
+    Condition,
+    evaluate,
+    last_approval,
+    reissue,
+    rotated_before,
+)
 from rotation_worker.contract import ContractError
 from rotation_worker.destinations import DestinationError
-from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
+from rotation_worker.git_mirror import (
+    COMMIT_PATTERN,
+    MirrorError,
+    RepoMirror,
+    default_mirror_root,
+)
 from rotation_worker.registry import (
     RegistryEntry,
     RegistryError,
@@ -959,9 +972,44 @@ def _served_last_rotated(credential_id: str) -> str | None:
     return last_rotated[credential_id]
 
 
+def _conditions(
+    entry: RegistryEntry,
+    package: dict[str, Any],
+    lineage: dict[str, Any],
+    mirror: RepoMirror,
+    commit: str,
+) -> list[Condition]:
+    """The form the package's revision chooses: amendment 22's at revision 1, amendment 39's
+    reissue conditions above it, beside the `rotated_before` fact."""
+    credential_id = str(entry.credential.get("id"))
+    last_rotated = _served_last_rotated(credential_id)
+    if package.get("revision") == 1:
+        return evaluate(entry, package, lineage, last_rotated=last_rotated)
+    _log(
+        "standing_approval.fact",
+        credential_id=credential_id,
+        fact="rotated_before",
+        **rotated_before(last_rotated, lineage),
+    )
+    approval = last_approval(lineage)
+    approved = None
+    approved_commit = approval.get("commit") if approval is not None else None
+    # A commit that isn't a full hash names nothing on `main`: `proposer_revised` refuses it.
+    if (
+        isinstance(approved_commit, str)
+        and COMMIT_PATTERN.fullmatch(approved_commit)
+        and mirror.is_ancestor(PACKAGES_REPOSITORY, approved_commit, commit)
+    ):
+        approved = load_package(
+            mirror.show(PACKAGES_REPOSITORY, approved_commit, package_path(credential_id))
+        )
+    return reissue(entry, package, lineage, approved=approved)
+
+
 def standing_approval(credential_id: str, mirror: RepoMirror) -> int:
-    """Amendment 22 item 2's conditions on the credential's standing package, reported one line
-    each. Reads only; approves nothing."""
+    """The standing approval's conditions on the credential's standing package, reported one line
+    each: amendment 22 item 2's at revision 1, amendment 39's above it. Reads only; approves
+    nothing."""
     try:
         entry = find_credential(mirror, credential_id)
         commit = mirror.sync(PACKAGES_REPOSITORY)
@@ -977,9 +1025,7 @@ def standing_approval(credential_id: str, mirror: RepoMirror) -> int:
             registry_commit=f"{entry.repository}@{entry.commit}",
             package_commit=f"{PACKAGES_REPOSITORY}@{commit}",
         )
-        conditions = evaluate(
-            entry, package, lineage, last_rotated=_served_last_rotated(credential_id)
-        )
+        conditions = _conditions(entry, package, lineage, mirror, commit)
     except Exception as error:
         # Exit 1 means "refused", and Python's uncaught exit is 1 too, so every failure, foreseen
         # or not, is reported here as unreadable rather than as a verdict (amendment 22 item 2).
@@ -1018,8 +1064,9 @@ def _parser() -> argparse.ArgumentParser:
     approval = commands.add_parser(
         "standing-approval",
         help=(
-            "check ADR-0055 amendment 22's conditions on a lane credential's revision 1 and "
-            "report them; reads only, approves nothing"
+            "check the standing approval's conditions (ADR-0055 amendment 22 at revision 1, "
+            "amendment 39's reissue conditions above it) and report them; reads only, approves "
+            "nothing"
         ),
     )
     approval.add_argument("credential_id")

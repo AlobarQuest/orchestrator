@@ -23,6 +23,7 @@ import yaml
 
 from rotation_worker.canonical import package_hash
 from rotation_worker.registry import RegistryEntry, RegistryError
+from tests.rotation_proposer import test_reissue_approval as reissue_fixtures
 from tests.rotation_proposer.test_standing_approval import REGISTRY, _generated, _real_row, _row
 from tests.work_carrier.test_workability import _Source, member, portfolio, project
 from work_carrier import cli as cli_module
@@ -153,10 +154,15 @@ def test_a_policy_approved_generated_revision_1_passes_and_composes_its_record(
         "registry_entry": TOKEN,
         "registry_repository": REGISTRY,
         "registry_commit": REGISTRY_COMMIT,
+        "form": "issue",
         "refused": [],
     }
-    # The reference names the revision and the registry commit, so a moved registry is a new row.
-    assert f"{PACKAGE_ID}@r1" in observation["source_reference"]
+    # The reference names the form, the revision and the registry commit, so a moved registry is
+    # a new row, and a row recorded before facts named the form is never replayed into conflict.
+    assert observation["source_reference"].startswith(f"standing-approval:issue:{PACKAGE_ID}@r1:")
+    assert observation["idempotency_key"].startswith(
+        f"work-carrier-standing:issue:{PACKAGE_ID}@r1:"
+    )
     assert f"{REGISTRY}@{REGISTRY_COMMIT}" in observation["source_reference"]
     assert len(observation["idempotency_key"]) <= standing.MAX_IDEMPOTENCY_KEY
 
@@ -257,6 +263,310 @@ def test_a_missing_lineage_refuses(tmp_path: Path) -> None:
     (directory / "lineage.yaml").unlink()
     refused = standing.check(_payload(_package(), _record()), directory, _entry())
     assert refused == "the carry form could not be run: FileNotFoundError"
+
+
+# ---- a reissue (ADR-0055 amendment 39) ------------------------------------------------------
+
+
+EARLIER = ("revision", "approver", "approved_hash", "commit", "event_id")
+
+
+def _earlier_entries(lineage: dict[str, Any], tip: int) -> list[dict[str, Any]]:
+    """What the emitter states when a verified event backs each earlier approval."""
+    earlier = [a for a in lineage["approvals"] if a["revision"] < tip]
+    last = max(a["revision"] for a in earlier)
+    (first,) = [a for a in earlier if a["revision"] == 1]
+    (latest,) = [a for a in earlier if a["revision"] == last]
+    return [
+        {"role": role, **{k: a[k] for k in EARLIER}, "verified": True, "reason": None}
+        for role, a in (("revision_1", first), ("last_earlier", latest))
+    ]
+
+
+def _reissue(
+    row: dict[str, Any] | None = None,
+    edit: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], RegistryEntry]:
+    """A policy-approved revision 2 of the operator bearer, its lineage, the emitter's payload,
+    and its registry row, as `test_reissue_approval` builds them. `edit` changes the lineage
+    before the emitter reads it, so the payload states what the lineage then says."""
+    entry, _, tip, lineage = reissue_fixtures._covered(row)
+    carried, verified = reissue_fixtures._carried(tip, lineage)
+    if edit is not None:
+        edit(carried)
+    package = {**tip, "status": "approved"}
+    approval = carried["approvals"][-1]
+    payload = {
+        **_payload(package, _record()),
+        "approved_by": approval["approver"],
+        "approved_at": approval["approved_at"],
+        "approval_event_id": approval["event_id"],
+        "approval_ledger_commit": approval["commit"],
+        "earlier_approvals": _earlier_entries(carried, package["revision"]),
+    }
+    assert {k: payload[k] for k in ("revision", "content_hash")} == {
+        "revision": verified["revision"],
+        "content_hash": verified["approved_hash"],
+    }
+    return package, carried, payload, RegistryEntry(REGISTRY, REGISTRY_COMMIT, entry.credential)
+
+
+def _check_reissue(
+    tmp_path: Path,
+    package: dict[str, Any],
+    lineage: dict[str, Any],
+    payload: dict[str, Any],
+    found: RegistryEntry,
+) -> standing.Checked | str:
+    directory = _write(tmp_path / package["package_id"], package, lineage)
+    return standing.check(payload, directory, lambda credential_id: found)
+
+
+def test_a_policy_approved_reissue_passes_and_records_the_reissue_form(tmp_path: Path) -> None:
+    package, lineage, payload, found = _reissue()
+    checked = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(checked, standing.Checked), checked
+    observation = checked.observation
+    assert observation["facts"]["form"] == "reissue"
+    assert observation["facts"]["revision"] == 2
+    assert observation["facts"]["approver"] == reissue_fixtures.POLICY
+    assert observation["source_reference"].startswith("standing-approval:reissue:")
+    assert len(observation["idempotency_key"]) <= standing.MAX_IDEMPOTENCY_KEY
+
+
+@pytest.mark.parametrize("field", ["approver", "commit", "event_id"])
+def test_a_reissue_approval_the_emitter_didn_t_verify_refuses(tmp_path: Path, field: str) -> None:
+    """D-84 condition 2's shape: a lineage approval on the tip that the verified chain event
+    doesn't back (one the rotation root could write to intent-packages `main`) refuses in
+    `_verified_approval`, before the carry form runs."""
+    package, lineage, payload, found = _reissue()
+    lineage["approvals"][-1][field] = "policy:non-software-operational@v9-forged"
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(refused, str)
+    assert "isn't the one the emitter verified" in refused and field in refused
+
+
+def test_the_verified_approval_is_the_one_on_the_revision_not_the_only_one(
+    tmp_path: Path,
+) -> None:
+    """Revision 1's person approval stands beside it; the policy's on the tip is the one matched,
+    wherever the lineage lists it."""
+    package, lineage, payload, found = _reissue()
+    assert [a["approver"] for a in lineage["approvals"]] == ["devon", reissue_fixtures.POLICY]
+    lineage["approvals"].reverse()
+    assert isinstance(_check_reissue(tmp_path, package, lineage, payload, found), standing.Checked)
+
+
+@pytest.mark.parametrize("later", [3, "3", None])
+def test_an_approval_of_a_later_revision_refuses(tmp_path: Path, later: object) -> None:
+    package, lineage, payload, found = _reissue()
+    lineage["approvals"].append({**lineage["approvals"][0], "revision": later})
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert refused == "the lineage records an approval of a later revision"
+
+
+def test_a_second_approval_of_the_reissue_s_revision_refuses(tmp_path: Path) -> None:
+    package, lineage, payload, found = _reissue()
+    lineage["approvals"].insert(1, dict(lineage["approvals"][-1]))
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert refused == "the lineage doesn't record exactly one approval of the revision"
+
+
+@pytest.mark.parametrize(
+    ("row", "condition"),
+    [
+        (
+            {**reissue_fixtures._real_row("orchestrator-system-bearer"), "rotated_by_sds": True},
+            "not_hand_rotated",
+        ),
+        (
+            {**reissue_fixtures._real_row(reissue_fixtures.OPERATOR), "rotated_by_sds": False},
+            "rotated_by_sds",
+        ),
+    ],
+    ids=["system-bearer", "not-sds-rotated"],
+)
+def test_the_reissue_carry_form_refusal_names_its_condition(
+    tmp_path: Path, row: dict[str, Any], condition: str
+) -> None:
+    package, lineage, payload, found = _reissue(row=row)
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(refused, str)
+    assert refused.startswith("the carry form refused: ")
+    assert f"{condition} (" in refused
+
+
+def test_a_reissue_whose_revision_1_a_policy_approved_refuses(tmp_path: Path) -> None:
+    """A first hand-over is a person's (reading 2): revision 1 approved by policy can't seed a
+    reissue the policy then approves."""
+
+    def policy_first(lineage: dict[str, Any]) -> None:
+        lineage["approvals"][0]["approver"] = reissue_fixtures.POLICY
+
+    package, lineage, payload, found = _reissue(edit=policy_first)
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(refused, str)
+    assert "policy_approved_reissue (" in refused
+    assert "revision 1's approver isn't a named person" in refused
+
+
+def _third_revision() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], RegistryEntry]:
+    """Revision 3 the policy approved, over revisions 1 and 2 Devon approved: the two earlier
+    roles name different approvals."""
+    row = reissue_fixtures._real_row(reissue_fixtures.OPERATOR)
+    first = reissue_fixtures._approved(row)
+    second = {**reissue_fixtures._tip(first), "status": "approved"}
+    tip = reissue_fixtures._tip(second, revision=3)
+    lineage = reissue_fixtures._lineage(first, tip)
+    lineage["revisions"][1]["hash"] = package_hash(second)
+    lineage["approvals"].append(
+        {
+            **lineage["approvals"][0],
+            "revision": 2,
+            "approved_hash": package_hash(second),
+            "commit": "2" * 40,
+            "event_id": "evt-r2",
+        }
+    )
+    carried, _ = reissue_fixtures._carried(tip, lineage)
+    package = {**tip, "status": "approved"}
+    approval = carried["approvals"][-1]
+    payload = {
+        **_payload(package, _record()),
+        "approved_by": approval["approver"],
+        "approved_at": approval["approved_at"],
+        "approval_event_id": approval["event_id"],
+        "approval_ledger_commit": approval["commit"],
+        "earlier_approvals": _earlier_entries(carried, 3),
+    }
+    return package, carried, payload, RegistryEntry(REGISTRY, REGISTRY_COMMIT, row)
+
+
+def test_a_third_revision_with_both_earlier_approvals_verified_passes(tmp_path: Path) -> None:
+    package, lineage, payload, found = _third_revision()
+    assert [e["revision"] for e in payload["earlier_approvals"]] == [1, 2]
+    checked = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(checked, standing.Checked), checked
+    # The record names the earlier events it relied on, for whoever reads it later.
+    assert checked.observation["facts"]["earlier_approvals"] == [
+        {
+            "role": "revision_1",
+            "event_id": lineage["approvals"][0]["event_id"],
+            "commit": lineage["approvals"][0]["commit"],
+        },
+        {"role": "last_earlier", "event_id": "evt-r2", "commit": "2" * 40},
+    ]
+
+
+def test_a_revision_1_record_states_no_earlier_approvals(tmp_path: Path) -> None:
+    checked = _check(tmp_path)
+    assert isinstance(checked, standing.Checked)
+    assert "earlier_approvals" not in checked.observation["facts"]
+
+
+def test_a_wrong_shape_reissue_is_reported_by_its_condition_first(tmp_path: Path) -> None:
+    """An unbacked earlier approval doesn't hide the carry form's own refusal."""
+    row = {**reissue_fixtures._real_row("orchestrator-system-bearer"), "rotated_by_sds": True}
+    package, lineage, payload, found = _reissue(row=row)
+    payload.pop("earlier_approvals")
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(refused, str)
+    assert refused.startswith("the carry form refused: ") and "not_hand_rotated (" in refused
+
+
+def test_the_carrier_reads_the_emitter_s_roles_and_fields() -> None:
+    from orchestrator import package_sources
+
+    assert tuple(standing.EARLIER_ROLES) == package_sources._EARLIER_ROLES
+    assert standing.EARLIER_FIELDS == package_sources._APPROVAL_FIELDS
+    assert standing.ROTATION_PROFILE == package_sources._ROTATION_PROFILE
+
+
+@pytest.mark.parametrize(
+    ("role", "named"),
+    [("revision_1", "revision 1's approval"), ("last_earlier", "the last approval before the tip")],
+)
+def test_a_forged_earlier_approval_the_chain_doesn_t_back_refuses(
+    tmp_path: Path, role: str, named: str
+) -> None:
+    """HQ's call on D-88 (B): an earlier approval no verified event backs (one an
+    intent-packages `main` writer with no append password wrote) refuses, naming which."""
+    package, lineage, payload, found = _third_revision()
+    for entry in payload["earlier_approvals"]:
+        if entry["role"] == role:
+            entry.update(verified=False, reason="no matching package.approved event")
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert refused == (
+        f"{named} isn't backed by a verified chain event (no matching package.approved event)"
+    )
+
+
+@pytest.mark.parametrize("role", ["revision_1", "last_earlier"])
+@pytest.mark.parametrize("field", EARLIER)
+def test_an_earlier_approval_other_than_the_one_verified_refuses(
+    tmp_path: Path, role: str, field: str
+) -> None:
+    """The emitter verified another approval than the one the lineage holds for the role."""
+    package, lineage, payload, found = _third_revision()
+    (entry,) = [e for e in payload["earlier_approvals"] if e["role"] == role]
+    entry[field] = 9 if field == "revision" else "another-verified-approval"
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(refused, str)
+    assert "isn't the one the emitter verified in the chain" in refused
+    assert f"differs in {field}" in refused
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda p: p.pop("earlier_approvals"),
+        lambda p: p.update(earlier_approvals="verified"),
+        lambda p: p.update(earlier_approvals=p["earlier_approvals"][:1]),
+        lambda p: p["earlier_approvals"].append(dict(p["earlier_approvals"][0])),
+    ],
+    ids=["absent", "not-a-list", "one-role-missing", "role-twice"],
+)
+def test_a_payload_without_one_entry_per_role_refuses(
+    tmp_path: Path, change: Callable[[dict[str, Any]], None]
+) -> None:
+    package, lineage, payload, found = _third_revision()
+    change(payload)
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(refused, str)
+    assert "earlier approvals" in refused or "has no single verified chain event" in refused
+
+
+def test_the_emitter_s_entries_are_what_the_carrier_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The emitter's `_earlier_approvals` output, from a chain holding both earlier events, is
+    accepted; the same with revision 1's event missing is refused by name."""
+    from orchestrator import package_sources
+
+    monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
+    package, lineage, payload, found = _third_revision()
+
+    def events(skip: int | None) -> list[dict[str, Any]]:
+        return [
+            {
+                "event_id": a["event_id"],
+                "timestamp": a["approved_at"],
+                "source": {"ref": package["package_id"]},
+                "evidence": [
+                    {k: a[k] for k in ("approved_hash", "revision", "approver", "commit")}
+                ],
+            }
+            for a in lineage["approvals"]
+            if a["revision"] < 3 and a["revision"] != skip
+        ]
+
+    for skip, passes in ((None, True), (1, False)):
+        chain = events(skip)
+        payload["earlier_approvals"] = package_sources._earlier_approvals(
+            package["package_id"], 3, lineage["approvals"], lambda: chain
+        )
+        outcome = _check_reissue(tmp_path / str(skip), package, lineage, payload, found)
+        assert isinstance(outcome, standing.Checked) is passes, outcome
 
 
 # ---- which records the check applies to -----------------------------------------------------
@@ -565,4 +875,5 @@ def test_the_record_the_carrier_composes_is_the_one_the_gate_reads() -> None:
         standing.OBSERVATION_TYPE,
     )
     assert gate.subject_for(PACKAGE_ID, 1) == standing.subject_for(PACKAGE_ID, 1)
+    assert (gate.ISSUE_FORM, gate.REISSUE_FORM) == (standing.ISSUE_FORM, standing.REISSUE_FORM)
     assert gate.ROTATION_PROFILE == standing.ROTATION_PROFILE

@@ -537,6 +537,7 @@ def test_package_source_reader_binds_payload_to_verified_approval(
         approved_hash: str,
         revision: object,
         approval: dict[str, object],
+        chain: object = None,
     ) -> VerifiedApproval | None:
         assert approval["approver"] == "devon"
         return VerifiedApproval(

@@ -64,11 +64,12 @@ For a due credential whose package is `rotation-<credential_id>`:
    line reads `generated`.
 2. **Passes while it waits.** The pass writes nothing and reports `awaiting-approval`.
 3. **Devon approves the revision by name**, in the packages checkout, and publishes that commit.
-   This program never runs `approve`. The one exception is a lane credential's revision 1 on the
-   issue plan: the standing approval's policy may approve it, and the work carrier then checks it
-   before it registers the intake (see "Check a lane credential's revision 1 for the standing
-   approval"). That works only once intent-packages' schema-4 grant and the carrier's identity
-   exist; until then Devon approves that revision by name too. The approval
+   This program never runs `approve`. There are two exceptions, each approved by the standing
+   approval's policy and checked by the work carrier before it registers the intake: a lane
+   credential's revision 1 on the issue plan (see "Check a lane credential's revision 1 for the
+   standing approval"), and a reissue of an orchestrator or change-manager bearer (see "Check a
+   reissue for the standing approval"). Each works only once intent-packages' grant for it and
+   the carrier's identity exist; until then Devon approves that revision by name too. The approval
    does not move the hash fixture (`package_hash` drops `status`), so the commit holds the
    package and its lineage only. The checkout must be clean and level with `origin/main` again
    before the next pass, or the pass exits 2. Before approving, Devon does two reads of
@@ -382,6 +383,60 @@ identity. An unreadable token fails that pass (exit 1, `/fail`). A bare pass set
 reports each such record refused although the scheduled pass would carry it.
 The decomposition gate admits the policy approver only beside that record, `recorded_by` the agent
 id `ORCHESTRATOR_WORK_CARRIER_AGENT_ID` names; unset, it refuses every standing approval.
+
+## Check a reissue for the standing approval
+
+At revision 2 or later, `rotation-proposer standing-approval <credential_id>` checks ADR-0055
+amendment 39's reissue conditions (D-88 A) instead of amendment 22's. Revision 1 always runs
+amendment 22's conditions, so a reissue type's revision 1, a first hand-over, refuses `lane_type`
+and stays Devon's. Besides the row, the package and its lineage, the command reads the package at
+the last approval's `commit`, through the same mirror, when that commit is on intent-packages'
+`main`.
+
+| Condition | Refuses unless |
+| --- | --- |
+| `rotated_by_sds` | The registry row sets `rotated_by_sds = true`. |
+| `reissue_type` | The row's `class` maps to `orchestrator` or `change-manager` (`REISSUE_TYPES`), and the package lists that `provider`. |
+| `not_hand_rotated` | The id isn't in `HAND_ROTATED_IDS`, and no `coolify-env-hash` entry, in the row or the package, starts with one of `HAND_ROTATED_ENTRY_PREFIXES`. |
+| `machine_plan` | The plan the criteria state has no person's act and is the rotation plan `plan_for` derives. |
+| `reissue_lineage` | The lineage lists revisions 1 to N, the tip is unapproved and `ready_for_review`, revision 1 is approved by a name in `NAMED_APPROVERS`, and every other approval is on its revision's listed hash, by a named person or the policy. A revision never approved doesn't refuse. |
+| `proposer_revised` | The package at the last approval's commit hashes to its `approved_hash`, and the tip equals it apart from `revision`, `status` and `profile_fields.occurrence` and `destinations`. |
+| `no_new_copy` | The tip lists no destination absent from the approved revision except a `runtime-fetch` reader. |
+| `destinations_equal` | The package lists the row's destinations (`destinations.same`). |
+| `standard_authority` | The package's `authority` equals `generate.authority` for the rotation plan. |
+| `reach_unchanged` | The package's `reach` equals `generate.reach` for the type and the row's destinations. |
+
+infraops' `last_rotated` is a reported fact here, never a condition: a `standing_approval.fact`
+line (`fact: rotated_before`) gives it, the day revision 1 was approved, and whether the first is
+on or after the second. An infraops read that fails still exits 2.
+
+The carrier runs `carry_reissue` on a policy-approved revision above 1: every condition but
+`proposer_revised` and `no_new_copy`, which need the approved revision's content its depth-1 clone
+doesn't hold (amendment 39 reading 8), with `policy_approved_reissue` in place of
+`reissue_lineage`. That requires the tip's one approval to be the policy's, on the package's hash,
+and to equal the approval the emitter matched to a verified chain event field for field. Its
+observation's facts carry `form: "reissue"` (`"issue"` at revision 1), and the form is part of
+the observation's reference and key.
+
+A reissue also builds on revision 1's approval and on the last approval before the tip, which
+`intent-packages verify-approval` doesn't check. For a rotation package's later revision a policy
+approved, `orchestrator emit-intake-payload` matches each of the two to a verified `package.approved`
+event, by the tip's rules (approver, hash, revision, commit and event id) and in the tip's one
+chain read, and states them in the payload's `earlier_approvals`, each with `verified` and a
+`reason`. The emitter refuses nothing for them. The carrier refuses the reissue unless both
+entries are verified and equal the lineage's approvals field for field, and the refusal names
+which approval is unbacked; it runs after the carry form, so a reissue of the wrong shape is
+reported by its own condition. The observation's facts then name each earlier role's event id and
+commit (`earlier_approvals`). Every other payload, a policy-approved bump's among them, has no
+`earlier_approvals`, and the intake route ignores the key.
+
+The carrier matches the lineage's one approval on the payload's revision, wherever the lineage
+lists it, and refuses a lineage that records an approval of a later revision.
+
+The decomposition gate admits the policy approver on a revision above 1 only when the snapshot
+names exactly one of the two reissue providers, its `credential_id` isn't a hand-rotated id, and
+the carrier's record is present and states `form: "reissue"`. At revision 1 the record states
+`issue`, or no form (a row recorded before the carrier stated one).
 
 ## Authoring a standing rotation package by hand
 

@@ -367,9 +367,10 @@ def _rotation_policy_outcome(
     One a person approved, whose dependencies are all unit-on-unit and whose every unit is a
     rotation unit that only a rotation pattern recognises, through the claim's own gate
     (``human_authority_gate``), with no more attempts than its envelope budgets. An approval
-    policy's revision is refused, except a lane credential's revision 1 the standing approval
-    approved and the work carrier recorded checking (ADR-0055 amendment 22,
-    ``standing_approval_refusal``), which then meets every other condition here.
+    policy's revision is refused, except a lane credential's revision 1 or a reissue of an
+    orchestrator or change-manager bearer the standing approval approved and the work carrier
+    recorded checking (ADR-0055 amendments 22 and 39, ``standing_approval_refusal``), which then
+    meets every other condition here.
     """
     if revision.approved_by.startswith(_POLICY_APPROVER):
         if not is_standing_approver(revision.approved_by):

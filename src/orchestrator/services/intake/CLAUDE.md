@@ -22,15 +22,19 @@
   (`test_a_person_s_proposal_waits_for_a_person`, `test_a_worker_s_proposal_waits_for_a_person`).
 - A rotation's one click is its package revision approval (ADR-0055 amendment 16): change-manager
   approves its `work` record by policy. A named person approves every rotation revision except a
-  lane credential's revision 1 that the standing approval's policy approved and the work carrier
-  checked (amendment 22), which works only once intent-packages' schema-4 grant and the carrier's
-  identity exist.
+  lane credential's revision 1 (amendment 22) or an `orchestrator` or `change-manager` bearer's
+  reissue (amendment 39, D-88 A) that the standing approval's policy approved and the work carrier
+  checked, which works only once intent-packages' grant for each and the carrier's identity exist.
 - The rotation branch approves only when a person approved the revision
   (`test_a_revision_an_approval_policy_approved_waits_for_a_person`), or when the approver has the
   prefix `policy:non-software-operational@`, the revision is a `non-software-operational` revision
-  1 naming exactly one lane type's provider, and an observation `recorded_by`
+  1 naming exactly one lane type's provider, or a later revision naming exactly one of
+  `provider name="orchestrator"` and `provider name="change-manager"` whose snapshot
+  `credential_id` is a string outside `HAND_ROTATED_IDS` (held equal to the proposer's by test),
+  and an observation `recorded_by`
   `ORCHESTRATOR_WORK_CARRIER_AGENT_ID` (`work_carrier` / `standing_approval_check`) binds its
-  package id, revision and `content_hash` with nothing refused (`standing_approval.py`). Anything
+  package id, revision and `content_hash` with nothing refused and a fitting `form` (`reissue`
+  above revision 1; `issue` or none at revision 1) (`standing_approval.py`). Anything
   else, an unset setting or a failed read refuses `standing_approval_unrecorded`; the gate reads
   no registry (`tests/services/test_standing_approval_gate.py`).
 - The rotation branch needs every dependency unit-on-unit `completed`
