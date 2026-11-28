@@ -91,7 +91,8 @@ Also read:
 
 ## Tests and checks
 
-- `make check`, committed tree `d286a55a`, own database `orchestrator_test_hq_w_336`: exit 0,
+- `make check`, committed tree `f8eb7493` (and earlier at `d286a55a`), own database
+  `orchestrator_test_hq_w_336`: exit 0 both times,
   **15185 passed, 1 skipped**.
 - Security scan from the repository root (`security_scan.cli . --category security`): 0 BLOCK, 2
   WARN (`bws.secret-files-gitignored`, `bws.manifest-matches-usage`) and 1 INFO, all present before
