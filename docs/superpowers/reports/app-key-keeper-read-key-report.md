@@ -58,7 +58,9 @@ secrets makes the same decision.
 
 Reads I left unchanged, because none of them reads an App-key secret: `cli.py:585`
 (`pg-restore`, postgres rows only), `cli.py:172-197` and `249` (Healthchecks, ping-URL, notifier
-and inbox tokens, bearer), `emit-secret` (`cli.py:459`, an arbitrary secret by id with no row),
+and inbox tokens, bearer), `emit-secret` (`cli.py:459`, a secret by id with no row; its one documented use pipes the
+host's root token, `rotation-executor.md` "Put the root token in its file", and no repository
+file passes it an App-key keeper, by a grep of `emit-secret` and both keeper UUIDs),
 the other adapters' own reads, and `worker.py:626` (Coolify token).
 
 ### Comparisons (requirement 2)
@@ -102,17 +104,26 @@ The test helper `Rotating` builds its `Rotation` with the class, which `b1b4bd2c
 for. I ran the new tests (`-k padded`) twice with `src/` reset to `b1b4bd2c`
 (`git checkout b1b4bd2c -- src/`, restored from the committed head afterwards):
 
-1. Pure base: all 8 tests fail. Six fail with `TypeError: Rotation.__init__() takes 6 positional
-   arguments but 7 were given`. The probe test fails with `assert 2 == 0` (the probe exits 2,
-   "not readable"). `test_other_keepers_…` fails with `ValueError: a credential value is
-   non-empty and has no surrounding whitespace`.
-2. Base plus only the `credential_class` field on `Rotation`, with no read site changed: the six
-   App-key tests fail with `ValueError: a credential value is non-empty and has no surrounding
-   whitespace` (`values.py:48`). The probe test fails with `assert 2 == 0`. The two other-class
-   tests pass, as they should: they pin the existing refusal.
+1. Pure base: 7 failed, 1 passed. Five fail with `TypeError: Rotation.__init__() takes 6
+   positional arguments but 7 were given`: the four that use `Rotating`, and the lane-token guard,
+   which builds its `Rotation` with the class. `test_other_keepers_…` fails with `ValueError: a
+   credential value is non-empty and has no surrounding whitespace` on its App-key half. The probe
+   test fails with `assert 2 == 0` (the probe exits 2, "not readable"). The Anthropic probe guard
+   passes.
+2. Base plus only the `credential_class` field on `Rotation`, with no read site changed: 6
+   failed, 2 passed. Five fail with `ValueError: a credential value is non-empty and has no
+   surrounding whitespace` (`values.py:48`): the rotation, the earlier-attempt quarantine, the
+   inbox, the revoke guide, and the App-key half of `test_other_keepers_…`. The probe test fails
+   with `assert 2 == 0`. The lane-token and Anthropic guards pass, as they should: they pin the
+   existing refusal.
 
-So each App-key test fails on the defect itself, and each other-class test is a guard that holds
-on both trees.
+So each App-key test fails on the defect itself.
+
+The guards were shown red by mutation: with `read_as` changed to call `read_key` for every class
+(`if True:` in place of `if credential_class == KEY_CLASS:`), exactly the three guard tests fail
+and the five App-key tests pass. The failures are `DID NOT RAISE ValueError` twice (the PAT half
+of `test_other_keepers_…` and the lane-token guard) and the Anthropic probe exiting 0 instead of
+2. I restored `src/` from the committed head and cleared `__pycache__` before and after.
 
 ### Checks
 
