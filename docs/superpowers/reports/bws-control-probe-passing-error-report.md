@@ -48,7 +48,8 @@ All code is in `src/rotation_worker/adapters/bws_machine_token.py`. `contract.py
      jumps from 32 to 37. The handoff asked for one line and no other ADR change, so I added no
      body section and left the missing entries alone.
 6. **Runbook.** `docs/operations/rotation-executor.md` gains a "Read a failed BWS probe" section
-   (line 162), after the alerts table that defines `rotation-unit-failed`. It covers the sample
+   (line 162), after the alerts table that defines `rotation-unit-failed`. That row's action cell
+   points to the section. It covers the sample
    line, each field, each answer, the retry, and what to do for each pair of answers. For
    example, it says to wait out a double `status:429` before requeuing.
 
@@ -138,6 +139,12 @@ through `logs.JsonFormatter`, which renders every field as a string:
   approved. One finding was kept (Claude's role label), reproduced in
   `/tmp/vendor-review-_x9cd2wd/repro/test_role_label.py`, which failed with
   `['subject'] == ['control']`, and fixed. The repro now passes. No findings were dropped.
+- **Review scope.** `/code-review` and the vendor review covered the diff at `a1818a2e`, before
+  the control-set fix (`4b4dfded`). That fix is covered by its new test, the M7 mutant, the
+  vendor finding's repro, and the final `make check`.
+- **No test double bypasses the new path.** One test patches `_fresh`
+  (`test_lane_token_project_reach.py:186`), and only for `reach`, which still calls `_fresh`.
+  A `--durations` run of `tests/rotation_worker` found no test near the 5-second pause.
 - **Token-shape grep of the diff** (`git diff origin/main...HEAD`, added lines): zero UUIDs and
   zero `0.`-prefixed token shapes. The new tests build their values at run time with
   `known_bad()`.
@@ -175,6 +182,8 @@ through `logs.JsonFormatter`, which renders every field as a string:
     before.
 - **ADR placement.** The `Amended:` list jumps from 32 to 37 (see "What I built", item 5). HQ
   might want to backfill the entries for 33 to 36.
+- **The 429 guidance is inferred.** The runbook reads a double `status:429` as a rate limit
+  from HTTP's meaning of 429. I haven't seen the SDK report one, and the runbook says so.
 - **The retry's origin.** The retry absorbs a single passing error. A repeated indeterminate
   answer, such as a rate limit, still fails the unit as before. The log now names that answer.
   I didn't measure the cause of the 22:09 answer; the next failure's log line will show it.

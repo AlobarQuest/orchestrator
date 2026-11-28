@@ -124,7 +124,7 @@ raises it and resolved by the first pass that no longer finds its cause.
 | Key | Raised when | Clears when | Next step |
 | --- | --- | --- | --- |
 | `rotation-act:<dependency id>` | a human act is pending (see "When a rotation waits on you") | the act is recorded or no longer pending | do the act |
-| `rotation-unit-failed:<unit>` | the unit is `failed`, `blocked` or `revision_required`; the message names the credential, its staging key and its quarantine key, and only `failed` quotes a failure reason, since the ledger's `last_failure` is the newest move to `failed` | the unit leaves those states | `failed` or `blocked`: read its review page, then requeue it (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, retry on `/review` once they are spent, else cancel; supersede is refused once any unit was claimed (see "If a rotation stalls after host"). `revision_required`: requeue refuses it, a person decides on `/review` |
+| `rotation-unit-failed:<unit>` | the unit is `failed`, `blocked` or `revision_required`; the message names the credential, its staging key and its quarantine key, and only `failed` quotes a failure reason, since the ledger's `last_failure` is the newest move to `failed` | the unit leaves those states | `failed` or `blocked`: read its review page (for a BWS token's probe failure, also its `bws_login` lines, as "Read a failed BWS probe" says), then requeue it (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, retry on `/review` once they are spent, else cancel; supersede is refused once any unit was claimed (see "If a rotation stalls after host"). `revision_required`: requeue refuses it, a person decides on `/review` |
 | `rotation-unit-review:<unit>` | the unit has been `awaiting_review` over 48 hours | the review is decided | decide it on `/review` |
 | `rotation-unit-waiting:<unit>` | the unit has stayed unmoved past its threshold: 48 hours, or 192 hours for a reader wait | the unit is no longer waiting, whatever kind of pass finds it meanwhile | read the reason in the message, which is the wait's own |
 | `rotation-unit-stuck:<unit>` | a refusal couldn't be claimed to fail the unit, and 48 hours have passed | the unit is no longer waiting, as for `rotation-unit-waiting`; both can be open together | fix what the refusal names |
@@ -183,7 +183,8 @@ line, of the following shape (the formatter writes every field as a string):
   once more after a 5-second pause, and the second answer is the probe's. There is never a third.
 
 A unit fails on a probe only when both attempts were indeterminate, or a determinate answer was
-the wrong one. A `status:429` on both attempts is Bitwarden's rate limit: wait before requeuing,
+the wrong one. A `status:429` on both attempts reads as Bitwarden's rate limit (by HTTP's meaning of 429; not yet
+seen from the SDK): wait before requeuing,
 since the broker's lane reads share the host's address. A control answering `live` is a real
 failure, never retried: stop and find out why a random token logged in. Any other pair of
 indeterminate answers is a passing failure: requeue the unit as the alerts table says.
