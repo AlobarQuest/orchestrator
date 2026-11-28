@@ -6585,7 +6585,7 @@ its type is `Capabilities(machine_mint=False, machine_revoke=False)`,
     - The threat model's T1 note (D-84 condition 3).
     - A test for the reader that states what its green ping proves (item 4).
 
-    **Exit checks**, each before the row's `rotated_by_sds = true`:
+    **Exit checks**: check 1 passes before the row's `rotated_by_sds = true`, and check 2 (the first real rotation) runs after it, because `checks.py` `_check_handed_to` refuses a unit on a row not handed over (Amendment 34's order correction, #827):
     1. **The probe on the current key, without a mint**: a one-off run of items 2 and 3 by the
        executor against the keeper's current value. It records, as statuses and the header's
        value only, the 200, the control's 401 and the `anthropic-workspace-id` value that becomes

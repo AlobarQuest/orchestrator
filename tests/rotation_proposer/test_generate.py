@@ -7,6 +7,7 @@ validates it: a change to what is rendered must still be a package intent-packag
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -501,3 +502,17 @@ def test_a_generated_package_stating_no_derived_plan_is_refused() -> None:
         reissue_body(
             _lane_entry("bws-lane-token"), broken, "2026-12-01-requested", first_issue=True
         )
+
+
+def test_the_change_window_s_anthropic_key_is_handed_over_and_derives_its_rotation() -> None:
+    """ADR-0055 amendment 36: the real row is the SDS's to rotate, and the proposer renders its
+    package from it on the `anthropic-key` type's rotation plan, with no network call."""
+    registry = tomllib.loads((Path(__file__).parents[2] / ".cred-consumers.toml").read_text())
+    (row,) = [r for r in registry["credential"] if r["id"] == "anthropic-change-window-key"]
+    entry = RegistryEntry("AlobarQuest/orchestrator", "c" * 40, row)
+    assert entry.rotated_by_sds
+    adapter_name, plan = plan_for(entry, first_issue=False)
+    assert adapter_name == "anthropic-key"
+    assert not plan.issue
+    rendered = render(entry, "2026-11-28-requested", "2026-11-28T12:00:00Z", first_issue=False)
+    assert rendered["package_id"] == "rotation-anthropic-change-window-key"
