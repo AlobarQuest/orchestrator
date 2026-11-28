@@ -145,6 +145,9 @@ through `logs.JsonFormatter`, which renders every field as a string:
 - **No test double bypasses the new path.** One test patches `_fresh`
   (`test_lane_token_project_reach.py:186`), and only for `reach`, which still calls `_fresh`.
   A `--durations` run of `tests/rotation_worker` found no test near the 5-second pause.
+- **CI** at `965cd472`: `Quality` passed in 10m49s, with 15,172 passed and 14 skipped (more
+  skips than locally, from environment-guarded tests). `Rollout transcription currency` and
+  `Runner consumer compatibility` passed too.
 - **Token-shape grep of the diff** (`git diff origin/main...HEAD`, added lines): zero UUIDs and
   zero `0.`-prefixed token shapes. The new tests build their values at run time with
   `known_bad()`.
