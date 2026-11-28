@@ -7640,3 +7640,21 @@ producer guard (`test_external_content_observes_only.py`). The carrier's `_verif
 matches the lineage's one approval on the payload's revision, not its last-listed one, and refuses
 an approval of a later revision. The gate requires the record's `form` to fit the revision
 (`reissue` above revision 1; `issue`, or none for an earlier row, at revision 1).
+
+HQ's answer to W-346's question (2026-11-28, option B, in the same pull request) closes one more
+path. `intent-packages verify-approval` and the emitter matched only the tip's approval to the
+chain, so revision 1's named approval, and the last earlier approval `proposer_revised` compares
+against, were the lineage's word. A writer to intent-packages `main` with no append password (the
+rotation proposer lane's push, for example) could write both. For a later revision a policy
+approved, `orchestrator emit-intake-payload` now matches revision 1's approval and the last
+earlier approval to verified `package.approved` events, by the tip's rules and in its one chain
+read, and states each in the payload's `earlier_approvals`. The carrier refuses a reissue unless
+both are verified and equal the lineage's, naming which is unbacked. It adds no credential and no
+chain read.
+
+Two residuals stay, and neither is a new acceptance. First, the rotation root can append a
+`package.approved` event itself, through the broker's token and the append password (W-328's #826
+concern 1, D-84 (9) A, the D-83 standing answer item 1). It reopens in the security phase. Second,
+nothing ties the command's passing run to the tip's approval. The carrier can't run
+`proposer_revised` or `no_new_copy` (reading 8), so a tip the command never saw is checked only for
+its shape. This is D-34's position for a lane revision 1, which #207's Opus review also raised.

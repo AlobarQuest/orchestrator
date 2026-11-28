@@ -416,8 +416,17 @@ doesn't hold (amendment 39 reading 8), with `policy_approved_reissue` in place o
 `reissue_lineage`. That requires the tip's one approval to be the policy's, on the package's hash,
 and to equal the approval the emitter matched to a verified chain event field for field. Its
 observation's facts carry `form: "reissue"` (`"issue"` at revision 1), and the form is part of
-the observation's reference and key. The emitter verifies only the current revision's approval
-against the chain: revision 1's named approval is the lineage's word.
+the observation's reference and key.
+
+A reissue also builds on revision 1's approval and on the last approval before the tip, which
+`intent-packages verify-approval` doesn't check. For a later revision a policy approved,
+`orchestrator emit-intake-payload` matches each of the two to a verified `package.approved`
+event, by the tip's rules (approver, hash, revision, commit and event id) and in the tip's one
+chain read, and states them in the payload's `earlier_approvals`, each with `verified` and a
+`reason`. The emitter refuses nothing for them. The carrier refuses the reissue unless both
+entries are verified and equal the lineage's approvals field for field, and the refusal names
+which approval is unbacked. Every other payload has no `earlier_approvals`, and the intake route
+ignores the key.
 
 The carrier matches the lineage's one approval on the payload's revision, wherever the lineage
 lists it, and refuses a lineage that records an approval of a later revision.

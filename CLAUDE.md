@@ -380,7 +380,9 @@ Subsystem rules continue in nested files that load only when a session reads fil
   SDS-rotated `orchestrator` or `change-manager` bearer whose revision 1 a named person approved,
   never a hand-rotated identity (amendment 39, D-88 A). The carrier runs
   `rotation_proposer.standing_approval`'s carry form (`carry` at revision 1, `carry_reissue` above
-  it), then records `work_carrier` / `standing_approval_check` under its own identity
+  it; at a reissue it also requires the emitter's `earlier_approvals`, revision 1's and the last
+  earlier approval, both matched to verified chain events), then records `work_carrier` /
+  `standing_approval_check` under its own identity
   (`WORK_CARRIER_OBSERVATION_KEY_ID`, never `orchestrator-system`) before the intake; the
   decomposition gate admits the policy approver only beside that record, `recorded_by`
   `ORCHESTRATOR_WORK_CARRIER_AGENT_ID`. Either identity unset refuses every standing approval.

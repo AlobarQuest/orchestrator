@@ -19,11 +19,13 @@ of it. The observation states which form ran (`form`: `issue` or `reissue`).
 verified the factory-events chain and matched a `package.approved` event on the lineage approval's
 hash, revision, approver, commit and event id, and the payload carries what it matched. This
 module re-reads the package and lineage from the same checkout and refuses unless they are the ones
-the emitter verified: the package hashes to the payload's `content_hash`, and the lineage's last
-approval, its only one on the payload's revision, is the payload's verified approval field for
-field. An earlier approval (a reissue's revision 1) is the lineage's word: the emitter verifies
-only the current revision's event. So the carrier relies on the verified
-event, never on the lineage's own word, and there is no second chain reader to diverge.
+the emitter verified: the package hashes to the payload's `content_hash`, and the lineage's one
+approval on the payload's revision is the payload's verified approval field for field. A reissue
+builds on two earlier approvals too, revision 1's and the last before the tip, so the emitter
+matches each to a verified event in the same chain read and states it in `earlier_approvals`;
+the carrier refuses a reissue unless both are verified and are the lineage's approvals field for
+field. So the carrier relies on verified events, never on the lineage's own word, and there is no
+second chain reader to diverge.
 
 **NOTHING HERE WRITES.** `check` returns the observation body or the refusal; `cli.py` posts the
 observation, and only on a `--register` pass. Any read that fails and any exception is a refusal,
@@ -61,6 +63,18 @@ MAX_IDEMPOTENCY_KEY: Final = 200
 # Which carry form ran: amendment 22's on a lane credential's revision 1, amendment 39's above it.
 ISSUE_FORM: Final = "issue"
 REISSUE_FORM: Final = "reissue"
+# The emitter's `earlier_approvals` roles, each named as a refusal names it.
+EARLIER_ROLES: Final = {  # not-a-vocabulary: roles the emitter's payload states
+    "revision_1": "revision 1's approval",
+    "last_earlier": "the last approval before the tip",
+}
+EARLIER_FIELDS: Final = (  # not-a-vocabulary: approval fields the emitter's entry states
+    "revision",
+    "approver",
+    "approved_hash",
+    "commit",
+    "event_id",
+)
 VERIFIED_FIELDS: Final = (  # not-a-vocabulary: approval fields compared with the verified event
     "approver",
     "approved_hash",
@@ -145,6 +159,7 @@ def _check(
         conditions = carry(entry, package, lineage, package_hash=content_hash)
     else:
         form = REISSUE_FORM
+        _earlier_backed(payload, lineage, verified["revision"])
         conditions = carry_reissue(
             entry, package, lineage, package_hash=content_hash, verified=verified
         )
@@ -193,6 +208,57 @@ def _verified_approval(
             f"(differs in {', '.join(differing)})"
         )
     return approval
+
+
+def _earlier_backed(
+    payload: Mapping[str, Any], lineage: Mapping[str, Any], revision: object
+) -> None:
+    """A reissue builds on two earlier approvals, revision 1's and the last before the tip
+    (`proposer_revised` compares with it), so each must be the one the emitter matched to a
+    verified chain event, as the tip's is: the payload's `earlier_approvals` entry for its role
+    says verified and names the lineage's approval field for field (ADR-0055 amendment 39)."""
+    stated = payload.get("earlier_approvals")
+    if not isinstance(stated, list):
+        raise StandingRefusal("the payload states no earlier approvals the emitter verified")
+    approvals = lineage.get("approvals")
+    earlier = [
+        item
+        for item in (approvals if isinstance(approvals, list) else [])
+        if isinstance(item, Mapping) and _is_earlier(item.get("revision"), revision)
+    ]
+    numbers = [item["revision"] for item in earlier]
+    roles = {
+        "revision_1": [item for item in earlier if item["revision"] == 1],
+        "last_earlier": [item for item in earlier if numbers and item["revision"] == max(numbers)],
+    }
+    for role, approval in roles.items():
+        entries = [e for e in stated if isinstance(e, Mapping) and e.get("role") == role]
+        if len(entries) != 1 or len(approval) != 1:
+            raise StandingRefusal(f"{EARLIER_ROLES[role]} has no single verified chain event")
+        entry = entries[0]
+        if entry.get("verified") is not True:
+            raise StandingRefusal(
+                f"{EARLIER_ROLES[role]} isn't backed by a verified chain event "
+                f"({entry.get('reason')})"
+            )
+        differing = sorted(
+            name for name in EARLIER_FIELDS if approval[0].get(name) != entry.get(name)
+        )
+        if differing:
+            raise StandingRefusal(
+                f"{EARLIER_ROLES[role]} isn't the one the emitter verified in the chain "
+                f"(differs in {', '.join(differing)})"
+            )
+
+
+def _is_earlier(number: object, revision: object) -> bool:
+    """Whether an approval's revision is an integer before the payload's."""
+    return (
+        isinstance(number, int)
+        and not isinstance(number, bool)
+        and isinstance(revision, int)
+        and number < revision
+    )
 
 
 def _is_later(number: object, revision: object) -> bool:
