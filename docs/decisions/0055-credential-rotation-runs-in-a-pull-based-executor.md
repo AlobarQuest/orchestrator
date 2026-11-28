@@ -61,7 +61,9 @@
     handed to the executor, the scope lines, the proving order, the code tasks, and ten open items
     for Devon; then Devon's D-86 answers to items 1 to 9, which narrow the pass to the eight
     machine-rotated orchestrator and change-manager bearers, send everything else to Phase 2, and
-    leave two open items, D86-A and D86-B).
+    leave two open items, D86-A and D86-B; then Devon's D-87 answers to those two, which keep the
+    ping URLs out and allow `rotate_requested` dates on the in-pass rows and the execute bearer's
+    flag after HQ's D-84 condition 2 check).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -7183,8 +7185,8 @@ The 11 credentials with no registry row (amendment 38's second table) are out: e
 which D-86 (3) defers with item 10. The executor's own credentials among them stay at their normal
 age (D-86 (9) B).
 
-**Count.** 8 rows in, 1 waiting on Open item D86-B, and 56 out: 65 rows. Of the 56, 18 are ping
-URLs, which Open item D86-A may move.
+**Count.** 8 rows in, 1 waiting on HQ's D-84 condition 2 check (D-87 (B)), and 56 out: 65 rows.
+Of the 56, 18 are ping URLs, which stay out (D-87 (A)).
 
 #### The pass's proof
 
@@ -7195,12 +7197,27 @@ inventory names wait for Phase 2 or for their own amendments.
 
 #### D-86's open items
 
-- **D86-A. Open, for Devon: Healthchecks ping URLs.** D-86's clarification names ping URLs as P1,
+Devon answered both as HQ decision D-87. HQ's record, verbatim from sds-hq `state/decisions.md`:
+
+> A, A. (Devon, interactive session, 2026-11-28, after the session explained that the ping URLs
+> were mislabeled P1 in its own inventory and that "no registry change" was the session's wording
+> for D-86 item 3, meaning which repository owns rows.) (A) Healthchecks ping URLs are out of the
+> pass. (B) Both in-registry edits are allowed: rotate_requested dates on the in-pass rows, and
+> rotated_by_sds = true on change-manager-execute-bearer after HQ checks its scope writes nothing
+> the executor trusts (D-84 condition 2).
+
+The edits land in three pull requests. The four orchestrator rows' `rotate_requested` dates land
+in the pull request that records D-87. change-manager's four handed-over rows get theirs in a
+change-manager pull request. The execute bearer's flag and date wait for HQ's D-84 condition 2
+check and land together in a later change-manager pull request: a date on a row not handed over
+would make the proposer report it on every pass.
+
+- **D86-A. Answered by D-87: (A), out. Healthchecks ping URLs.** D-86's clarification names ping URLs as P1,
   but an issued ping URL has no rotation plan (`plans.py` lines 61-63, D-77), and amendment 38's
   scope puts them out. (A) Out, as amendment 38 says. (B) In, by recreating each check, which is a
   person's Healthchecks act and so P2 by D-86's own rule. HQ recommends A: B needs a person's act
   for every row, which D-86 sends to Phase 2.
-- **D86-B. Open, for Devon: edits inside a row's own registry.** D-86 (3) says "no registry change
+- **D86-B. Answered by D-87: (A), both edits allowed. Edits inside a row's own registry.** D-86 (3) says "no registry change
   in this pass". Two edits would stay inside a row's existing registry, which HQ's reading (iv)
   allows: `change-manager-execute-bearer`'s `rotated_by_sds = true`, and a `rotate_requested` date
   on each in-pass row. infraops reports a row due by an open exposure, by its class's maximum age,
