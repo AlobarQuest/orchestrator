@@ -1178,10 +1178,12 @@ revision. What a green ping proves differs per row:
   proving the lander can use the token is carried (D-82 item 15 A): its next re-point or restore is
   its own proof.
 
-No row is `rotated_by_sds` yet. The change window's keeper is in `Rotation / Keepers`, which the
-executor writes, and its row is handed over once the dev measurement has run and the canary
-exists. The other two keepers are in `SDS Operator` and `Ops / Platform`, which the executor
-can't write, and wait on Devon moving each into `Rotation / Keepers` (D-82 item 11 A).
+No row is `rotated_by_sds` yet. All three keepers are in `Rotation / Keepers`, which the executor
+writes. The change window's row is handed over once the dev measurement has run and the canary
+exists. Devon moved the other two keepers there at HQ gate G-116 on 2026-11-28 (D-82 item 11 A),
+and the lane secrets broker reads each by a direct grant. The root's read of those two is
+unproven, because no probe class covers a Coolify token, and that proof comes before either row is
+handed over.
 
 ## GitHub App private keys
 
@@ -1254,10 +1256,10 @@ new key:
 - The rotation proposer pings every pass but reads the push App's key only on `--submit`, so a
   bare pass run by hand pings success without reading it. Its scheduled pass submits.
 
-Neither row is `rotated_by_sds` yet. Both keepers are in `SDS / Lane Apps`, which the executor
-can't write; Devon moves them into `Rotation / Keepers` after Phase C's revoke sitting (D-84 item
-8 A). Each row is handed over after that move and amendment 35's exit checks 2 (the working proof
-on the current keys, by "Probe a kept key once") and 3 (one real rotation).
+Neither row is `rotated_by_sds` yet. Devon moved both keepers into `Rotation / Keepers` at HQ gate
+G-116 on 2026-11-28 (D-84 item 8 A), and the lane secrets broker reads each by a direct grant.
+Each row is handed over after amendment 35's exit checks 2 (the working proof on the current keys,
+by "Probe a kept key once") and 3 (one real rotation).
 
 ## Anthropic API keys
 
@@ -1413,8 +1415,8 @@ The token lives only in memory. The line has this shape:
 
 A refused proof reads `"status": "refused"` and `"passed": false`, with a `refusal` naming the request, its status or
 the ids, and exits 1. Exit check 2 reads `status` per row. Both keepers are in
-`SDS / Lane Apps` until Devon moves them (D-84 item 8 A), which the root can't read, so until then
-the probe exits 2 with "not readable by this identity". That is the answer to record, not a
+`Rotation / Keepers` (HQ gate G-116, D-84 item 8 A), which the root reads by its project grant. If
+the probe exits 2 with "not readable by this identity", that is the answer to record, not a
 failure to work around.
 
 ## BWS machine tokens: the Keychain instance

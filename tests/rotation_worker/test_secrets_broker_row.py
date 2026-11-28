@@ -32,12 +32,8 @@ TOKEN = "secrets-broker-bws-token"
 KEEPER = "1d78f917-6065-4d40-ad1c-b508013d8c9a"
 SERVICE = "wogvks6obmvv9fdotlgnw7r3"
 VARIABLE = "SECRETS_BROKER_BWS_ACCESS_TOKEN"
-PROJECTS = frozenset(
-    {
-        "b09acc9d-87af-4830-9361-b49700d2bc8a",  # SDS Operator
-        "b3df5419-c5be-4abf-a157-b4fd01259df8",  # SDS / Lane Apps
-    }
-)
+# HQ gate G-116 emptied `SDS / Lane Apps` and removed the account's project grant on it.
+PROJECTS = frozenset({"b09acc9d-87af-4830-9361-b49700d2bc8a"})  # SDS Operator
 SECRETS = frozenset(
     {
         "314f276d-55ca-4ddc-a24d-b4a3013508cd",  # change-manager/M2M_TOKEN_READ
@@ -76,6 +72,10 @@ SECRETS = frozenset(
         "2ce0dbc7-eeac-4bf0-8204-b50200c97516",  # factory-events-append-password
         "0bf066e9-28c1-4aa7-8c3d-b50300d492a6",  # prod-coolify-read-token
         "726a18ba-7a38-4ecc-aa03-b49a015fd302",  # APP_BRAIN_READ_KEY
+        # HQ gate G-116: direct grants given before the keepers moved into Rotation / Keepers.
+        "f9f59233-0794-4ea8-9806-b4f3011e6147",  # COOLIFY_TOKEN_SDS_ESTATE_LANDER
+        "b8f547b9-67d7-4417-adc0-b4fd0126b0f0",  # lanes-push-app-private-key
+        "314a966c-5654-4e3c-8358-b4fd01268775",  # lanes-read-app-private-key
     }
 )
 

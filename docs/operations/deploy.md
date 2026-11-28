@@ -1065,11 +1065,12 @@ its own change or act. It moves outside the 02:00 to 06:00 New York landing wind
 3. The ping URL's registry row in this repository. In the same work, a `runtime-fetch` reader for
    `scripts/run-estate-landing.sh` on the read App key's row.
 4. The broker account's reads of the lane's five secrets and its ping-URL secret
-   (`docs/operations/secrets-broker.md`, "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`),
-   the alert sender (`b415d03b-…`) and the Coolify token (`f9f59233-…`) are in `SDS Operator`, the
-   read App key (`314a966c-…`) is in `SDS / Lane Apps`, and the change-manager READ bearer
-   (`314f276d-…`) is in `Rotation / Keepers`, all as for inert landing's entry. The ping-URL
-   secret is in `Rotation / Keepers` too: check that the broker's account reads it at this step.
+   (`docs/operations/secrets-broker.md`, "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`)
+   and the alert sender (`b415d03b-…`) are in `SDS Operator`, and the Coolify token
+   (`f9f59233-…`), the read App key (`314a966c-…`) and the change-manager READ bearer
+   (`314f276d-…`) are in `Rotation / Keepers`, each read by a single-secret grant to the broker's
+   account (the first two moved there at HQ gate G-116). The ping-URL secret is in
+   `Rotation / Keepers` too: check that the broker's account reads it at this step.
 5. The ping URL's row made due and the executor's write (ADR-0055 amendment 23).
 6. A served release whose compose names the ping-URL secret's id, with `estate-landing` removed
    from `test_deploy_lanes.py`'s `placeholders`.
@@ -1194,9 +1195,9 @@ its own change or act.
    `scripts/run-bump-driver.sh` on the read App key's row.
 5. The broker account's reads of the lane's seven secrets and its ping-URL secret
    (`docs/operations/secrets-broker.md`, "Add a lane", step 4). The SYSTEM bearer (`221a48d5-…`)
-   and the alert sender (`b415d03b-…`) are in `SDS Operator`, the read App key (`314a966c-…`) is in
-   `SDS / Lane Apps`, and the change-manager READ bearer (`314f276d-…`) is in `Rotation / Keepers`,
-   all as for inert landing's entry. The two Brain keys (`750f737f-…`, `da8134b0-…`,
+   and the alert sender (`b415d03b-…`) are in `SDS Operator`, and the read App key (`314a966c-…`,
+   moved there at HQ gate G-116) and the change-manager READ bearer (`314f276d-…`) are in
+   `Rotation / Keepers`, each read by a single-secret grant to the broker's account. The two Brain keys (`750f737f-…`, `da8134b0-…`,
    `Brains - Contributor`), the factory-events read password (`2f708d08-…`, `Factory Events`) and
    the ping-URL secret (`430691e2-…`, `Rotation / Keepers`) are outside the projects the broker's
    account reads, so each takes a single-secret grant to the broker's account. Devon gave the four
@@ -1446,7 +1447,7 @@ two lane Apps, with `sds-github-mint` (`src/estate_clients/github_app_mint.py`).
 script, so the lane image carries it at `$REPO_ROOT/.venv/bin/sds-github-mint` with no
 `lanes/Dockerfile` change.
 
-| App | App id | Installation | Key (BWS `SDS / Lane Apps`) | Registry row |
+| App | App id | Installation | Key (BWS `Rotation / Keepers`) | Registry row |
 |---|---|---|---|---|
 | `alobar-sds-lanes-read` | `5684758` | `180257215` | `314a966c-5654-4e3c-8358-b4fd01268775` | `lanes-read-app-private-key` |
 | `alobar-sds-lanes` | `5684778` | `180257673` | `b8f547b9-67d7-4417-adc0-b4fd0126b0f0` | `lanes-push-app-private-key` |
