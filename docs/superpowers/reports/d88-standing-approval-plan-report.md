@@ -4,8 +4,9 @@ Outcome: done
 
 ## Summary
 
-- **PR:** AlobarQuest/orchestrator #838, branch `hq/d88-standing-approval-plan`. The amendment
-  commit is `c6da2ef5`. The PR head moves to the commit that adds this report.
+- **PR:** AlobarQuest/orchestrator #838, branch `hq/d88-standing-approval-plan`. Commits:
+  `c6da2ef5` (the amendment), `05c72677` (this report), then a fix commit after the advisor's
+  review. Read the head with `gh pr view 838 --json headRefOid`.
 - **Base:** `origin/main` `25244d142f30eaeb91ab82fe34343d3b887d49ef`.
 - **Change:** ADR-0055 amendment 39, Proposed, plus its line in the header index. Docs only.
 - **Open item:** D88-A, in `d88-standing-approval-plan-question.md`. It doesn't block the PR.
@@ -95,8 +96,16 @@ All line numbers are at orchestrator `25244d14`, intent-packages `e82a246a`, and
   - The revision-1 hash check: lines 426-428.
   - `check_first_issue`: lines 433-444.
   - `_approves`, which matches revision 1 only: line 495.
+  - `check_lineage_read_back`, which expects exactly one approver: lines 710-716.
+  - The outcome reports, which state revision 1: lines 915 and 928.
   - The D-34 strings: lines 741, 779, and 889.
   - `lane_of`: lines 862-868.
+- **sds-hq `prompts/cycle.md`:** a cycle runs `standing-approve` only "For a lane credential's
+  revision 1" (line 67).
+- **What doesn't refuse:** the orchestrator's intake-payload emitter accepts any
+  `policy:<profile>@v<N>` approver and matches by revision and hash
+  (`src/orchestrator/package_sources.py` lines 28, 201-216, and 446-458). `rotation_worker/checks.py`
+  and `src/rotation_decomposer/` don't read the approver.
 
 ## The tasks
 
@@ -106,8 +115,12 @@ All line numbers are at orchestrator `25244d14`, intent-packages `e82a246a`, and
   `services/intake/standing_approval.py`, their tests, and three CLAUDE.md invariants.
 - **R3. intent-packages, the reissue grant:** schema 5, `approval-policy.toml`, and
   `approval_policy.py`.
-- **R4. sds-hq, `standing-approve` for reissues:** this task changes HQ's own runtime (sds-hq
-  `src/`), so an interactive session merges it, not a cycle.
+- **R4. sds-hq, `standing-approve` for reissues:** `standing_approve.py`, `prompts/cycle.md`
+  line 67, and tests. This task changes HQ's own runtime (sds-hq `src/` and its cycle prompt), so
+  an interactive session merges it, not a cycle.
+
+One lineage rule holds in R1, R3, and R4: revision 1 is approved by a person, and the tip is
+compared with the last approved revision. A revision that was never approved doesn't refuse.
 
 The amendment's exit checks 1 to 5 name the proofs, ending with an end-to-end policy-approved
 decomposition.
@@ -118,6 +131,9 @@ decomposition.
   migrated database. Nothing in `make check` reads the ADR: no test under `tests/` or `scripts/`
   names the file. `layers.toml` line 732 (`docs/superpowers/**`) covers the two new report files.
   CI's `Quality` job runs the full suite on the PR.
+- **`code-standards risk --repo .`:** verdict `normal`, so no vendor review is required.
+- **`/code-review`:** not run. The diff is a plan in prose with no code. The advisor reviewed it
+  twice instead.
 - **The measurements:** scratch scripts in `/tmp/w345-scripts`, outside the repository, run with
   this worktree's `.venv` and the orchestrator's own modules. The results are in the tables.
 
@@ -140,6 +156,9 @@ decomposition.
   compare content. The command compares content before the policy approval, which mirrors how the
   D-34 carry form skips infraops. Deepening the clone was the alternative, and the amendment
   doesn't take it.
+- **The advisor's review:** it found three fixes, now applied. The carrier's form had kept
+  `no_new_copy`, which its depth-1 clone can't evaluate. The lineage rule differed between tasks.
+  And the cycle prompt was missing from R4.
 - **`rotated_before`:** this condition refuses when infraops recorded no date. That fails closed,
   and exit check 2 says the row then goes to Devon by name.
 
@@ -151,6 +170,10 @@ decomposition.
 - **Approver string:** the policy approver string is the same for D-34 and D-88. The pull request,
   the chain event, and the observation's `form` field tell them apart, but `lineage.yaml` alone
   doesn't.
+
+- **Stale PR text:** the PR body and the first commit message say "seven sites". The amendment
+  now says "ten checks in six files" plus the cycle prompt line. The handoff allows no GitHub call
+  beyond `git push` and `gh pr create`, so I didn't edit the PR body.
 
 ## Standards followed
 
