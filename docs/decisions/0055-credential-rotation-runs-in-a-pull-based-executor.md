@@ -7634,4 +7634,6 @@ as in the carrier's `_verified_approval`. `machine_plan` drops a separate "not t
 check, because the plan it must equal is `plan_for`'s rotation plan, which is never an issue. The
 carrier puts the form in the observation's `source_reference` and idempotency key as well as its
 facts, so a row recorded before facts named the form is never replayed into
-`observation_conflict`.
+`observation_conflict`. `REISSUE_TYPES` is sorted, `("change-manager", "orchestrator")`: a tuple
+headed by `"orchestrator"` reads as an invocation of the orchestrator's console script to the
+producer guard (`test_external_content_observes_only.py`).

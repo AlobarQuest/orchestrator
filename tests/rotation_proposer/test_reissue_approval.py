@@ -253,7 +253,7 @@ def test_a_package_naming_no_reissue_provider_refuses() -> None:
 
 
 def test_the_reissue_types_are_the_two_sds_services() -> None:
-    assert REISSUE_TYPES == ("orchestrator", "change-manager")
+    assert REISSUE_TYPES == ("change-manager", "orchestrator")
 
 
 # ---- decision 4's identities, refused by name --------------------------------------------------
@@ -442,6 +442,26 @@ def test_the_approved_revision_must_hash_to_its_approval() -> None:
     conditions = reissue(entry, tip, lineage, approved=edited)
     assert PROPOSER_REVISED in _refused(conditions)
     assert "doesn't hash to its approved_hash" in _reason(conditions, PROPOSER_REVISED)
+
+
+def test_the_package_at_the_approval_s_commit_must_be_the_approved_revision() -> None:
+    """A package that hashes to the approval but is another revision isn't the approved one."""
+    entry, approved, tip, lineage = _covered()
+    other = {**approved, "revision": 5}
+    lineage["approvals"][0]["approved_hash"] = package_hash(other)
+    lineage["revisions"][0]["hash"] = package_hash(other)
+    conditions = reissue(entry, tip, lineage, approved=other)
+    assert _refused(conditions) == [PROPOSER_REVISED]
+    assert "isn't the approved revision" in _reason(conditions, PROPOSER_REVISED)
+
+
+def test_the_reissue_form_refuses_a_revision_1() -> None:
+    """The command never sends revision 1 here; the form refuses it on its own as well."""
+    entry, approved, tip, lineage = _covered()
+    tip["revision"] = 1
+    conditions = reissue(entry, tip, lineage, approved=approved)
+    assert REISSUE_LINEAGE in _refused(conditions)
+    assert "the package's revision isn't 2 or later" in _reason(conditions, REISSUE_LINEAGE)
 
 
 def test_an_approval_commit_off_main_refuses() -> None:

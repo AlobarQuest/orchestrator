@@ -676,6 +676,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         "estate_clients.confined": frozenset(
             {"ConfinedClient", "TransportFailure", "base_url_problem", "error_code"}
         ),
+        "rotation_worker.canonical": frozenset({"package_hash"}),
         "rotation_worker.contract": frozenset(
             {"ContractError", "HELD_KIND", "HumanAct", "Plan", "StepKind", "UnitPlan"}
         ),

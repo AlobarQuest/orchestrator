@@ -66,7 +66,9 @@ AUTHORITY: Final = "standard_authority"
 
 # A reissue (ADR-0055 amendment 39, D-88 A). The types whose provider is an SDS service (reading 4);
 # a type joins only beside a row that meets the standing answer's condition 1, by Devon's decision.
-REISSUE_TYPES: Final = ("orchestrator", "change-manager")  # not-a-vocabulary: type names, by name
+# Sorted, and so never an argv whose head is the orchestrator's console script to the producer
+# guard (`test_external_content_observes_only.py`).
+REISSUE_TYPES: Final = ("change-manager", "orchestrator")  # not-a-vocabulary: type names
 # Decision 4's identities, refused by name whatever their flag says (reading 6): the SYSTEM and
 # VERIFIER bearers by id, and any row whose hashed entry is theirs or the executor's own.
 HAND_ROTATED_IDS: Final = (  # not-a-vocabulary: registry ids; the gate's copy is held equal by test

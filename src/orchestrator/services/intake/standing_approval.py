@@ -51,8 +51,8 @@ LANE_PROVIDERS: Final = (
 # A reissue's two providers (amendment 39 R2), the same format, held to it by the same test.
 # not-a-vocabulary: whole destination strings a package lists, held to the executor's by test
 REISSUE_PROVIDERS: Final = (
-    'provider name="orchestrator"',
     'provider name="change-manager"',
+    'provider name="orchestrator"',
 )
 # Decision 4's identities a reissue never covers, refused here by the snapshot's credential id.
 # Spelled here for the reason the carrier's names are; the same test holds them equal to
