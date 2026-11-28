@@ -64,6 +64,11 @@
     leave two open items, D86-A and D86-B; then Devon's D-87 answers to those two, which keep the
     ping URLs out and allow `rotate_requested` dates on the in-pass rows and the execute bearer's
     flag after HQ's D-84 condition 2 check).
+  - 2026-11-28, amendment 39, proposed (D-88 A: a reissue of an SDS-used credential the executor
+    rotates with no person's act is approved by a standing answer; the readings of "proposer-
+    generated", "first hand-over" and "widens reach"; the seven sites that refuse a reissue
+    today; four tasks across orchestrator, intent-packages and sds-hq; one open item for Devon,
+    D88-A, on the factory-runner bearer's revision 1).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -7261,3 +7266,330 @@ This amendment edits none of them.
 | Amendment 24, "A rotation class for each secret (FE-4)" (lines 3538-3543) | Stands; T4 is the amendment it asks for. |
 | Amendment 32 item 1, "The missing adapters" (lines 4657-4670) | The two `alert-hub-sender-token` rows it set aside land here (T3). |
 | Amendments 33, 35 and 36 | Stand; their rows join the pass after G-115 and G-116. |
+
+## Amendment 39 — D-88 A: a reissue of an SDS-used, machine-rotated credential is approved by a standing answer, and how each check learns to say so (2026-11-28)
+
+**Status: Proposed (2026-11-28).** Accepted on merge, as amendment 31 is, except the item marked
+"Open, for Devon", which stays open until he answers. **Relates to:** decision 4 (the hand-rotated
+set), amendment 16 (one click per rotation), amendment 20 (a generated package re-renders only
+when its plan changes), amendment 22 (the standing approval of a lane credential's revision 1),
+and amendment 38 (the D-48 B pass and its in-pass table).
+
+This amendment plans code. It changes nothing that runs: no check, policy, grant, registry row,
+flag, type, adapter or package. Each task in "The plan" is its own pull request.
+
+### Context
+
+#### The source
+
+Devon answered HQ decision D-88 in an interactive session on 2026-11-28. The standing answer, verbatim
+from sds-hq `standing-answers.md` at `origin/main` `5c916e36`, section "2026-11-28: a reissue of an
+SDS-used credential the executor rotates end to end is approved by this answer (D-88 A)":
+
+> Devon: "I agree with A, scoped to every SDS-used P1 credential." The session had recommended
+> widening D-88 A from the pass's own table to every such credential, because his stated goal is fast,
+> routine rotation after a leak.
+>
+> Rule: a proposer-generated rotation package for a credential is approved by this standing answer
+> when all of the following hold:
+>
+> 1. An SDS component reads the credential at runtime, and its registry row has
+>    `rotated_by_sds = true`.
+> 2. Its type's adapter rotates it end to end with no person's act: no mint, paste, or revoke by a
+>    person (path P1 in the D-86 discussion).
+> 3. `compare-destinations` reports equal, and the package's authority is the type's standard set.
+>
+> A cycle records each approval in an intent-packages PR that cites this entry, as under D-34. The
+> executor still checks every package's hash and destinations before it acts.
+>
+> The rule covers nothing else. These still need Devon by name: a package for a credential whose
+> rotation needs a person's act (paths P2 and P3, such as the Anthropic key, whose mint and delete
+> are his); the orchestrator's SYSTEM and VERIFIER bearers and the executor's own credentials (ADR-0055
+> decision 4); a credential's first hand-over to the executor; a package that widens a credential's
+> reach; and any new type or adapter.
+
+The question D-88 asked, from sds-hq `state/decisions.md` at the same commit, named the packages
+option A was to approve: "the rotation proposer drafted four packages for the orchestrator bearers
+(operator rev 2, observer rev 3, drift-reporter rev 3, factory-runner rev 1; intent-packages
+c5bcf94a), and four change-manager bearers follow once their dates merge. [...] (A) Standing: a
+package for a row in ADR-0055 amendment 38's in-pass table is approved by your D-86/D-87 answers
+when compare-destinations reports equal and its authority is the type's standard set".
+
+#### What was read
+
+Every line number in this amendment is at these commits, read by `git show` or a read-only clone:
+orchestrator `25244d14`, intent-packages `e82a246a`, sds-hq `5c916e36`, change-manager `f7ab4a91`.
+The eight packages were measured in-process with the orchestrator's own modules
+(`rotation_worker.registry.load_package`, `canonical.package_hash`, `plans.candidates` and
+`select_plan`, `destinations.same`, and `rotation_proposer.generate.authority`), against the
+orchestrator and change-manager registries at those commits. Nothing called BWS, Coolify,
+Healthchecks, infraops or the GitHub API, so infraops' `last_rotated` for each row wasn't read
+(unverified here).
+
+#### What refuses a reissue today
+
+Seven sites refuse a revision 2 or later, or a type that isn't a lane type. A plan that changes
+fewer leaves an approval recorded and the unit still waiting for a person.
+
+| Repository and site | What refuses | Lines |
+|---|---|---|
+| orchestrator `rotation_proposer/standing_approval.py`, `proposer_generated` | `created_by` isn't `rotation-proposer`, and a re-render from the row must equal the stored package | 80-81, 87-94 |
+| the same, `unapproved_revision_1` (the command's form) | revision isn't 1; the lineage lists more than one revision; the lineage records an approval | 101-102, 106-109, 110-111 |
+| the same, `issue_plan` | infraops records the credential rotated (`last_rotated` not null), or either plan isn't the issue plan | 160-162, 178-183 |
+| the same, `lane_type` and `lane_destinations` | the class isn't in `LANE_KINDS` (`bws-lane-token`, `healthchecks-ping-url`); the destination kinds aren't the lane type's exact counts | 38-41, 190-191, 211-215 |
+| the same, `carry` (the carrier's form) | `policy_approved_revision_1`: revision isn't 1, the lineage doesn't list one revision, or doesn't record exactly one approval; `stated_issue_plan` | 125-126, 129-133, 135-137, 263-270 |
+| orchestrator `work_carrier/standing.py`, `_verified_approval` | the lineage doesn't record exactly one approval | 143-145 |
+| orchestrator `services/intake/standing_approval.py`, `standing_approval_refusal` (the decomposition gate, called at `decomposition.py` line 377) | `not_revision_1`; `not_a_lane_type` (exactly one of the two lane providers) | 45-48, 68-71, 94-99 |
+| intent-packages `approval_policy.py`, `_rotation_refusals` | `not_revision_one`; `lineage_has_approval` for any approval; `created_by` isn't the grant's; the provider isn't a granted type; exactly one destination of each of the type's kinds | 694-710, 714-719, 722-724, 739-758, 761-773 |
+| intent-packages `approval-policy.toml`, the rotation grant | `types` holds only `bws-lane-token` and `healthchecks-ping-url`; the rationale says "Revision 2 and later, and every other type, stay Devon's" | 151, 164-182 |
+| sds-hq `src/sds_hq/standing_approve.py` | `not_revision_1`; `_HASH_REV_1` expects one revision-1 hash; `check_first_issue` refuses any earlier approval in the lineage as `reissue_history`; `_approves` matches only revision 1; the PR title, body and `why` cite D-34 A; `lane_of` names only `-bws-token` and `-ping-url` ids | 77-80, 87-88, 416-417, 426-428, 433-444, 495, 741, 779, 862-868, 889 |
+
+`approval-policy.toml` grants the `non-software-operational` profile one shape only (lines
+124-182), so it refuses both the orchestrator and change-manager types and every revision but 1.
+
+#### The eight packages
+
+Each is in intent-packages at `e82a246a`, `ready_for_review`, with a rotation plan (not the issue
+plan), no person's act in the plan its criteria state, authority equal to `generate.authority` for
+its type, destinations equal to its registry row's (what `compare-destinations` compares), reach
+`["external_system", "live_estate"]`, and no `human_review` criterion. The standard set for both
+types is the same: allowed `credential_create`, `credential_revoke`, `secret_read`,
+`secret_write`, `infra_mutation`; prohibited `repository_write`, `outward_publish`, `email_send`;
+three attempts.
+
+| Package | Rev | `created_by` | Flag set (`git blame`) | Last person approval | What changed since that approval | Covered by D-88 A |
+|---|---|---|---|---|---|---|
+| `rotation-orchestrator-operator-bearer` | 2 | `factory-create` | 2026-10-15 (`41328950`) | rev 1, 2026-10-15 | `revision`, `occurrence` | Yes |
+| `rotation-orchestrator-observer-bearer` | 3 | `factory-create` | 2026-10-18 (`354c1a97`) | rev 2, 2026-10-28 | `revision`, `occurrence`, five `runtime-fetch` lines (three added, two removed) | Yes |
+| `rotation-orchestrator-drift-reporter-bearer` | 3 | `factory-create` | 2026-10-21 (`9e2f8ac8`) | rev 2, 2026-10-21 | `revision`, `occurrence` | Yes |
+| `rotation-orchestrator-factory-runner-bearer` | 1 | `rotation-proposer` | 2026-11-01 (`c2f6ffbf`, #579) | none | the package was first written 2026-11-28 (`8bfaa16`) | No under this amendment's reading: a first hand-over (Open item D88-A) |
+| `rotation-change-manager-full-bearer` | 3 | `factory-create` | 2026-10-26 (`945bea07`) | rev 2, 2026-10-26 | `revision`, `occurrence` | Yes |
+| `rotation-change-manager-read-bearer` | 4 | `factory-create` | 2026-10-20 (`2459c393`) | rev 3, 2026-10-28 | `revision`, `occurrence`, one `runtime-fetch` line added | Yes |
+| `rotation-change-manager-propose-bearer` | 2 | `factory-create` | 2026-10-20 (`2459c393`) | rev 1, 2026-10-20 | `revision`, `occurrence` | Yes |
+| `rotation-change-manager-observe-bearer` | 2 | `factory-create` | 2026-10-19 (`c9c7e5d0`) | rev 1, 2026-10-19 | `revision`, `occurrence` | Yes |
+
+The last approval's package was read at the approval's own `commit` and hashed: each equals the
+lineage's `approved_hash`. "What changed" compares that package with the tip, field by field.
+
+`change-manager-execute-bearer` has no `rotated_by_sds` key at change-manager `f7ab4a91` (line
+243), and HQ is handing it over in a separate pull request. Its coming revision 1 is a first
+hand-over, so it isn't covered.
+
+Prior executor rotations: an approval isn't proof that a rotation completed (amendment 38). The
+registry records the observer bearer rotated by the executor on 2026-10-20 and 2026-10-21 (units
+`a7649b61` and `a5465f19`, orchestrator `.cred-consumers.toml` line 336) and the drift-reporter
+bearer handed to the executor by its revision 1 (line 448). For the other five, the lineage shows
+a named approval and nothing in the repositories read records completion (unverified here).
+`orchestrator-factory-runner-bearer` has never been rotated by the executor: no package existed
+before 2026-11-28, and amendment 18's hand-over note says "Nothing has proved its first rotation"
+(line 2212).
+
+### Decision
+
+#### Readings settled from the standing answer
+
+1. **"Proposer-generated" means the revision the proposer wrote, over content a person approved.**
+   D-88 asked about these exact packages and called them drafted by the rotation proposer; Devon
+   answered A and widened it. Seven of the eight are hand-authored (`created_by: factory-create`),
+   so a reading that required `created_by: rotation-proposer` would approve none of the packages
+   the question was about. The proposer's `to_review` (`rotation_proposer/standing.py` lines
+   256-291) writes only the occurrence and the registry's destinations into a new revision; a
+   hand-authored package keeps its approved wording (`generate.reissue_body`, line 458). So the
+   check is that the tip differs from the last approved revision only in `revision`, `status`,
+   `profile_fields.occurrence` and `profile_fields.destinations`, and that the destinations equal
+   the registry's. A re-rendered wording (a generated package whose plan changed, amendment 20)
+   differs in more, and goes to Devon.
+2. **"First hand-over" is a credential's first package the executor runs**, read as no earlier
+   approved revision of its standing package. The registry uses the term that way (line 448:
+   "Handed to the rotation executor 2026-10-21 (... rev 1, approved by Devon ...)"). So no
+   revision 1 of a reissue type is covered. A lane credential's revision 1 stays under D-34 A and
+   amendment 22, unchanged. Where `orchestrator-factory-runner-bearer` falls is Open item D88-A,
+   because amendment 18 also says it "is handed over by flag".
+3. **"Widens a credential's reach" means the credential gains a place that holds its value, or the
+   package gains authority or reach.** This ADR uses "widen" for a BWS identity, project, grant,
+   scope, keeper or network path (amendment 38, "What it grants": "No BWS identity, project,
+   grant or scope, no keeper move, ... is added or widened"). A `runtime-fetch` destination holds
+   no copy: the reader reads the keeper through its own BWS account's grant, which no package
+   writes, and the executor only verifies its next run. So a revision that adds or drops a
+   `runtime-fetch` line to match a registry change merged on its own doesn't widen reach. A
+   revision that adds any destination the executor writes (`bws-secret`, `coolify-env`,
+   `coolify-env-hash`, `coolify-env-held`, `gh-actions-secret`, `keychain`) relative to the last
+   approved revision does, and goes to Devon. The observer and read bearers' changes are
+   `runtime-fetch` lines only, so both are covered.
+4. **Condition 1 is a type list.** Amendment 38's scope rule (i) holds for these classes "because
+   the SDS service it authenticates to holds its hash (a `coolify-env-hash` consumer)". The
+   reissue grant names the two types whose provider is an SDS service, `orchestrator` and
+   `change-manager`. `openrouter` and `postgres-role` are P1 by capability, but no row of either
+   is SDS-used (amendment 38: `openrouter-generic` and `alobar-id-postgres` fail (i); the
+   factory-events passwords have no fitting type), so they refuse. Adding a type to the list
+   needs a row that meets condition 1, and adding a type or adapter itself stays Devon's.
+5. **Condition 2 is the derived plan.** A plan with any `HumanAct` refuses, read from the type's
+   `Capabilities` through `plans.candidates` and the package's criteria through `select_plan`,
+   never from a declared field.
+6. **The excluded identities are refused by name, not by a flag's absence.** The SYSTEM and
+   VERIFIER bearers (`orchestrator-system-bearer`, `orchestrator-verifier-bearer`) by id, and any
+   row whose `coolify-env-hash` destination names an `entry` beginning `orchestrator-system`,
+   `orchestrator-verifier` or `rotation-executor` (the executor's WORKER entries,
+   `docs/operations/rotation-executor.md` lines 739 and 1462). The rest of decision 4's set (the
+   root token, admin credentials, the Healthchecks key) has no type in the list.
+7. **The approver string doesn't change.** A D-88 approval records
+   `policy:non-software-operational@v<N>`, as a D-34 one does; the intent-packages pull request,
+   the chain event and the carrier's observation name which standing answer applied.
+8. **The carrier checks what its depth-1 clone can see.** The work carrier clones intent-packages
+   with `--depth 1` (`scripts/run-work-carrier.sh` line 302), so it can't read the last approved
+   revision's content. As amendment 22 item 3 lets the carry form skip infraops, the reissue carry
+   form skips the content comparison and relies on the command's, which runs before the policy
+   approval and is cited in its pull request. The carrier still checks the lineage, the type, the
+   plan, the destinations, the authority and the excluded identities.
+
+#### The plan
+
+Four pull requests, in this order. Each code task follows Code Brain rules 3 (structured JSON logs
+to stdout), 4 (never silently swallow an exception: a check that can't be made is a refusal) and 5
+(name credentials by registry id or BWS UUID only, never a value), and names them in its
+handoff. Each exclusion below is held by a test that fails if the exclusion is removed.
+
+**R1. orchestrator: the reissue conditions (`src/rotation_proposer/standing_approval.py`,
+`src/rotation_proposer/cli.py`, `tests/rotation_proposer/test_standing_approval.py`).**
+
+- Add `REISSUE_TYPES = ("orchestrator", "change-manager")`, `HAND_ROTATED_IDS` and
+  `HAND_ROTATED_ENTRY_PREFIXES` (decision item 6), and a second set of conditions, `reissue`, that
+  the command runs when the package is at revision 2 or later:
+  `reissue_type` (the class maps to a type in `REISSUE_TYPES`, and the package names that
+  provider); `not_hand_rotated`; `machine_plan` (the stated plan is a rotation plan with no
+  `HumanAct`, and it's the plan `plan_for` derives); `reissue_lineage` (the lineage lists the
+  revisions 1 to N, the tip is unapproved and `ready_for_review`, revision 1's approval is a
+  person's, not `policy:`, and an earlier approval exists); `proposer_revised` (the tip equals the
+  last approved revision, read at that approval's `commit` through the same mirror and checked
+  against its `approved_hash`, apart from `revision`, `status`, `occurrence` and `destinations`);
+  `no_new_copy` (no written-kind destination absent from that revision, decision item 3);
+  `destinations_equal` (`same(entry.destinations, listed)`, the `compare-destinations` read);
+  `standard_authority` (unchanged); `reach_unchanged` (the package's `reach` equals
+  `generate.reach` for the row); and `rotated_before` (infraops' `last_rotated` isn't null and is
+  on or after the date of revision 1's approval, which the command already reads).
+- Add `carry_reissue`, the carrier's form: every condition but `proposer_revised` and
+  `rotated_before`, with `reissue_lineage` replaced by one that requires the tip's single new
+  approval to be the policy approver's, on the tip's hash, and every earlier approval to stand.
+- The command chooses the form by revision: 1 runs `evaluate` (D-34, unchanged), 2 or more runs
+  `reissue`. A lane type at revision 2 or later refuses `reissue_type`.
+- Tests: a covered revision passes each condition; each of these refuses: revision 1 of a reissue
+  type; a lane type at revision 2; `openrouter` and `postgres-role` rows; each id in
+  `HAND_ROTATED_IDS` and an entry under each prefix; a plan with a `HumanAct` (a `github-pat` row);
+  a changed field outside the four; an added `gh-actions-secret` and an added `coolify-env`; an
+  added `runtime-fetch` passes; registry destinations unequal; a widened authority; a changed
+  `reach`; a lineage whose revision-1 approver is `policy:`; `last_rotated` null; `last_rotated`
+  before revision 1's approval; an approved-hash mismatch at the approval commit.
+
+**R2. orchestrator: the carrier and the gate (`src/work_carrier/standing.py`,
+`src/orchestrator/services/intake/standing_approval.py`, `tests/work_carrier/test_standing.py`,
+`tests/services/test_standing_approval_gate.py`, and the CLAUDE.md invariants in the root file
+line 377, `src/rotation_proposer/CLAUDE.md` line 5 and `src/orchestrator/services/intake/CLAUDE.md`
+lines 24-35).** Same pull request as R1 or the one after it.
+
+- `work_carrier/standing.py`: `_verified_approval` matches the lineage's last approval (the one on
+  the payload's revision) to the emitter's verified event, not its only one; `_check` runs
+  `carry` at revision 1 and `carry_reissue` above it; the observation's facts add
+  `form: "issue" | "reissue"`.
+- `services/intake/standing_approval.py`: at revision 1, the lane-type check as now; at revision 2
+  or later, exactly one of `provider name="orchestrator"` and `provider name="change-manager"`,
+  and the snapshot's `credential_id` not in the hand-rotated ids (held equal to R1's by test, as
+  `LANE_PROVIDERS` is). The carrier's record stays required for both.
+- Tests: the gate admits a reissue only beside the carrier record; refuses a reissue of a lane
+  provider, of a SYSTEM id, and with no record; a revision-1 lane approval behaves as before.
+
+**R3. intent-packages: the reissue grant (`approval-policy.toml`,
+`src/intent_packages/approval_policy.py`, `tests/test_approval_policy_rotation.py`).**
+
+- Schema 5, shipped with its loader (the file's own rule, lines 41-44): the rotation grant gains
+  `reissue_types`, each with `destinations_allowed` (a set of kinds, any count, since a bearer
+  lists one to seven `gh-actions-secret` or `runtime-fetch` lines) and `authority_options`, the
+  standard set measured in "The eight packages". `orchestrator` and `change-manager` only.
+- `_rotation_refusals` branches on revision: 1 keeps every refusal as now; 2 or later refuses
+  unless the provider is a reissue type, the lineage's earlier revisions are each approved and
+  revision 1's approver isn't `policy:`, the tip is unapproved, every destination kind is allowed,
+  the authority equals an option, and no criterion is `human_review`. `created_by` may be
+  `factory-create` or `rotation-proposer` on this branch (decision item 1).
+- The grant's rationale cites the D-88 entry, as the lane grant cites D-34's. Deleting
+  `reissue_types` puts every reissue back in front of Devon.
+- Tests: each refusal above, and that a schema-4 document still loads and refuses every reissue.
+
+**R4. sds-hq: `standing-approve` for reissues (`src/sds_hq/standing_approve.py`,
+`tests/test_standing_approve.py`).** This task changes HQ's own runtime, so an interactive
+session merges it, not a cycle.
+
+- `read_package` accepts revision N of `ready_for_review` with the tip's hash read from the
+  lineage's entry for N (not `_HASH_REV_1`); at revision 1 it keeps refusing an approval.
+- `check_first_issue` runs at revision 1 only; at revision 2 or later, a new
+  `check_reissue_history` requires revision 1's approval to be a person's and every earlier
+  revision approved, and still refuses a deleted package directory.
+- `_approves` matches the tip's revision; `check_lineage_read_back` expects the earlier approvers
+  followed by the one policy approver.
+- The standing answer cited, the PR title, body and act `why` name D-34 A at revision 1 and D-88
+  A above it. The act's lane is the shared stop line for an id `lane_of` doesn't parse, as now.
+- Tests: a reissue is approved end to end against fixtures; revision 1 of a reissue type refuses
+  (the orchestrator check refuses it); a lineage with a `policy:` revision-1 approver refuses.
+
+#### Exit checks
+
+1. R1 to R3 merged; `make check` green in each repository; the orchestrator release that carries
+   R1 and R2 deployed, and its served OpenAPI unchanged (no response model changes).
+2. `rotation-proposer standing-approval orchestrator-operator-bearer`, run by HQ, exits 0 with
+   every reissue condition passed; the same for `orchestrator-factory-runner-bearer` exits 1
+   (revision 1 runs `evaluate`, which refuses a non-lane type), and a fixture package for
+   `orchestrator-system-bearer` exits 1 on `not_hand_rotated`. A covered row that refuses only
+   `rotated_before` (infraops recorded no date for a rotation the registry records) is approved
+   by name and reported, never passed.
+3. R4 merged by an interactive session; `sds-hq standing-approve rotation-orchestrator-operator-bearer`
+   opens an intent-packages pull request citing the D-88 entry, which HQ merges.
+4. End to end: the carrier's next `--register` pass records a `standing_approval_check`
+   observation with `form: "reissue"`, and the decomposition gate approves the decomposition by
+   policy with no `/review` click. The unit runs in the `live_estate` window and completes.
+5. The other covered packages follow the same path one at a time.
+
+### Open items
+
+**D88-A. Open, for Devon: is `orchestrator-factory-runner-bearer`'s revision 1 a first hand-over?**
+Its flag was set on 2026-11-01 (`c2f6ffbf`), and amendment 18 says it "is handed over by flag"
+(line 2210). But no package existed until 2026-11-28 and the executor has never rotated it; the
+registry's own usage calls a credential handed over when its revision 1 is approved (line 448).
+D-88's question listed it among option A's packages; the recorded standing answer excludes "a
+credential's first hand-over to the executor".
+(A) A first hand-over: Devon approves revision 1 by name, and every reissue after it is covered.
+(B) Covered: R1 adds a revision-1 form for a reissue type (a re-render from the row equal to the
+package, infraops `last_rotated` null, the rest of `reissue`), and its first run is also the first
+proof of the executor writing the seven `FACTORY_RUNNER_TOKEN` Actions secrets. The plan
+recommends A: the first proof of a distribution path is the case a person reading the package is
+for, and A needs no revision-1 path. The plan as written is A; B adds one condition set to R1 and
+R3.
+
+### What it grants, and nothing more
+
+Nothing. No check, policy, BWS identity, project, grant or scope, registry row or flag, keeper,
+type, adapter or network path is added or widened. The four tasks are each their own pull
+request. No endpoint is added, so the HTTPS rule for public FQDNs (Infra Brain 212) doesn't apply.
+A scheduled reissue isn't an exposure, so nothing here opens or closes one (Infra Brain 1032).
+
+### Consequences
+
+- **Seven reissues need no click once R1 to R4 merge**: the operator, observer, drift-reporter, full,
+  read, propose and observe bearers, seven packages, each through `sds-hq standing-approve`, which
+  records the approval in a pull request citing D-88.
+- **Revision 1 of a reissue type stays Devon's**, so the factory-runner bearer and the execute
+  bearer are approved by name (unless D88-A is answered B).
+- **A re-rendered wording, a new written copy, a changed reach or authority, a person's act, a
+  hand-rotated identity, or an unlisted type sends the revision to Devon**, each by a named
+  refusal.
+- **The carrier doesn't compare content.** The command does, before the approval exists; the
+  carrier checks shape, as it skips infraops for D-34.
+
+### Passages it governs
+
+This amendment edits none of them.
+
+| Passage | Disposition |
+|---|---|
+| Amendment 22 items 2 and 3, the standing approval of a lane credential's revision 1 | Stand for revision 1. R1 and R2 add a second form beside them. |
+| Amendment 38, "What approves each rotation" ("Revision 2 and later needs Devon's approval by name") | Superseded for the covered rows by D-88 A once R1 to R4 merge. |
+| Decision 4, the hand-rotated set and the SYSTEM and VERIFIER bearers | Stand, and are refused by name (decision item 6). |
+| intent-packages `approval-policy.toml`, the rotation grant's rationale ("Revision 2 and later, and every other type, stay Devon's", line 151) | Changes with R3. |
+| Root `CLAUDE.md` line 377, `src/rotation_proposer/CLAUDE.md` line 5, `src/orchestrator/services/intake/CLAUDE.md` lines 24-35 | Change with R2. |
