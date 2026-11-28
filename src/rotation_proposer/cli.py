@@ -127,7 +127,12 @@ from rotation_proposer.standing_approval import (
 )
 from rotation_worker.contract import ContractError
 from rotation_worker.destinations import DestinationError
-from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
+from rotation_worker.git_mirror import (
+    COMMIT_PATTERN,
+    MirrorError,
+    RepoMirror,
+    default_mirror_root,
+)
 from rotation_worker.registry import (
     RegistryEntry,
     RegistryError,
@@ -989,8 +994,11 @@ def _conditions(
     approval = last_approval(lineage)
     approved = None
     approved_commit = approval.get("commit") if approval is not None else None
-    if isinstance(approved_commit, str) and mirror.is_ancestor(
-        PACKAGES_REPOSITORY, approved_commit, commit
+    # A commit that isn't a full hash names nothing on `main`: `proposer_revised` refuses it.
+    if (
+        isinstance(approved_commit, str)
+        and COMMIT_PATTERN.fullmatch(approved_commit)
+        and mirror.is_ancestor(PACKAGES_REPOSITORY, approved_commit, commit)
     ):
         approved = load_package(
             mirror.show(PACKAGES_REPOSITORY, approved_commit, package_path(credential_id))

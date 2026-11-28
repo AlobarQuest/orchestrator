@@ -348,6 +348,33 @@ def test_a_reissue_of_a_hand_rotated_identity_refuses_beside_a_record(
     assert _refusals(migrated_session, proposal) == _unrecorded("hand_rotated_identity")
 
 
+@pytest.mark.parametrize("form", ["issue", None, "another"])
+def test_a_reissue_record_that_doesn_t_state_the_reissue_form_refuses(
+    migrated_session: Session, form: str | None
+) -> None:
+    revision = _bearer_revision(migrated_session)
+    _record(
+        migrated_session,
+        package_id=BEARER_PACKAGE,
+        subject_revision=2,
+        registry_entry=BEARER,
+        form=form,
+    )
+    proposal = _propose(migrated_session, revision, envelope=_reissue_envelope())
+    assert _refusals(migrated_session, proposal) == _unrecorded("no_carrier_record")
+
+
+@pytest.mark.parametrize(("form", "admitted"), [("issue", True), ("reissue", False)])
+def test_a_revision_1_record_must_state_the_issue_form_or_none(
+    migrated_session: Session, form: str, admitted: bool
+) -> None:
+    """A row recorded before the carrier stated a form has none, and the control admits it."""
+    revision = _revision(migrated_session)
+    _record(migrated_session, form=form)
+    proposal = _propose(migrated_session, revision)
+    assert (proposal.state == "approved") is admitted
+
+
 @pytest.mark.parametrize("credential_id", [None, "", 7])
 def test_a_reissue_naming_no_credential_id_refuses(
     migrated_session: Session, credential_id: object

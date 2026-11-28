@@ -7636,4 +7636,7 @@ carrier puts the form in the observation's `source_reference` and idempotency ke
 facts, so a row recorded before facts named the form is never replayed into
 `observation_conflict`. `REISSUE_TYPES` is sorted, `("change-manager", "orchestrator")`: a tuple
 headed by `"orchestrator"` reads as an invocation of the orchestrator's console script to the
-producer guard (`test_external_content_observes_only.py`).
+producer guard (`test_external_content_observes_only.py`). The carrier's `_verified_approval`
+matches the lineage's one approval on the payload's revision, not its last-listed one, and refuses
+an approval of a later revision. The gate requires the record's `form` to fit the revision
+(`reissue` above revision 1; `issue`, or none for an earlier row, at revision 1).

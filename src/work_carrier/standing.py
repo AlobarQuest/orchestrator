@@ -171,18 +171,21 @@ def _verified(payload: Mapping[str, Any], content_hash: str) -> dict[str, Any]:
 def _verified_approval(
     lineage: Mapping[str, Any], verified: Mapping[str, Any]
 ) -> Mapping[str, Any]:
-    """The lineage's last approval, refused unless it is the only one on the payload's revision
-    and is the approval the emitter matched to a verified chain event: same approver, hash,
-    revision, commit and event id."""
+    """The lineage's one approval on the payload's revision, refused unless no approval names a
+    later revision and it is the approval the emitter matched to a verified chain event: same
+    approver, hash, revision, commit and event id."""
     approvals = lineage.get("approvals")
     if not isinstance(approvals, list) or not approvals:
         raise StandingRefusal("the lineage records no approval")
     if not all(isinstance(item, Mapping) for item in approvals):
         raise StandingRefusal("the lineage's approvals aren't all mappings")
-    approval = approvals[-1]
-    on_revision = [item for item in approvals if item.get("revision") == verified["revision"]]
+    revision = verified["revision"]
+    on_revision = [item for item in approvals if item.get("revision") == revision]
     if len(on_revision) != 1:
         raise StandingRefusal("the lineage doesn't record exactly one approval of the revision")
+    if any(_is_later(item.get("revision"), revision) for item in approvals):
+        raise StandingRefusal("the lineage records an approval of a later revision")
+    approval = on_revision[0]
     differing = sorted(name for name in VERIFIED_FIELDS if approval.get(name) != verified.get(name))
     if differing:
         raise StandingRefusal(
@@ -190,6 +193,16 @@ def _verified_approval(
             f"(differs in {', '.join(differing)})"
         )
     return approval
+
+
+def _is_later(number: object, revision: object) -> bool:
+    """Whether an approval's revision is after the payload's; a non-integer one counts as later,
+    so a lineage it can't order refuses."""
+    if not isinstance(revision, int) or isinstance(revision, bool):
+        return True
+    if not isinstance(number, int) or isinstance(number, bool):
+        return True
+    return number > revision
 
 
 def _observation(

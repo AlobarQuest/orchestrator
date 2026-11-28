@@ -684,7 +684,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
             {"DestinationError", "HOSTED_KINDS", "parse", "render", "same"}
         ),
         "rotation_worker.git_mirror": frozenset(
-            {"MirrorError", "RepoMirror", "default_mirror_root"}
+            {"COMMIT_PATTERN", "MirrorError", "RepoMirror", "default_mirror_root"}
         ),
         "rotation_worker.plans": frozenset({"candidates", "criteria_steps", "select_plan"}),
         # `standing-approval` (ADR-0055 amendment 22, increment 2) reads the row, the package and

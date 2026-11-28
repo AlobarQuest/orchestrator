@@ -41,6 +41,9 @@ UNRECORDED: Final = "standing_approval_unrecorded"
 # `tests/services/test_standing_approval_gate.py` holds the two sides equal.
 CARRIER_SOURCE: Final = "work_carrier"
 CARRIER_CHECK: Final = "standing_approval_check"
+# The carry form the record states it ran (`facts.form`), held to the carrier's by the same test.
+ISSUE_FORM: Final = "issue"
+REISSUE_FORM: Final = "reissue"
 # The two lane types' provider destinations, in the executor's destination format
 # (`rotation_worker.destinations.render`); the same test holds them to it.
 # not-a-vocabulary: whole destination strings a package lists, held to the executor's by test
@@ -134,8 +137,9 @@ def _credential_id(snapshot: object) -> str | None:
 
 
 def _binds(facts: object, package_id: str, revision: WorkPackageRevision) -> bool:
-    """The record names this revision by package id, number and content hash, and states that the
-    carry form refused nothing. A record of any other shape binds nothing."""
+    """The record names this revision by package id, number and content hash, states that the
+    carry form refused nothing, and names the form that fits the revision. A record of any other
+    shape binds nothing."""
     if not isinstance(facts, Mapping):
         return False
     number = facts.get("revision")
@@ -146,4 +150,13 @@ def _binds(facts: object, package_id: str, revision: WorkPackageRevision) -> boo
         and number == revision.revision
         and facts.get("content_hash") == revision.content_hash
         and facts.get("refused") == []
+        and _form_fits(facts.get("form"), number)
     )
+
+
+def _form_fits(form: object, number: int) -> bool:
+    """A reissue's record must say the carrier ran the reissue form. A revision 1 record says
+    `issue`, or names no form: rows recorded before the carrier stated one (ADR-0055 a39)."""
+    if number == 1:
+        return form in (ISSUE_FORM, None)
+    return form == REISSUE_FORM

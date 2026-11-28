@@ -33,7 +33,8 @@
   `credential_id` is a string outside `HAND_ROTATED_IDS` (held equal to the proposer's by test),
   and an observation `recorded_by`
   `ORCHESTRATOR_WORK_CARRIER_AGENT_ID` (`work_carrier` / `standing_approval_check`) binds its
-  package id, revision and `content_hash` with nothing refused (`standing_approval.py`). Anything
+  package id, revision and `content_hash` with nothing refused and a fitting `form` (`reissue`
+  above revision 1; `issue` or none at revision 1) (`standing_approval.py`). Anything
   else, an unset setting or a failed read refuses `standing_approval_unrecorded`; the gate reads
   no registry (`tests/services/test_standing_approval_gate.py`).
 - The rotation branch needs every dependency unit-on-unit `completed`

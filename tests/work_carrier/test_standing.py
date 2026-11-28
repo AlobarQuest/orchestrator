@@ -326,14 +326,23 @@ def test_a_reissue_approval_the_emitter_didn_t_verify_refuses(tmp_path: Path, fi
     assert "isn't the one the emitter verified" in refused and field in refused
 
 
-def test_the_verified_approval_is_the_last_not_the_only_one(tmp_path: Path) -> None:
-    """Revision 1's person approval stands first; the policy's on the tip is the one matched."""
+def test_the_verified_approval_is_the_one_on_the_revision_not_the_only_one(
+    tmp_path: Path,
+) -> None:
+    """Revision 1's person approval stands beside it; the policy's on the tip is the one matched,
+    wherever the lineage lists it."""
     package, lineage, payload, found = _reissue()
     assert [a["approver"] for a in lineage["approvals"]] == ["devon", reissue_fixtures.POLICY]
     lineage["approvals"].reverse()
+    assert isinstance(_check_reissue(tmp_path, package, lineage, payload, found), standing.Checked)
+
+
+@pytest.mark.parametrize("later", [3, "3", None])
+def test_an_approval_of_a_later_revision_refuses(tmp_path: Path, later: object) -> None:
+    package, lineage, payload, found = _reissue()
+    lineage["approvals"].append({**lineage["approvals"][0], "revision": later})
     refused = _check_reissue(tmp_path, package, lineage, payload, found)
-    assert isinstance(refused, str)
-    assert "isn't the one the emitter verified" in refused
+    assert refused == "the lineage records an approval of a later revision"
 
 
 def test_a_second_approval_of_the_reissue_s_revision_refuses(tmp_path: Path) -> None:
@@ -684,4 +693,5 @@ def test_the_record_the_carrier_composes_is_the_one_the_gate_reads() -> None:
         standing.OBSERVATION_TYPE,
     )
     assert gate.subject_for(PACKAGE_ID, 1) == standing.subject_for(PACKAGE_ID, 1)
+    assert (gate.ISSUE_FORM, gate.REISSUE_FORM) == (standing.ISSUE_FORM, standing.REISSUE_FORM)
     assert gate.ROTATION_PROFILE == standing.ROTATION_PROFILE

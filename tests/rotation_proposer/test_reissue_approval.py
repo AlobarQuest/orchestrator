@@ -455,6 +455,14 @@ def test_the_package_at_the_approval_s_commit_must_be_the_approved_revision() ->
     assert "isn't the approved revision" in _reason(conditions, PROPOSER_REVISED)
 
 
+def test_a_lineage_with_no_approval_has_nothing_to_compare() -> None:
+    entry, approved, tip, lineage = _covered()
+    lineage["approvals"] = []
+    conditions = reissue(entry, tip, lineage, approved=approved)
+    assert PROPOSER_REVISED in _refused(conditions)
+    assert _reason(conditions, PROPOSER_REVISED) == "the lineage records no approval to compare"
+
+
 def test_the_reissue_form_refuses_a_revision_1() -> None:
     """The command never sends revision 1 here; the form refuses it on its own as well."""
     entry, approved, tip, lineage = _covered()
@@ -799,12 +807,14 @@ def test_the_command_reads_the_approved_revision_at_its_commit(
     assert "doesn't hash to its approved_hash" in revised["reason"]
 
 
+@pytest.mark.parametrize("approval_commit", ["c" * 40, "abc1234"], ids=["absent", "abbreviated"])
 def test_an_approval_commit_the_mirror_lacks_refuses(
-    rig: Rig, capsys: pytest.CaptureFixture[str]
+    rig: Rig, capsys: pytest.CaptureFixture[str], approval_commit: str
 ) -> None:
+    """A commit not on `main`, or one that isn't a full hash, is a refusal, never unreadable."""
     row = _real_row(OPERATOR)
     approved = _approved(row)
-    rig.publish(row, approved, _tip(approved), approval_commit="c" * 40)
+    rig.publish(row, approved, _tip(approved), approval_commit=approval_commit)
     code, lines = _run(capsys, OPERATOR)
     assert (code, set(_verdict(lines))) == (1, {PROPOSER_REVISED, NO_NEW_COPY})
 

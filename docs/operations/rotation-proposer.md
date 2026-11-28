@@ -419,9 +419,13 @@ observation's facts carry `form: "reissue"` (`"issue"` at revision 1), and the f
 the observation's reference and key. The emitter verifies only the current revision's approval
 against the chain: revision 1's named approval is the lineage's word.
 
+The carrier matches the lineage's one approval on the payload's revision, wherever the lineage
+lists it, and refuses a lineage that records an approval of a later revision.
+
 The decomposition gate admits the policy approver on a revision above 1 only when the snapshot
 names exactly one of the two reissue providers, its `credential_id` isn't a hand-rotated id, and
-the carrier's record is present.
+the carrier's record is present and states `form: "reissue"`. At revision 1 the record states
+`issue`, or no form (a row recorded before the carrier stated one).
 
 ## Authoring a standing rotation package by hand
 
