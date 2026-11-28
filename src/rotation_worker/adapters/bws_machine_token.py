@@ -190,7 +190,8 @@ class BwsMachineTokenProvider:
     ) -> None:
         self._interpreter = interpreter
         self._organization_id = organization_id
-        self._control: Value | None = None
+        # Every control `known_bad` issued, held only so a login's log line can name its role.
+        self._controls: set[Value] = set()
 
     def mint(self) -> Value:
         raise ContractError("a person creates a BWS access token, in the web app")
@@ -200,15 +201,13 @@ class BwsMachineTokenProvider:
         secret = "".join(secrets.choice(letters) for _ in range(30))
         key = base64.b64encode(secrets.token_bytes(16)).decode()
         control = Value(f"0.{uuid.uuid4()}.{secret}:{key}")
-        # Remembered only so the probe's log line can say it asked about the control.
-        self._control = control
+        self._controls.add(control)
         return control
 
     def probe(self, value: Value) -> int | None:
         """200 for a login, 400 for `refused`, `None` for anything else. An indeterminate login is
         tried once more after `RETRY_PAUSE`, and the second answer stands; never more than once."""
-        control = self._control
-        role = "control" if control is not None and value.same_as(control) else "subject"
+        role = "control" if value in self._controls else "subject"
         answer = self._login(value, role, 1)
         if answer not in _ANSWERS:
             sleep(RETRY_PAUSE)

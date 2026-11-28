@@ -544,3 +544,15 @@ def test_the_other_fresh_logins_keep_their_answers_with_no_retry_or_log(
     with caplog.at_level(logging.DEBUG):
         provider.probe(new)
     assert [r["answer"] for r in _logins(caplog)] == ["refused"]
+
+
+def test_every_control_issued_is_logged_as_the_control(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _answers(monkeypatch, "refused\n", "refused\n")
+    provider = bws.BwsMachineTokenProvider("/py")
+    first, second = provider.known_bad(), provider.known_bad()
+    with caplog.at_level(logging.INFO, logger="rotation_worker"):
+        provider.probe(first)
+        provider.probe(second)
+    assert [r["role"] for r in _logins(caplog)] == ["control", "control"]
