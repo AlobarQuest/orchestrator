@@ -51,6 +51,12 @@
     D-73 B and D-74 A; the `loaded` proof as built).
   - 2026-11-24, amendment 32, proposed (the lane secrets broker's Phase C: the 12 earlier lanes'
     route, grants and batches, and the one revoke sitting; its open items are Devon's).
+  - 2026-11-27, amendment 37 (the BWS machine-token probe logs each fresh login's scrubbed answer,
+    one `bws_login` line of `live`, `refused`, `status:<code>`, `error:<class>`, `unparsed`,
+    `timeout` or `empty`, and tries an indeterminate login once more after a 5-second pause,
+    never twice; `probe` still returns 200, 400 or nothing. Source: unit `6f2b6610`'s confirm
+    failure at 22:09 UTC, when one passing error in the known-bad control's login failed the
+    unit, and G-114's diagnostic, which found the child kept no output to name it).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)

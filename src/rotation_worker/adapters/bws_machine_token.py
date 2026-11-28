@@ -10,7 +10,11 @@ Keychain instance of the executor, on the machine whose Keychain holds the token
   `[400 Bad Request] {"error":"invalid_client"}` answers 400, for a revoked token and a malformed
   one alike; anything else is indeterminate. The known-bad control is a well-formed random token.
   Measured 2026-10-22: a random token and a just-revoked one both answered `invalid_client`, and
-  a live one logged in, while a client that logged in before the revoke kept reading.
+  a live one logged in, while a client that logged in before the revoke kept reading. Each login
+  logs one `bws_login` line naming its scrubbed answer (`_LOGIN`, `ANSWER`), never the SDK's
+  message. An indeterminate login is tried once more after `RETRY_PAUSE`, and only once: these
+  bad logins share the host's address with the broker's real ones, and a loop risks a Bitwarden
+  rate limit that breaks lane reads (amendment 37).
 * **The switch** is store then distribute: the keeper Keychain item is quarantined and updated,
   then every other Keychain item that held the old value is updated in place. Each is then read
   back by verify-consumers, and a scheduled reader is verified by its run since the switch.
@@ -28,6 +32,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
 import secrets
 import string
@@ -37,6 +42,7 @@ import tempfile
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, time, timedelta
+from time import monotonic, sleep
 from typing import Any, Final
 from zoneinfo import ZoneInfo
 
@@ -55,6 +61,8 @@ from rotation_worker.values import Value
 NAME: Final = "bws-machine-token"
 PROVIDER: Final = "bitwarden-sm"
 LOGIN_TIMEOUT_SECONDS: Final = 60.0
+# The pause before the one retry of an indeterminate login.
+RETRY_PAUSE: Final = 5.0
 # Longer than a session's lifetime after a revoke: amendment 1's window.
 REVOKE_SETTLES: Final = timedelta(minutes=75)
 QUIET_ZONE: Final = ZoneInfo("America/New_York")
@@ -80,11 +88,16 @@ PLAN: Final = Plan(
 )
 validate_plan(PLAN)
 
+LOG = logging.getLogger("rotation_worker")
+
 # The one package a child process imports beyond the standard library. It is spelled here and in
 # no script, because a script is a string and no import scan reads it.
 CHILD_SDK: Final = "bitwarden_sdk"
-# Run in the child: logs in once and says how it went, never echoing the token.
+# Run in the child: logs in once and says how it went, never echoing the token. It prints one of a
+# closed set (`ANSWER`): `live`, `refused`, the HTTP status in the SDK's `[400 Bad Request]` shape,
+# or the exception's class name. No other part of the SDK's message is printed.
 _LOGIN: Final = f"""
+import re
 import sys
 from {CHILD_SDK} import BitwardenClient
 token = sys.stdin.read()
@@ -92,11 +105,21 @@ try:
     BitwardenClient().auth().login_access_token(token)
 except Exception as error:
     message = str(error)
-    print("refused" if "invalid_client" in message and "400" in message else "other")
+    status = re.search(r"\\[([1-5][0-9][0-9]) [A-Za-z]", message)
+    if "invalid_client" in message and "400" in message:
+        print("refused")
+    elif status:
+        print("status:" + status.group(1))
+    else:
+        print("error:" + type(error).__name__)
 else:
     print("live")
 """
 _ANSWERS: Final = {"live": 200, "refused": 400}
+# What the parent accepts from `_LOGIN`; anything else is logged as `unparsed`, by length only.
+ANSWER: Final = re.compile(
+    r"live|refused|status:[1-5][0-9]{2}|error:[A-Za-z_][A-Za-z0-9_]{0,63}", re.ASCII
+)
 DIGEST: Final = re.compile(r"^[0-9a-f]{64}$")
 # Run in the child: logs in and prints a digest of every project and secret the token can see.
 _REACH: Final = f"""
@@ -167,6 +190,7 @@ class BwsMachineTokenProvider:
     ) -> None:
         self._interpreter = interpreter
         self._organization_id = organization_id
+        self._control: Value | None = None
 
     def mint(self) -> Value:
         raise ContractError("a person creates a BWS access token, in the web app")
@@ -175,11 +199,45 @@ class BwsMachineTokenProvider:
         letters = string.ascii_letters + string.digits
         secret = "".join(secrets.choice(letters) for _ in range(30))
         key = base64.b64encode(secrets.token_bytes(16)).decode()
-        return Value(f"0.{uuid.uuid4()}.{secret}:{key}")
+        control = Value(f"0.{uuid.uuid4()}.{secret}:{key}")
+        # Remembered only so the probe's log line can say it asked about the control.
+        self._control = control
+        return control
 
     def probe(self, value: Value) -> int | None:
-        answer = self._fresh(_LOGIN, value.reveal())
-        return _ANSWERS.get(answer) if answer is not None else None
+        """200 for a login, 400 for `refused`, `None` for anything else. An indeterminate login is
+        tried once more after `RETRY_PAUSE`, and the second answer stands; never more than once."""
+        control = self._control
+        role = "control" if control is not None and value.same_as(control) else "subject"
+        answer = self._login(value, role, 1)
+        if answer not in _ANSWERS:
+            sleep(RETRY_PAUSE)
+            answer = self._login(value, role, 2)
+        return _ANSWERS.get(answer)
+
+    def _login(self, value: Value, role: str, attempt: int) -> str:
+        """One fresh login's scrubbed answer, logged as one `bws_login` line. Only the category,
+        the child's return code and stdout length, and the elapsed time are logged."""
+        started = monotonic()
+        child = self._run(_LOGIN, value.reveal())
+        fields: dict[str, object] = {"role": role, "attempt": attempt}
+        if child is None:
+            answer = "timeout"
+        else:
+            stdout = child.stdout.strip()
+            fields["returncode"] = child.returncode
+            if not stdout:
+                answer = "empty"
+            elif ANSWER.fullmatch(stdout):
+                answer = stdout
+            else:
+                answer = "unparsed"
+                fields["stdout_length"] = len(stdout)
+        fields["answer"] = answer
+        fields["elapsed_seconds"] = round(monotonic() - started, 2)
+        level = logging.INFO if answer in _ANSWERS else logging.WARNING
+        LOG.log(level, "bws_login", extra=fields)
+        return answer
 
     def probe_before_revoke(self, value: Value) -> int | None:
         return self.probe(value)
@@ -229,9 +287,14 @@ class BwsMachineTokenProvider:
     def _fresh(self, script: str, stdin: str) -> str | None:
         """What `script` prints, run in a child with a new SDK client and an empty, throwaway
         `HOME` (amendment 1); `None` if it doesn't answer in time."""
+        child = self._run(script, stdin)
+        return None if child is None else child.stdout.strip()
+
+    def _run(self, script: str, stdin: str) -> subprocess.CompletedProcess[str] | None:
+        """`script`'s finished child (`_fresh`), or `None` if it doesn't answer in time."""
         with tempfile.TemporaryDirectory(prefix="rotation-login-") as home:
             try:
-                answer = subprocess.run(
+                return subprocess.run(
                     [self._interpreter, "-I", "-c", script],
                     input=stdin,
                     capture_output=True,
@@ -242,7 +305,6 @@ class BwsMachineTokenProvider:
                 )
             except subprocess.TimeoutExpired:
                 return None
-        return answer.stdout.strip()
 
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("a BWS access token has no hosted service to host it")

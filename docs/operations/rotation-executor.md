@@ -159,6 +159,33 @@ it is reinstalled at a commit that has it: the VM through `provision.sh`, the Ke
 through `install-rotation-worker-launchd.sh` (see "Install or update it"). An instance that runs an
 older revision raises `rotation-instance-behind` once the change is 7 days old.
 
+### Read a failed BWS probe
+
+When `rotation-unit-failed` names a BWS token (`bws-machine-token` or a lane token) and the reason
+is a probe's, such as `the probe didn't refuse a known-bad value (None)`, read the pass's
+`bws_login` lines (`journalctl -u rotation-worker -o cat` on the host). Each fresh login writes one
+line, of the following shape:
+
+```json
+{"time": "…", "level": "warning", "event": "bws_login", "role": "control", "attempt": 1, "returncode": 0, "answer": "status:429", "elapsed_seconds": 0.41}
+```
+
+- `role` is `control` for the known-bad value and `subject` for the token being proved. No line
+  carries a value, a fingerprint or the SDK's message.
+- `answer` is one of the following: `live` and `refused` (level `info`) are the two determinate
+  answers. `status:<code>` is the HTTP status in the SDK's error, and `error:<class>` is the
+  exception's class when the error has no status. `unparsed` is child output outside that set,
+  logged by its `stdout_length` only. `empty` is a child that printed nothing, and its
+  `returncode` says how it ended. `timeout` is a child that didn't answer within 60 seconds.
+- `attempt` is 1 or 2. An indeterminate first answer (anything but `live` or `refused`) is tried
+  once more after a 5-second pause, and the second answer is the probe's. There is never a third.
+
+A unit fails on a probe only when both attempts were indeterminate, or a determinate answer was
+the wrong one. A `status:429` on both attempts is Bitwarden's rate limit: wait before requeuing,
+since the broker's lane reads share the host's address. A control answering `live` is a real
+refusal, never retried: stop and find out why a random token logged in. Any other pair of
+indeterminate answers is a passing failure: requeue the unit as the alerts table says.
+
 ## A person's revoke is seen
 
 Where a plan has a person revoke the old value, the unit after the revoke (`confirm`) waits,
