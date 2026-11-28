@@ -873,11 +873,7 @@ def _confirm_dead(run: UnitRun, step: Step) -> None:
     # The old value is deleted only once it is proved dead in this attempt. Staging goes first:
     # the keeper already holds the new value, so after a crash between the two deletions the next
     # attempt still has the quarantine to prove death with.
-    new = (
-        run.read(staging.id)
-        if staging is not None
-        else run.read(run.rotation.keeper_id)
-    )
+    new = run.read(staging.id) if staging is not None else run.read(run.rotation.keeper_id)
     old = run.read(quarantine.id)
     if new.same_as(old):
         raise ContractError("the new value's fingerprint equals the old one's")
