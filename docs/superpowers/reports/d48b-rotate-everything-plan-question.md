@@ -51,29 +51,37 @@ The executor reads only infraops-mcp-server, orchestrator, change-manager and fa
 **Recommendation: A.** It's a small code change (task T1) plus your grant, and each repository keeps
 owning its own rows.
 
-## 4. Two bearers whose identity could reach approvals
+## 4. The work carrier's observer bearer
 
 `work-carrier-observer-bearer` files the `standing_approval_check` record that admits a policy
-approval (amendment 22). D-84's standing answer excludes reach that isn't gated by a record the root
-can't produce, so it's yours. `change-manager-execute-bearer` carries the EXECUTE scope.
+approval (amendment 22). The root already reads its keeper through the broker's token (your D-83
+(10) A, for development). A hand-over adds the keeper's move into `Rotation / Keepers` and the
+root's standing write on it. D-84's standing answer leaves reach that isn't gated by an approval
+record the root can't produce to you.
 
-- **A.** Hand over both.
-- **B.** Hand over the EXECUTE bearer only, after a check that its scope (change-manager #168) is
-  within the full bearer's, which the root already rotates; the observer bearer stays
-  hand-rotated.
-- **C.** Neither.
+- **A.** Hand it over, recorded in the threat model (T1).
+- **B.** Rotate it by hand in the pass.
+- **C.** Leave it hand-rotated at its normal age.
 
-**Recommendation: B.** If the check holds, the EXECUTE bearer adds no reach the root doesn't already
-have. The observer bearer would let whoever holds the root forge the carrier's check.
+**Recommendation: B.** Amendment 22 gives the carrier's check an identity of its own, never
+`orchestrator-system`. A hand
+rotation still rotates a credential the move created, and the root's read reach already reopens
+in the security phase with D-64.
+
+The EXECUTE bearer isn't asked here: its keeper is already in `Rotation / Keepers`, so a hand-over
+adds only the flag. HQ checks under D-84 condition 2 that its scope (change-manager #168) writes
+nothing the executor trusts, then hands it over.
 
 ## 5. The alert-hub sender's reach
 
 No adapter exists for the four sender tokens (two orchestrator rows, HQ's, and the unregistered
-bridge token). alert-hub's admin routes sit behind Cloudflare Access, and at the local clone's
-`35daeb47` they can create a sender or revoke one permanently, not reissue a token.
+bridge token). At the local clone's `35daeb47`, alert-hub's `/admin/*` routes sit behind
+Cloudflare Access (`accessMiddleware`). They can create a sender or revoke one permanently; a
+sender `PATCH` can't change its token.
 
-- **A.** The executor gets a Cloudflare Access service token scoped to `/admin/senders` and reissues
-  by machine. This adds a new identity and path.
+- **A.** The executor gets a Cloudflare Access service token of its own, scoped to
+  `/admin/senders`, and reissues by machine. This adds a new identity and path; the alert-hub MCP's
+  existing service token is another identity's.
 - **B.** A person reissues in the dashboard and pastes into the inbox; the executor proves, stores
   and waits for readers (the shape of amendments 33, 35 and 36).
 - **C.** Every sender token stays hand-rotated.
@@ -95,20 +103,21 @@ broker lanes and Mac processes that fetch fresh each run.
 **Recommendation: B.** Amendment 24 already says a new type is its own amendment, and the reach to
 the chain database is easier to judge there than as an extension of a restart-shaped type.
 
-## 7. Mac Keychain tokens with a second keeper copy, and idle tokens
+## 7. Mac Keychain tokens with a BWS keeper copy
 
 The bump-proposer, factory-events session and factory-events nightly tokens each have a Keychain
-item and a copy in `Rotation / Keepers`. The Keychain instance can't write that copy.
-`bws-bump-proposer-token` and `bws-cred-rotation-token` have no reader.
+item and a copy in `Rotation / Keepers`, which your D-54 A keeps as the keeper. The Keychain
+instance can't write that copy. The root already writes the project (decision 4), so it already
+reaches these copies.
 
-- **A.** You revoke the two idle tokens instead of rotating them, and delete the
-  `Rotation / Keepers` copies of the session and nightly tokens, so the Keychain item is each
-  one's keeper; the Keychain instance then rotates them.
-- **B.** Keep the copies; a code task gives the Keychain instance a BWS write identity.
-- **C.** All four stay hand-rotated.
+- **A.** Code task T6: the Keychain instance writes the Keychain item, and a host-instance unit
+  writes the copy. No grant is added.
+- **B.** The Keychain instance gets a BWS identity with write on the three copies, which is a new
+  identity.
+- **C.** All three stay hand-rotated, with a person updating both copies, as their rows say.
 
-**Recommendation: A.** A revoked token is safer than a rotated one nobody reads. One keeper per
-token is decision 4's shape, and B adds a write identity on the Mac.
+**Recommendation: A.** It keeps D-54 A's copy and adds no reach. `bws-cred-rotation-token`, which
+reads nothing, isn't asked: it stays as its row says until its age finding of 2027-07-02.
 
 ## 8. HQ's credentials with no type
 
@@ -124,10 +133,12 @@ Claude OAuth token.
 both services, so it can make them rotatable. Slack and Claude are third parties with no rotation
 API this session confirmed.
 
-## 9. Decision 4's hand-rotated set
+## 9. The executor's own credentials
 
-This covers the root token, the admin credentials, the executor's WORKER bearers, the Healthchecks
-keys, the executor's Coolify token, the rotation App's key and the helper key.
+Decision 4's hand-rotated set covers the root token (minted for the host at D-75 B), the admin
+credentials, the executor's WORKER bearers, the Healthchecks key, the executor's Coolify token and
+the rotation App's key. The Keychain instance's inbox token, the helper's key and the Healthchecks
+Management key are added here; whether that set names them is unverified.
 
 - **A.** Rotate each by hand in the pass, last, limited by item 1's answer.
 - **B.** Leave each at its normal age.

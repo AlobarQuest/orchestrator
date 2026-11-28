@@ -11,7 +11,7 @@ Handoff: sds-hq `state/handoffs/d48b-rotate-everything-plan.md`. Branch
   `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md`, with one `Amended:`
   line. It contains the source quote, what "the move" means and what was read, D-48's exposure
   closure, the scope lines with their sources, how the standing answers apply, the inventory, the
-  rows already rotatable, the proving order, code tasks T1 to T5 with exit checks, and ten open
+  rows already rotatable, the proving order, code tasks T1 to T6 with exit checks, and ten open
   items. It changes nothing that runs.
 - **The question file**, `docs/superpowers/reports/d48b-rotate-everything-plan-question.md`: each
   of the ten open items has options A, B and C, a recommendation with its reason, and the reply
@@ -77,10 +77,16 @@ Also read:
   Re-classing them is a registry edit, which is a stop point.
 - **The observer bearer is an open item, not a D-84 case.** Its identity files the record that
   admits a policy approval, which is the reach D-84's standing answer excludes.
+- **The EXECUTE bearer is HQ's check, not a question.** Its keeper is already in
+  `Rotation / Keepers`, so a hand-over adds only the flag, and D-84 condition 2 is a check HQ runs.
+- **Item 7 keeps D-54 A's BWS copies** (standing) and plans T6, adding no grant. A first draft
+  proposed deleting the copies and revoking the bump-proposer token. That contradicted D-54 A and
+  D-81 (6), which kept the bump-proposer account as an append holder.
 - **Keeper moves are gates, not questions**, under D-84's condition 1. New reach is an open item:
   items 3, 5 and 6.
 - **D-48's exposure is cited as closed by revoke.** The exposed 2026-11-13 token was revoked at G-92
-  (17:04 UTC on 2026-11-23), and its successor at G-112. #828's row removal isn't the closure
+  on 2026-11-23 (its revoke alert opened at 16:58 UTC and resolved at 17:04 UTC), and its successor
+  at G-112. #828's row removal isn't the closure
   (rule 1032).
 
 ## Tests and checks
@@ -110,7 +116,9 @@ Also read:
   (keeper move, grant, mint, revoke) is named as a gate.
 - **Unverified claims are marked:** the alert-hub source (no remote), whether the dev Coolify
   measurement and canary for the change-window token exist, whether the EXECUTE scope is within the
-  full bearer's, the brain service's key handling, and Slack's and Claude's rotation APIs.
+  full bearer's, whether decision 4's set names the inbox token, the helper's key and the
+  Management key, whether sds-hq and security-standards have member rows, the brain service's key
+  handling, and Slack's and Claude's rotation APIs.
 
 ## Concerns
 
@@ -119,8 +127,8 @@ Also read:
 2. **The alert-hub clone at `~/Projects/alert-hub` has no `origin`,** so I couldn't read it at
    `origin/main`. T3's amendment has to read the deployed source.
 3. **`orchestrator-factory-runner-bearer` is `true` but has no rotation package** at
-   intent-packages `cdf68a92`. Either it has never been rotated by the SDS, or its package has
-   another name. I didn't resolve which.
+   intent-packages `cdf68a92`, in `packages/` or `archive/`. Either the SDS has never rotated it,
+   or its package has another name. I didn't resolve which.
 4. **Two infraops findings are outside this task.** The Healthchecks Management key and
    `prod-coolify-api-token` are named in orchestrator's manifest, and no registry row covers them.
    Open item 10 covers both.

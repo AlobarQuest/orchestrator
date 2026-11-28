@@ -6712,8 +6712,8 @@ fake adapter by name).
 #### D-48's exposure is closed by revoke
 
 The token D-48 found in a transcript, the rotation decomposer's lane token issued 2026-11-13, was
-reissued under D-76 B at G-92, and Devon revoked it at 17:04 UTC on 2026-11-23 (confirm unit
-`de1da609`). Its successor was revoked with the other 12 lane tokens at G-112 on 2026-11-27, and
+reissued under D-76 B at G-92, and Devon revoked it on 2026-11-23, during confirm unit `de1da609`:
+the revoke alert opened at 16:58 UTC and resolved at 17:04 UTC. Its successor was revoked with the other 12 lane tokens at G-112 on 2026-11-27, and
 #828 (`e7016cb8`) removed the 13 rows after that. The exposure is closed by those revokes, as
 Infra Brain rule 1032 (`cred.exposure-rotate`) requires, and not by #828's row deletion.
 
@@ -6754,6 +6754,9 @@ Infra Brain rule 1032 (`cred.exposure-rotate`) requires, and not by #828's row d
   Keeper moves under D-84's condition 1 are Devon's acts, so they're gates, not questions. A
   credential whose reach is not gated that way, an admin credential, and a measurement choice
   remain Devon's, so items 2, 4 and 9 ask.
+- **Keychain token copies** (D-54 A, standing, 2026-11-15). A BWS machine token written to the Mac
+  Keychain keeps its copy in `Rotation / Keepers` as its keeper, and a hand rotation updates both.
+  Item 7 keeps that.
 
 #### 3. The inventory
 
@@ -6761,37 +6764,37 @@ Every row whose `rotated_by_sds` isn't `true`. "Adapter" names the type in `CLAS
 module, or "none". "In reach" is whether the executor instance that would rotate it can write its
 keeper. "Created" is the row's `created`.
 
-| Registry | Id | Class | Created | Adapter | In reach | Blocker | Proposed step |
-|---|---|---|---|---|---|---|---|
-| orchestrator | `orchestrator-system-bearer` | `orchestrator-m2m-bearer` | 2026-07-09 | `orchestrator` (`orchestrator_bearer.py`) | No: `SDS Operator` (read only, through the broker's token, D-83 (10) A) | Decision 4 keeps it hand-rotated; it joins only "by a separate decision" | Open item 2 |
-| orchestrator | `orchestrator-verifier-bearer` | `orchestrator-m2m-bearer` | 2026-07-10 | `orchestrator` | No: `SDS Operator` | As the SYSTEM bearer | Open item 2 |
-| orchestrator | `work-carrier-observer-bearer` | `orchestrator-m2m-bearer` | 2026-11-11 | `orchestrator` | No: `SDS Operator` | Its identity files the `standing_approval_check` record that admits a policy approval (amendment 22): reach not gated by a record the root can't produce, so outside D-84 | Open item 4 |
-| orchestrator | `coolify-estate-lander-token` | `coolify-api-token` | 2026-10-30 | `coolify-api-token` (amendment 33) | No: `SDS Operator` | Keeper move, G-116 (D-82 (11) A) | Referenced; joins after G-116 and its registry PR |
-| orchestrator | `coolify-revision-watcher-read-token` | `coolify-api-token` | 2026-11-15 | `coolify-api-token` | No: `Ops / Platform` | Keeper move, G-116 | Referenced; joins after G-116 |
-| orchestrator | `coolify-change-window-token` | `coolify-api-token` | 2026-11-22 | `coolify-api-token` | Yes: `Rotation / Keepers` | The dev measurement (D-82 (14)) and canary (D-82 (13) C), per the row's comment; their state is unverified here | Step 2: confirm both, then the flag PR and one rotation |
-| orchestrator | `alert-hub-sds-orchestrator-sender` | `alert-hub-sender-token` | 2026-11-05 | None | No: `Alert Hub Senders` | No type; alert-hub has no route that reissues a sender's token (only create and a permanent revoke, `routes.ts` at `35daeb47`); a `coolify-env-held` copy | Task T3, Open item 5 |
-| orchestrator | `alert-hub-report-change-window-sender` | `alert-hub-sender-token` | 2026-11-22 | None | Yes: `Rotation / Keepers` | No type; as the preceding row | Task T3; the type's first proof |
-| orchestrator | `anthropic-change-window-key` | `anthropic-api-key` | 2026-11-22 | `anthropic-key` (amendment 36) | Yes: `Rotation / Keepers` | Exit check 1 and `workspace_id`, G-115 | Referenced; joins after G-115 |
-| orchestrator | `lanes-read-app-private-key` | `github-app-private-key` | 2026-11-09 | `github-app-key` (amendment 35) | No: `SDS / Lane Apps` | Keeper move, G-116 (D-84 (8) A); exit checks 2 and 3 | Referenced; joins after G-116 |
-| orchestrator | `lanes-push-app-private-key` | `github-app-private-key` | 2026-11-09 | `github-app-key` | No: `SDS / Lane Apps` | As the read App's key | Referenced; joins after G-116 |
-| orchestrator | `factory-events-append-password` | `postgres-role-password` | Not recorded | `postgres-role` exists but doesn't fit: it rotates one Coolify service's role through a restart (amendment 24, FE-4, lines 3538-3543 at `bd3fb190`) | No: `Factory Events` | FE-4's type is undecided; readers include three Mac processes that fetch fresh each run | Task T4, Open item 6 |
-| orchestrator | `factory-events-read-password` | `postgres-role-password` | Not recorded | As the append password | No: `Factory Events` | As the append password; its readers are two broker lanes | Task T4; the type's first proof |
-| orchestrator | `bws-bump-proposer-token` | `bws-machine-token` | Not recorded | `bws-machine-token` (`bws_machine_token.py`, Keychain instance) | Keychain: yes. Its BWS copy in `Rotation / Keepers`: no (the Keychain instance writes no BWS secret but its inbox) | No reader in any repository; two keeper copies | Open item 7 |
-| orchestrator | `bws-factory-events-session-token` | `bws-machine-token` | Not recorded | `bws-machine-token` | As the preceding row | Two keeper copies; its one reader is interactive | Open item 7 |
-| change-manager | `change-manager-execute-bearer` | `change-manager-m2m-bearer` | 2026-11-22 | `change-manager` (`change_manager.py`) | Yes: `Rotation / Keepers` | "Not yet handed to the rotation executor" (row comment); no fingerprint on record | Open item 4, then step 1 |
-| factory-runner | `anthropic-api-key` | `anthropic-api-key` | Not recorded | `anthropic-key`, which refuses this row (amendment 36, Consequences) | No: `Ops / Platform` | Shared with repositories its census leaves out by design | Open item 1 |
-| infraops-mcp-server | `bws-cred-rotation-token` | `bws-machine-token` | 2026-07-02 | `bws-machine-token` | Keychain: yes | No reader and no project since 2026-11-01 (amendment 18) | Open item 7 |
-| infraops-mcp-server | `porkbun-api-keypair` | `porkbun-api-key` | 2026-10-29 | None (`UNTYPED`) | No: `Ops / Platform` | No type; Porkbun issues and revokes in its console (row comment) | Open item 1 |
-| localops | `fork-sync-app-private-key` | `github-app-private-key` | 2026-10-19 | `github-app-key` | No: `Ops / Platform` | localops isn't in `REGISTRY_REPOSITORIES`; five Actions-secret copies | Open items 1 and 3 |
-| security-standards | `bws-factory-events-nightly-token` | `bws-machine-token` | Not recorded | `bws-machine-token` | As `bws-bump-proposer-token` | security-standards isn't in `REGISTRY_REPOSITORIES`; two keeper copies | Open items 3 and 7 |
-| sds-hq | `sds-hq-healthchecks-ping-url` | `healthchecks-ping-url` | Not recorded | `healthchecks-ping-url` | No | Out of scope (ping URL) | None |
-| sds-hq | `sds-hq-alert-hub-token` | `alert-hub-sender-token` | Not recorded | None | No: `SDS HQ` | No type; sds-hq isn't in `REGISTRY_REPOSITORIES` | Task T3, Open items 3 and 5 |
-| sds-hq | `sds-hq-slack-bot-token` | `alert-hub-sender-token`, borrowed for its policy (provider `slack`) | Not recorded | None | No: `SDS HQ` | No Slack class or type; registry outside the four | Open item 8 |
-| sds-hq | `code-brain-contributor-key` | `brain-mcp-key` | Not recorded | None (`UNTYPED`) | No: `Brains - Contributor` | No type; a Coolify env copy (`CONTRIBUTOR_KEY`) on the brain deployment; registry outside the four | Task T5, Open item 8 |
-| sds-hq | `infra-brain-contributor-key` | `brain-mcp-key` | Not recorded | None | No: `Brains - Contributor` | As the Code Brain key | Task T5, Open item 8 |
-| sds-hq | `app-brain-contributor-key` | `brain-mcp-key` | Not recorded | None | No: `Brains - Contributor` | As the Code Brain key | Task T5, Open item 8 |
-| sds-hq | `sds-report-writer-hq` | `alert-hub-sender-token`, borrowed (provider `sds-report`) | Not recorded | None | No: `SDS Report` | No class or type; sds-report stores the key's digest | Open item 8 |
-| sds-hq | `bws-sds-hq-token` | `bws-machine-token` | Not recorded | `bws-machine-token` | Keychain: yes (no BWS copy known) | sds-hq isn't in `REGISTRY_REPOSITORIES` | Open item 3, then step 2 |
+| Registry | Id | Class | Created | Adapter | In reach | Handed over | Blocker | Proposed step |
+|---|---|---|---|---|---|---|---|---|
+| orchestrator | `orchestrator-system-bearer` | `orchestrator-m2m-bearer` | 2026-07-09 | `orchestrator` (`orchestrator_bearer.py`) | No: `SDS Operator` (read only, through the broker's token, D-83 (10) A) | No (no key) | Decision 4 keeps it hand-rotated; it joins only "by a separate decision" | Open item 2 |
+| orchestrator | `orchestrator-verifier-bearer` | `orchestrator-m2m-bearer` | 2026-07-10 | `orchestrator` | No: `SDS Operator` | No (no key) | As the SYSTEM bearer | Open item 2 |
+| orchestrator | `work-carrier-observer-bearer` | `orchestrator-m2m-bearer` | 2026-11-11 | `orchestrator` | No: `SDS Operator` (the root reads it through the broker's token, D-83 (10) A, but can't write it) | No (no key) | A hand-over needs the keeper moved into `Rotation / Keepers` (a gate), and gives the root standing write on the identity that files the `standing_approval_check` record (amendment 22). D-84 leaves reach not gated by an approval record the root can't produce to Devon | Open item 4 |
+| orchestrator | `coolify-estate-lander-token` | `coolify-api-token` | 2026-10-30 | `coolify-api-token` (amendment 33) | No: `SDS Operator` | No (no key) | Keeper move, G-116 (D-82 (11) A) | Referenced; joins after G-116 and its registry PR |
+| orchestrator | `coolify-revision-watcher-read-token` | `coolify-api-token` | 2026-11-15 | `coolify-api-token` | No: `Ops / Platform` | No (no key) | Keeper move, G-116 | Referenced; joins after G-116 |
+| orchestrator | `coolify-change-window-token` | `coolify-api-token` | 2026-11-22 | `coolify-api-token` | Yes: `Rotation / Keepers` | No (no key) | The dev measurement (D-82 (14)) and canary (D-82 (13) C), per the row's comment; their state is unverified here | Step 2: confirm both, then the flag PR and one rotation |
+| orchestrator | `alert-hub-sds-orchestrator-sender` | `alert-hub-sender-token` | 2026-11-05 | None | No: `Alert Hub Senders` | No (no key) | No type; alert-hub has no route that reissues a sender's token (only create and a permanent revoke, `routes.ts` at `35daeb47`); a `coolify-env-held` copy | Task T3, Open item 5 |
+| orchestrator | `alert-hub-report-change-window-sender` | `alert-hub-sender-token` | 2026-11-22 | None | Yes: `Rotation / Keepers` | No (no key) | No type; as the preceding row | Task T3; the type's first proof |
+| orchestrator | `anthropic-change-window-key` | `anthropic-api-key` | 2026-11-22 | `anthropic-key` (amendment 36) | Yes: `Rotation / Keepers` | No (no key) | Exit check 1 and `workspace_id`, G-115 | Referenced; joins after G-115 |
+| orchestrator | `lanes-read-app-private-key` | `github-app-private-key` | 2026-11-09 | `github-app-key` (amendment 35) | No: `SDS / Lane Apps` | No (`false`) | Keeper move, G-116 (D-84 (8) A); exit checks 2 and 3 | Referenced; joins after G-116 |
+| orchestrator | `lanes-push-app-private-key` | `github-app-private-key` | 2026-11-09 | `github-app-key` | No: `SDS / Lane Apps` | No (`false`) | As the read App's key | Referenced; joins after G-116 |
+| orchestrator | `factory-events-append-password` | `postgres-role-password` | Not recorded | `postgres-role` exists but doesn't fit: it rotates one Coolify service's role through a restart (amendment 24, FE-4, lines 3538-3543 at `bd3fb190`) | No: `Factory Events` | No (`false`) | FE-4's type is undecided; readers include three Mac processes that fetch fresh each run | Task T4, Open item 6 |
+| orchestrator | `factory-events-read-password` | `postgres-role-password` | Not recorded | As the append password | No: `Factory Events` | No (`false`) | As the append password; its readers are two broker lanes | Task T4; the type's first proof |
+| orchestrator | `bws-bump-proposer-token` | `bws-machine-token` | Not recorded | `bws-machine-token` (`bws_machine_token.py`, Keychain instance) | Keychain: yes. Its BWS copy in `Rotation / Keepers`: the host instance could write it, but the Keychain instance, which rotates this type, writes no BWS secret but its inbox | No (`false`) | No reader in this repository (row note). Its account was kept at the revoke so this token stays an append holder (D-81 (6), amendment 32 item 14). Two keeper copies: D-54 A keeps the BWS copy as its keeper | Open item 7 |
+| orchestrator | `bws-factory-events-session-token` | `bws-machine-token` | Not recorded | `bws-machine-token` | As the preceding row | No (`false`) | Two keeper copies; its one reader is interactive | Open item 7 |
+| change-manager | `change-manager-execute-bearer` | `change-manager-m2m-bearer` | 2026-11-22 | `change-manager` (`change_manager.py`) | Yes: `Rotation / Keepers` | No (no key) | "Not yet handed to the rotation executor" (row comment); no fingerprint on record. The keeper is already in the root's reach, so a hand-over adds only the flag; D-84 condition 2 asks HQ to check first that its scope (change-manager #168) writes nothing the executor trusts (unverified here) | Step 1: HQ's check, then the flag PR and one rotation |
+| factory-runner | `anthropic-api-key` | `anthropic-api-key` | Not recorded | `anthropic-key`, which refuses this row (amendment 36, Consequences) | No: `Ops / Platform` | No (no key) | Shared with repositories its census leaves out by design | Open item 1 |
+| infraops-mcp-server | `bws-cred-rotation-token` | `bws-machine-token` | 2026-07-02 | `bws-machine-token` | Keychain: yes | No (no key) | No reader and no project since 2026-11-01 (amendment 18) | Open item 7 |
+| infraops-mcp-server | `porkbun-api-keypair` | `porkbun-api-key` | 2026-10-29 | None (`UNTYPED`) | No: `Ops / Platform` | No (no key) | No type; Porkbun issues and revokes in its console (row comment) | Open item 1 |
+| localops | `fork-sync-app-private-key` | `github-app-private-key` | 2026-10-19 | `github-app-key` | No: `Ops / Platform` | No (no key) | localops isn't in `REGISTRY_REPOSITORIES`; six Actions-secret copies | Open items 1 and 3 |
+| security-standards | `bws-factory-events-nightly-token` | `bws-machine-token` | Not recorded | `bws-machine-token` | As `bws-bump-proposer-token` | No (`false`) | security-standards isn't in `REGISTRY_REPOSITORIES`; two keeper copies | Open items 3 and 7 |
+| sds-hq | `sds-hq-healthchecks-ping-url` | `healthchecks-ping-url` | Not recorded | `healthchecks-ping-url` | No | No (`false`) | Out of scope (ping URL) | None |
+| sds-hq | `sds-hq-alert-hub-token` | `alert-hub-sender-token` | Not recorded | None | No: `SDS HQ` | No (`false`) | No type; sds-hq isn't in `REGISTRY_REPOSITORIES` | Task T3, Open items 3 and 5 |
+| sds-hq | `sds-hq-slack-bot-token` | `alert-hub-sender-token`, borrowed for its policy (provider `slack`) | Not recorded | None | No: `SDS HQ` | No (`false`) | No Slack class or type; registry outside the four | Open item 8 |
+| sds-hq | `code-brain-contributor-key` | `brain-mcp-key` | Not recorded | None (`UNTYPED`) | No: `Brains - Contributor` | No (`false`) | No type; a Coolify env copy (`CONTRIBUTOR_KEY`) on the brain deployment; registry outside the four | Task T5, Open item 8 |
+| sds-hq | `infra-brain-contributor-key` | `brain-mcp-key` | Not recorded | None | No: `Brains - Contributor` | No (`false`) | As the Code Brain key | Task T5, Open item 8 |
+| sds-hq | `app-brain-contributor-key` | `brain-mcp-key` | Not recorded | None | No: `Brains - Contributor` | No (`false`) | As the Code Brain key | Task T5, Open item 8 |
+| sds-hq | `sds-report-writer-hq` | `alert-hub-sender-token`, borrowed (provider `sds-report`) | Not recorded | None | No: `SDS Report` | No (`false`) | No class or type; sds-report stores the key's digest | Open item 8 |
+| sds-hq | `bws-sds-hq-token` | `bws-machine-token` | Not recorded | `bws-machine-token` | Keychain: yes (no BWS copy known) | No (`false`) | sds-hq isn't in `REGISTRY_REPOSITORIES` | Open item 3, then step 2 |
 
 **Credentials with no registry row.** Found from sds-hq `state/goal.md` (the HQ registration
 follow-ups and carried item 3e-pua-rows) and from every `.bws-secrets.toml` UUID that no row's
@@ -6802,10 +6805,11 @@ follow-ups and carried item 3e-pua-rows) and from every `.bws-secrets.toml` UUID
 | HQ's Claude OAuth token | Keychain item `CLAUDE_CODE_OAUTH_TOKEN_SDS_HQ` (sds-hq `bin/hq-env.sh`) | Not recorded | No class; no API this session confirmed for creating or revoking one | Open items 8 and 10 |
 | `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE` | `b415d03b-…`, `SDS Operator` | Not recorded (bridge Part 3) | Read by 11 lanes through the broker, and by Mac launchers | Open items 1 and 10; task T3 |
 | `APP_BRAIN_READ_KEY` | `726a18ba-…`, `brains` | Not recorded | The revision watcher reads it through the broker; named only in the broker's `reach_secrets` | Open items 1 and 10 |
-| The Healthchecks Management key | `51509d5e-…`, `Ops / Platform` | Not recorded | The root reads it for ping-URL issues (amendment 23); 3e-pua-rows asks whether it gets a row | Open items 9 and 10 |
+| The Healthchecks Management key | `51509d5e-…`, `Ops / Platform` | Not recorded | The root reads it for ping-URL issues (amendment 23); 3e-pua-rows asks whether it gets a row. Whether decision 4's "the Healthchecks key" covers it is unverified | Open items 9 and 10 |
 | The Healthchecks read-only key | `f07b1368-…`, `Rotation / Healthchecks` | Not recorded | In decision 4's hand-rotated set | Open items 9 and 10 |
-| The executor's root token | A root-only file on the VPS host (decision 2, amendment 29) | Not recorded | In decision 4's hand-rotated set | Open item 9 |
-| The executor's other own credentials: its WORKER bearers (`rotation-executor`, `rotation-executor-keychain`), the Keychain instance's inbox token, the `Rotation / Admin` secrets, its Coolify token, the rotation App's key and the VPS helper's key | `Rotation / Executor`, `Rotation / Admin`, `Rotation / Coolify`, the Mac Keychain | Not recorded | Decision 4's hand-rotated set: "the executor never rotates them" (R8, R12) | Open item 9 |
+| The executor's root token | A root-only file on the VPS host (decision 2, amendment 29) | 2026-11-23 (D-75 B: a second token Devon minted for the host) | In decision 4's hand-rotated set; created by the move | Open item 9 |
+| The executor's WORKER bearers (`rotation-executor`, `rotation-executor-keychain`), the `Rotation / Admin` secrets, its Coolify token and the rotation App's key | `Rotation / Executor`, `Rotation / Admin`, `Rotation / Coolify`, the Mac Keychain | Not recorded | Decision 4's hand-rotated set (lines 227-228 at `bd3fb190`; the rotation App's key "stays in it as an admin credential", amendment 35): "the executor never rotates them" | Open item 9 |
+| The Keychain instance's inbox token and the VPS helper's key | The Mac Keychain; the VPS host | Not recorded | Whether decision 4's set names them is unverified here | Open item 9 |
 | `anthropic-key-sys-orchestrator` | `b56cf0df-…`, `Ops / Platform` | 2026-07-09 (manifest comment) | Factory runners' spend-capped key | Open items 1 and 10 |
 | `orchestrator-github-app-private-key-b64` | `8c36c6e6-…`, `Ops / Platform` | 2026-07-09 (manifest comment) | The dispatch App's key; the orchestrator mints from it | Open items 1 and 10 |
 | `prod-coolify-api-token` | `bbd71f41-…`, `Ops / Platform` | Not recorded | infraops-mcp-server owns it (orchestrator manifest comment), and its registry has no row | Open items 1 and 10 |
@@ -6847,10 +6851,10 @@ need code. A row joins only after its flag PR, which is a registry change made b
 repository's PR after the two queued registry writers merge.
 
 1. **Machine-only types on the VPS host executor.** `change-manager`: one rotation of
-   `change-manager-execute-bearer` if Open item 4 hands it over, or else of a handed-over bearer by
-   `rotate_requested` under Open item 1. `orchestrator`: `work-carrier-observer-bearer` if Open
-   item 4 hands it over, or else `orchestrator-observer-bearer` by `rotate_requested`. Neither
-   needs a person's act beyond the revision approval.
+   `change-manager-execute-bearer`, after HQ's D-84 condition 2 check and its flag PR.
+   `orchestrator`: `work-carrier-observer-bearer` if Open item 4 hands it over (after its keeper
+   moves, a gate), or else `orchestrator-observer-bearer` by `rotate_requested` under Open item 1.
+   Neither type needs a person's mint or revoke.
 2. **Person-mints types that are built.** `bws-machine-token` on the Keychain instance (the first
    row Open items 3 and 7 clear: `bws-sds-hq-token` or `bws-factory-events-session-token`);
    `coolify-api-token` (`coolify-change-window-token`, then the two G-116 rows); `github-app-key`
@@ -6872,7 +6876,8 @@ Each is planned work for its own pull request; none starts before its open item 
   `REGISTRY_REPOSITORIES` and to `membership_check`'s agreement with it. **Exit check:** the
   rotation proposer's `--submit` pass reads both registries and considers their handed-over rows;
   `membership_check` reports no `rotated_by_sds` row outside the tuple; the members' records carry
-  the `credential_rotation` grant (Devon's act) before the first flag PR.
+  the `credential_rotation` grant (Devon's act) before the first flag PR. Whether sds-hq and
+  security-standards have member rows today is unverified here.
 - **T2. Rows for the unregistered credentials** (Open item 10). Registry PRs in the owning
   repositories, each reader list from a UUID grep. **Exit check:** the next 03:00 security-drift
   scan reads each changed registry clean.
@@ -6894,6 +6899,12 @@ Each is planned work for its own pull request; none starts before its open item 
   Coolify copy. **Exit check:** one real rotation of `app-brain-contributor-key` (one reader), then
   the other two.
 
+- **T6. Keychain tokens' BWS copies** (Open item 7 A). A rotation of a `bws-machine-token` row
+  whose keeper has a `Rotation / Keepers` copy writes that copy too: the Keychain instance updates
+  the Keychain item, and a unit for the host instance, which already writes `Rotation / Keepers`,
+  writes the copy. **Exit check:** one real rotation of `bws-factory-events-session-token` leaves
+  the Keychain item and the copy with one fingerprint, and the old token refused.
+
 ### Open items
 
 1. **Open, for Devon: credentials that predate the move.** (A) Only credentials the move created,
@@ -6909,31 +6920,39 @@ Each is planned work for its own pull request; none starts before its open item 
    with a `credential_rotation` grant on each; localops stays hand-rotated (the 2026-11-19 standing
    answer keeps the fork chain on the Mac). (B) Their rows move into orchestrator's registry.
    (C) Every row in those three registries stays hand-rotated.
-4. **Open, for Devon: two bearers whose identity could reach approvals.** (A) Hand over both
-   `work-carrier-observer-bearer` and `change-manager-execute-bearer`. (B) Hand over the EXECUTE
-   bearer only, after a check that its scope (change-manager #168) is within the full bearer's, which
-   the root already holds; the observer bearer stays hand-rotated. (C) Neither.
-5. **Open, for Devon: the alert-hub sender's reach.** (A) The executor gets a Cloudflare Access
-   service token scoped to alert-hub's `/admin/senders` routes and reissues by machine (a new
-   identity and path). (B) A person reissues in the dashboard and pastes into the inbox, and the
+4. **Open, for Devon: the work carrier's observer bearer.** Its identity files the
+   `standing_approval_check` record that admits a policy approval (amendment 22). The root already
+   reads its keeper through the broker's token (D-83 (10) A, for development). A hand-over adds the
+   keeper's move into `Rotation / Keepers` and the root's standing write on it. (A) Hand it over,
+   recorded in the threat model (T1). (B) Rotate it by hand in the pass. (C) Leave it hand-rotated
+   at its normal age.
+5. **Open, for Devon: the alert-hub sender's reach.** alert-hub's `/admin/*` routes sit behind
+   Cloudflare Access (`accessMiddleware`, `routes.ts` at `35daeb47`), and a sender `PATCH` can't
+   change a token (`SENDER_PATCH_KEYS`). (A) The executor gets a Cloudflare Access service token of
+   its own, scoped to `/admin/senders`, and reissues by machine (a new identity and path; the alert-hub
+   MCP's existing service token is another identity's). (B) A person reissues in the dashboard and pastes into the inbox, and the
    executor proves, stores and waits for readers (the amendment 33, 35 and 36 shape). (C) Every
    sender token stays hand-rotated.
 6. **Open, for Devon: the factory-events passwords' type (FE-4).** (A) Extend `postgres-role` to
    a database with no Coolify consumer (a new helper target on `prod-vps`). (B) A new type, its own
    amendment (T4). (C) Both rotate by hand in the pass.
-7. **Open, for Devon: Mac Keychain tokens with a second keeper copy, and idle tokens.** (A) You
-   revoke `bws-bump-proposer-token` and `bws-cred-rotation-token` (no reader) instead of rotating
-   them, and delete the `Rotation / Keepers` copies of the factory-events session and nightly
-   tokens so that the Keychain item is each one's keeper; the Keychain instance then rotates them.
-   (B) Keep the copies, and a code task gives the Keychain instance a BWS write identity for them.
-   (C) All four stay hand-rotated.
+7. **Open, for Devon: Mac Keychain tokens with a BWS keeper copy.** The bump-proposer,
+   factory-events session and factory-events nightly tokens each keep a copy in
+   `Rotation / Keepers` (D-54 A). The Keychain instance can't write it. The root already writes
+   that project (decision 4), so it already reaches these copies. (A) Code task T6: the Keychain
+   instance writes the Keychain item, and a host-instance unit writes the copy, adding no grant.
+   (B) The Keychain instance gets a BWS identity with write on the three copies (a new identity).
+   (C) All three stay hand-rotated, a person updating both copies, as their rows say.
+   `bws-cred-rotation-token`, which reads nothing, stays as its row says until its age finding of
+   2027-07-02.
 8. **Open, for Devon: HQ's credentials with no type.** (A) Each gets a class of its own (infraops
    `CLASS_POLICY`) and is rotated by hand in the pass. (B) As A for the Slack bot token and the
    Claude OAuth token, and T5 plans an adapter for the Brain contributor keys and a later amendment
    one for the sds-report writer key, both services the estate runs. (C) They rotate at their
    normal age.
-9. **Open, for Devon: decision 4's hand-rotated set.** (A) Rotate each by hand in the pass, last,
-   limited by item 1's answer. (B) Leave each at its normal age. (C) Graduate some to machine
+9. **Open, for Devon: the executor's own credentials.** Decision 4's hand-rotated set, plus the
+   inbox token, the helper's key and the Management key, whose membership in that set is
+   unverified. (A) Rotate each by hand in the pass, last, limited by item 1's answer. (B) Leave each at its normal age. (C) Graduate some to machine
    rotation, each by its own decision.
 10. **Open, for Devon: which registry takes each unregistered credential.** (A) orchestrator takes
     the bridge sender token, `APP_BRAIN_READ_KEY`, the dispatch App key and
@@ -6953,8 +6972,9 @@ doesn't apply. Nothing here declares a credential exposed.
 
 - **The pass has a list.** Every credential not yet handed to the executor, in the seven registries
   and outside them, is named with its blocker and its step.
-- **Half the pass waits on Devon.** Steps 1 and 2 need Open items 3, 4 and 7, and gates G-115 and
-  G-116; step 3 needs items 5, 6 and 8 and three amendments.
+- **Most of the pass waits on Devon.** Step 1 needs HQ's EXECUTE check and Open items 1 and 4;
+  step 2 needs items 3 and 7 and gates G-115 and G-116; step 3 needs items 5, 6 and 8 and three
+  amendments.
 - **The tooling proof is one rotation per type.** Only `bws-lane-token` has rotated on the VPS
   host executor since the move, so each other type's first rotation in the pass is also its first
   on the host.
