@@ -1,7 +1,8 @@
 """Whether the decomposition gate may admit a standing approval's policy approver (ADR-0055 a22).
 
 Amendment 22 lets the policy approver `policy:non-software-operational@v<N>` approve a lane
-credential's revision 1 in place of a person, once the work carrier has run the standing
+credential's revision 1 in place of a person, and amendment 39 (D-88 A) a reissue, revision 2 or
+later, of an orchestrator or change-manager bearer, once the work carrier has run the standing
 approval's checks on it. A revision reaches intake by more doors than the carrier, and every door
 converges on the decomposition gate, so the exception lives there (`decomposition.py`,
 `_rotation_policy_outcome`), and this module is all of it.
@@ -14,8 +15,9 @@ and `content_hash`, and states that the carry form refused nothing. The carrier 
 it posts the intake, so it exists when the proposal's own transaction reads it.
 
 **ANYTHING ELSE REFUSES, AND A PERSON DECIDES.** A wrong approver prefix, a revision that isn't a
-lane credential's rotation revision 1, an unset identity, an absent or mismatched record, or a read
-that fails: each is a `PolicyRefusal`, never an exception and never a pass.
+lane credential's rotation revision 1 or a reissue type's later revision, a hand-rotated
+identity's credential id, an unset identity, an absent or mismatched record, or a read that fails:
+each is a `PolicyRefusal`, never an exception and never a pass.
 """
 
 from collections.abc import Mapping
@@ -46,6 +48,19 @@ LANE_PROVIDERS: Final = (
     'provider name="bws-lane-token"',
     'provider name="healthchecks-ping-url"',
 )
+# A reissue's two providers (amendment 39 R2), the same format, held to it by the same test.
+# not-a-vocabulary: whole destination strings a package lists, held to the executor's by test
+REISSUE_PROVIDERS: Final = (
+    'provider name="orchestrator"',
+    'provider name="change-manager"',
+)
+# Decision 4's identities a reissue never covers, refused here by the snapshot's credential id.
+# Spelled here for the reason the carrier's names are; the same test holds them equal to
+# `rotation_proposer.standing_approval.HAND_ROTATED_IDS`.
+HAND_ROTATED_IDS: Final = (  # not-a-vocabulary: registry ids, held to the proposer's by test
+    "orchestrator-system-bearer",
+    "orchestrator-verifier-bearer",
+)
 
 
 def is_standing_approver(approver: str) -> bool:
@@ -65,10 +80,17 @@ def standing_approval_refusal(
     `policy:non-software-operational@` prefix."""
     if revision.profile != ROTATION_PROFILE:
         return PolicyRefusal(UNRECORDED, ("not_a_rotation_revision",))
-    if revision.revision != 1:
-        return PolicyRefusal(UNRECORDED, ("not_revision_1",))
-    if not _names_one_lane_type(revision.enforcement_snapshot):
-        return PolicyRefusal(UNRECORDED, ("not_a_lane_type",))
+    if revision.revision == 1:
+        if not _names_one(revision.enforcement_snapshot, LANE_PROVIDERS):
+            return PolicyRefusal(UNRECORDED, ("not_a_lane_type",))
+    else:
+        if not _names_one(revision.enforcement_snapshot, REISSUE_PROVIDERS):
+            return PolicyRefusal(UNRECORDED, ("not_a_reissue_type",))
+        credential_id = _credential_id(revision.enforcement_snapshot)
+        if credential_id is None:
+            return PolicyRefusal(UNRECORDED, ("no_credential_id",))
+        if credential_id in HAND_ROTATED_IDS:
+            return PolicyRefusal(UNRECORDED, ("hand_rotated_identity",))
     if carrier_agent_id is None:
         return PolicyRefusal(UNRECORDED, ("carrier_identity_unset",))
     package_id = revision.work_package.package_id
@@ -91,12 +113,24 @@ def standing_approval_refusal(
     return None
 
 
-def _names_one_lane_type(snapshot: object) -> bool:
+def _profile_fields(snapshot: object) -> Mapping[str, object] | None:
     fields = snapshot.get("profile_fields") if isinstance(snapshot, Mapping) else None
-    destinations = fields.get("destinations") if isinstance(fields, Mapping) else None
+    return fields if isinstance(fields, Mapping) else None
+
+
+def _names_one(snapshot: object, providers: tuple[str, ...]) -> bool:
+    """The snapshot's destinations name exactly one of `providers`."""
+    fields = _profile_fields(snapshot)
+    destinations = fields.get("destinations") if fields is not None else None
     if not isinstance(destinations, list):
         return False
-    return sum(1 for item in destinations if item in LANE_PROVIDERS) == 1
+    return sum(1 for item in destinations if item in providers) == 1
+
+
+def _credential_id(snapshot: object) -> str | None:
+    fields = _profile_fields(snapshot)
+    credential_id = fields.get("credential_id") if fields is not None else None
+    return credential_id if isinstance(credential_id, str) and credential_id else None
 
 
 def _binds(facts: object, package_id: str, revision: WorkPackageRevision) -> bool:

@@ -7608,3 +7608,30 @@ This amendment edits none of them.
 | Decision 4, the hand-rotated set and the SYSTEM and VERIFIER bearers | Stand, and are refused by name (decision item 6). |
 | intent-packages `approval-policy.toml`, the rotation grant's rationale ("Revision 2 and later, and every other type, stay Devon's", line 151) | Changes with R3. |
 | Root `CLAUDE.md` line 377, `src/rotation_proposer/CLAUDE.md` line 5, `src/orchestrator/services/intake/CLAUDE.md` lines 24-35 | Change with R2. |
+
+### Correction to R1 and exit check 2 (2026-11-28, HQ's call, Opus review of #838)
+
+HQ settled three changes to R1 after an Opus review of #838, and R1 and R2 are built with them.
+First, `reissue` and `carry_reissue` gain `rotated_by_sds`: the credential's registry row sets
+`rotated_by_sds = true` (the standing answer's condition 1), and a row without it refuses. Second,
+`rotated_before` isn't a condition. The command reports it as a fact (a `standing_approval.fact`
+line giving infraops' `last_rotated`, the day revision 1 was approved, and whether the first is on
+or after the second), because reading 2 defines a first hand-over as no earlier approved revision,
+which `reissue_lineage` already checks, and refusing on a missing infraops date would narrow
+Devon's rule. An infraops read that fails still exits 2 (Code Brain rule 4). So R1's test list
+loses "`last_rotated` null" and "`last_rotated` before revision 1's approval" as refusals; both
+are tested as passes that report the fact. Exit check 2's last sentence becomes: "A covered row
+whose `last_rotated` is null, or earlier than revision 1's approval, passes and is reported by the
+`rotated_before` fact." Third, `reissue_lineage` requires revision 1's approver to be a name in a
+fixed list in code, `NAMED_APPROVERS` (`devon`, the only approver in these packages' lineages),
+not merely an approver without the `policy:` prefix; any other approver refuses.
+
+Building R1 and R2 settled four details the plan left open. Each approval before the tip must also
+be on its listed revision's hash, at most one per revision, by a named person or the policy. The
+carry form's lineage condition is named `policy_approved_reissue`, and it takes the emitter's
+verified approval, so a tip approval the verified chain event doesn't back refuses there as well
+as in the carrier's `_verified_approval`. `machine_plan` drops a separate "not the issue plan"
+check, because the plan it must equal is `plan_for`'s rotation plan, which is never an issue. The
+carrier puts the form in the observation's `source_reference` and idempotency key as well as its
+facts, so a row recorded before facts named the form is never replayed into
+`observation_conflict`.
