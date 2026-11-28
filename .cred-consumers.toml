@@ -1490,18 +1490,22 @@ abilities = ["read", "write", "deploy"]
 # key scoped to `sds-change-window` in the Claude Console and pastes it into the inbox; the executor
 # proves it (`GET /v1/models` answering 200 with `anthropic-workspace-id` equal to the row's
 # `workspace_id`, beside a never-issued key's 401), stores it, waits for the reader's green ping,
-# and after Devon deletes the old key in the Console proves it refused. The row isn't
-# rotated_by_sds yet, so it still falls to the manual checklist: exit check 1 (the probe on the
-# current key, which reads the `workspace_id` the row then declares) and exit check 2 (one real
-# rotation) come first, and until the row declares `workspace_id` the adapter refuses it.
+# and after Devon deletes the old key in the Console proves it refused. Exit check 1 passed at HQ
+# gate G-115 (2026-11-28): `rotation-worker probe` on the current key answered 200 for the key in
+# both header forms, each with `anthropic-workspace-id` wrkspc_01SCoDBC29w6Se2mJ2F86cT3, and 401 for
+# the control in both, and Devon confirmed in the Console that the id is `sds-change-window`'s.
+# Handed to the SDS and due by `rotate_requested`: that rotation is exit check 2, the first real one.
 [[credential]]
 id = "anthropic-change-window-key"
 class = "anthropic-api-key"
 provider = "anthropic"
 provider_identity = "Anthropic API key in workspace sds-change-window"
 bws_uuid = "0e9ebf2d-5b62-4f81-a731-b50a00e0df18"
+workspace_id = "wrkspc_01SCoDBC29w6Se2mJ2F86cT3"
 created = "2026-11-22"
 disposition = "reissue"
+rotated_by_sds = true
+rotate_requested = "2026-11-28"
 
   [[credential.consumer]]
   kind = "bws-secret"

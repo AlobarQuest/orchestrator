@@ -551,18 +551,20 @@ def test_check_row_refuses_factory_runner_s_shared_key_by_its_consumers() -> Non
         anthropic_key.check_row(shared)
 
 
-def test_the_row_declares_no_workspace_yet_and_stays_out_of_the_sds_s_hands() -> None:
-    """Exit check 1 reads the `workspace_id` from the current key, so until then the row is
-    refused before any claim, and it stays on the manual checklist (D-85)."""
+# The workspace exit check 1 read from the current key (G-115, 2026-11-28); an id, not a secret.
+CHANGE_WINDOW_WORKSPACE = "wrkspc_01SCoDBC29w6Se2mJ2F86cT3"
+
+
+def test_the_row_is_handed_to_the_sds_with_the_workspace_exit_check_1_read() -> None:
+    """Amendment 36: once exit check 1 read the workspace, the row declares it and is handed over
+    with a `rotate_requested` date, and the adapter accepts it. Exit check 2, the first real
+    rotation, comes after, since `_check_handed_to` refuses a unit on a row not handed over."""
     registry = tomllib.loads(
         (Path(__file__).resolve().parents[2] / ".cred-consumers.toml").read_text()
     )
     [row] = [r for r in registry["credential"] if r.get("class") == "anthropic-api-key"]
     assert row["id"] == CREDENTIAL
-    assert row.get("rotated_by_sds", False) is False
-    assert "rotate_requested" not in row
-    assert "workspace_id" not in row
-    with pytest.raises(ContractError, match="declares its workspace_id"):
-        anthropic_key.check_row(row)
-    # Its consumers are the adapter's: with the workspace declared, nothing else refuses.
-    anthropic_key.check_row({**row, "workspace_id": WORKSPACE})
+    assert row["rotated_by_sds"] is True
+    assert row["rotate_requested"] == "2026-11-28"
+    assert row["workspace_id"] == CHANGE_WINDOW_WORKSPACE
+    anthropic_key.check_row(row)

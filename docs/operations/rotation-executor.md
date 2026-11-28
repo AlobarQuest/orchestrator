@@ -1321,11 +1321,11 @@ stay on the old key. Its green ping proves the pass read a non-empty key, not th
 accepted it: the window exits 0 whatever each item's outcome, so a refused key shows as the
 digest's items failing (`tests/scripts/test_run_change_window.py`).
 
-The row isn't `rotated_by_sds` and declares no `workspace_id` yet, so the adapter refuses it.
-Amendment 36's exit checks come first: 1, a one-off probe of the current key ("Probe a kept key
-once") that records the 200, the control's 401 and the `anthropic-workspace-id` value, which Devon
-confirms is `sds-change-window`'s in the Console before the row declares it; and 2, one real
-rotation.
+Amendment 36's exit check 1, a one-off probe of the current key ("Probe a kept key once"),
+recorded the 200, the control's 401 and the `anthropic-workspace-id` value, which Devon confirmed
+is `sds-change-window`'s in the Console. The row then declared that `workspace_id` and was handed
+over (`rotated_by_sds`, with a `rotate_requested` date). Exit check 2 is its first real rotation,
+which runs only after the handover because the executor refuses a unit on a row not handed over.
 
 ### What the root reaches through this keeper
 
