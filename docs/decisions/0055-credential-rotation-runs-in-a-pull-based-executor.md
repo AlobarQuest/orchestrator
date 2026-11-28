@@ -59,7 +59,9 @@
     unit, and G-114's diagnostic, which found the child kept no output to name it).
   - 2026-11-28, amendment 38, proposed (the D-48 B pass: an inventory of every credential not yet
     handed to the executor, the scope lines, the proving order, the code tasks, and ten open items
-    for Devon).
+    for Devon; then Devon's D-86 answers to items 1 to 9, which narrow the pass to the eight
+    machine-rotated orchestrator and change-manager bearers, send everything else to Phase 2, and
+    leave two open items, D86-A and D86-B).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -6847,6 +6849,8 @@ So of the types that run, only `bws-lane-token` has rotated on the VPS host exec
 
 #### 4. The proposed order
 
+D-86 replaces this section's effect: see "The pass as answered".
+
 One real rotation per type is that type's proof, cheapest first: types where the executor mints
 and revokes go before types that need a person's acts, and types that exist go before types that
 need code. A row joins only after its flag PR, which is a registry change made by its owning
@@ -6871,6 +6875,8 @@ repository's PR after the two queued registry writers merge.
    recorded by fingerprint.
 
 #### 5. Code tasks
+
+D-86 replaces this section's effect: see "The pass as answered".
 
 Each is planned work for its own pull request; none starts before its open item is answered.
 
@@ -6979,6 +6985,233 @@ Each is planned work for its own pull request; none starts before its open item 
     the Claude OAuth token; the Healthchecks keys follow your 3e-pua-rows facts. (B) As A, but each
     credential's row goes to the repository whose code mints it. (C) No new rows; they stay off
     the registries.
+
+### D-86 answers (2026-11-28)
+
+HQ decision D-86 asked Devon open items 1 to 9. HQ's record of his answer, verbatim from sds-hq
+`state/decisions.md`:
+
+> Devon, interactive session, 2026-11-28, in his words: "Lets just rotate the inscope creds that are
+> handled via P1 for this work. Phase 2 will include moving more creds into P1, or out of SDS
+> altogether." Earlier in the same discussion: the goal is to rotate every credential SDS uses (not
+> every one it knows of), to exercise the rotation functionality and cover SDS credentials leaked
+> during the build. Clarified by his picks: (a) P1 means credentials whose executor adapter already
+> exists (Healthchecks ping URLs, orchestrator m2m bearers other than SYSTEM and VERIFIER,
+> change-manager bearers, and the like); no new adapter or type in this pass (factory-events
+> passwords' type and the Brain key adapter go to Phase 2); (b) work-carrier-observer-bearer is left
+> out (not handed over; normal age). Everything that needs Devon (P2) or a runbook (P3) is out of
+> this pass and goes to Phase 2. Mapping to the file's items: (1) the P1 subset of SDS-used
+> credentials, regardless of age; (2) C; (3) no registry change in this pass; (4) C; (5) C; (6) none
+> of A, B or C: the factory-events passwords aren't rotated in this pass and their type is a Phase 2
+> question; (7) C; (8) C; (9) B.
+
+The items, as answered:
+
+1. **Credentials that predate the move:** the P1 subset of the credentials SDS uses, whatever their
+   age. None of A, B or C as written.
+2. **The SYSTEM and VERIFIER bearers:** C. They stay hand-rotated at their normal age.
+3. **Registries outside the four:** no registry change in this pass. T1 doesn't start, and
+   security-standards', localops' and sds-hq's rows stay as their rows say.
+4. **The work carrier's observer bearer:** C. It isn't handed over and rotates at its normal age.
+5. **The alert-hub sender's reach:** C. Every sender token stays hand-rotated; T3 doesn't start.
+6. **The factory-events passwords' type (FE-4):** none of A, B or C. Neither password is rotated in
+   this pass, and the type is a Phase 2 question.
+7. **Mac Keychain tokens with a BWS keeper copy:** C. All three stay hand-rotated; T6 doesn't
+   start.
+8. **HQ's credentials with no type:** C. They rotate at their normal age; T5 doesn't start.
+9. **The executor's own credentials:** B. Each stays at its normal age.
+10. **Which registry takes each unregistered credential:** not asked in D-86, and moot for this
+    pass, since D-86 (3) makes no registry change. Deferred to Phase 2, with T2.
+
+**The scope rule (HQ's reading of D-86).** A row is in the pass when all four hold:
+
+- (i) SDS uses it: a consumer in an SDS repository or lane reads it.
+- (ii) Its class maps to a type in `CLASS_TYPES` at `d5793c2e` (`src/rotation_worker/types.py`
+  line 75).
+- (iii) Its type rotates with no person's act: no mint, paste, Console delete or revoke by Devon.
+  That is a type whose `Capabilities` set both `machine_mint` and `machine_revoke`
+  (`types.py` lines 34-70), so that `plans.derive` gives a plan with no `HumanAct`
+  (`src/rotation_worker/plans.py` lines 95-128). A derived plan never has a person attest a
+  consumer; it refuses a scheduled reader with no read instead.
+- (iv) It needs no registry change outside the row's own registry, no keeper move, and no new
+  adapter or type.
+
+Every other row is out, and each is a Phase 2 input. A package revision that Devon approves by name
+isn't a person's act under (iii): every rotation of a standing package needs one (see "What
+approves each rotation").
+
+### The pass as answered
+
+This section replaces the effect of "4. The proposed order" and "5. Code tasks", which stay as
+written. Each task there is out of this pass and a Phase 2 input (D-86):
+
+- **T1** (a registry outside the four): out of this pass, Phase 2 input (D-86 (3)).
+- **T2** (rows for the unregistered credentials): out of this pass, Phase 2 input (D-86 (3), item
+  10 deferred).
+- **T3** (an alert-hub sender adapter): out of this pass, Phase 2 input (D-86 (5) C).
+- **T4** (a factory-events role type): out of this pass, Phase 2 input (D-86 (6)).
+- **T5** (a Brain contributor-key type): out of this pass, Phase 2 input (D-86 (8) C).
+- **T6** (Keychain tokens' BWS copies): out of this pass, Phase 2 input (D-86 (7) C).
+
+#### What was read for this section
+
+The registries at their repositories' `origin/main` as cloned on 2026-11-28, by `git show` only:
+orchestrator `d5793c2e` (39 rows), change-manager `f7f8bc07` (5 rows; its `.cred-consumers.toml`
+is unchanged from amendment 38's `ebd43ee4`), factory-runner `5aadb110` (2), infraops-mcp-server
+`35b82caf` (9), localops `34319282` (1), security-standards `568376e7` (1) and sds-hq `ed06e3ab`
+(8): 65 rows. Since amendment 38's read, orchestrator's `anthropic-change-window-key` gained
+`rotated_by_sds = true` (#833). The standing packages are intent-packages `cdf68a92`. Each row's
+plan was derived in-process with `plans.candidates` from its registry row, and each package's
+criteria and destinations were compared with `plans.select_plan` and `destinations.same`, the
+reads the decomposer makes (`src/rotation_decomposer/decompose.py` lines 58-78).
+
+#### The rows in the pass
+
+Eight rows, plus `change-manager-execute-bearer` if Open item D86-B lets its flag be set. Every row
+is in a registry the executor reads (`REGISTRY_REPOSITORIES`), its keeper is a `Rotation / Keepers`
+BWS secret, and its derived plan has no person's act and no reader without a read. (i) holds for
+each because the SDS service it authenticates to holds its hash (a `coolify-env-hash` consumer),
+and D-86's clarification names both bearer classes.
+
+| Registry | Id | Class | Type and adapter module | Handed over | What approves the rotation | Blocker | Source |
+|---|---|---|---|---|---|---|---|
+| orchestrator | `orchestrator-operator-bearer` | `orchestrator-m2m-bearer` | `orchestrator` (`adapters/orchestrator_bearer.py`) | Yes | Revision 2 (tip revision 1, approved 2026-10-15): Devon by name | The due trigger (Open item D86-B) | `.cred-consumers.toml` line 287; `types.py` lines 35-37 |
+| orchestrator | `orchestrator-observer-bearer` | `orchestrator-m2m-bearer` | `orchestrator` | Yes | Revision 3: Devon by name. Revision 2's destinations differ from the registry's (it lists `run-fork-harden.sh` and `run-tool-installer.sh`; the registry lists `run-change-proposer.sh`, `run-execution-watch.sh` and `run-work-carrier.sh`), so the decomposer refuses revision 2 and revision 3 carries the registry's | The due trigger | `.cred-consumers.toml` line 328; `decompose.py` lines 71-78 |
+| orchestrator | `orchestrator-drift-reporter-bearer` | `orchestrator-m2m-bearer` | `orchestrator` | Yes | Revision 3: Devon by name | The due trigger. Retire also waits for its two Sunday 03:00 readers (`verify-backup.sh`, `hetzner-snapshot.sh`), since weekly readers gate retire | `.cred-consumers.toml` line 439 |
+| orchestrator | `orchestrator-factory-runner-bearer` | `orchestrator-m2m-bearer` | `orchestrator` | Yes | Revision 1, generated by the rotation proposer (no package at `cdf68a92`): Devon by name, since the standing approval covers only lane types | The due trigger. Seven Actions-secret copies (`FACTORY_RUNNER_TOKEN`), each repository's `secret-fingerprint.yml` lists that name at `origin/main`; retire waits while a dispatched run is live | `.cred-consumers.toml` line 537; `standing_approval.py` line 38 |
+| change-manager | `change-manager-full-bearer` | `change-manager-m2m-bearer` | `change-manager` (`adapters/change_manager.py`) | Yes | Revision 3: Devon by name | The due trigger. `drift-audit.sh`, the reader `change_manager.py` names as the attested case, now has a read (`healthchecks_check = "Infra Standards Drif"`), so the derived plan has no attest | change-manager `.cred-consumers.toml` lines 20 and 50; `types.py` lines 40-42 |
+| change-manager | `change-manager-read-bearer` | `change-manager-m2m-bearer` | `change-manager` | Yes | Revision 4: Devon by name. Revision 3 lacks the registry's `run-rotation-decomposer.sh` reader, so the decomposer refuses it | The due trigger. A `coolify-env-held` copy, which the orchestrator reports | change-manager `.cred-consumers.toml` line 68 |
+| change-manager | `change-manager-propose-bearer` | `change-manager-m2m-bearer` | `change-manager` | Yes | Revision 2: Devon by name | The due trigger | change-manager `.cred-consumers.toml` line 146 |
+| change-manager | `change-manager-observe-bearer` | `change-manager-m2m-bearer` | `change-manager` | Yes | Revision 2: Devon by name | The due trigger | change-manager `.cred-consumers.toml` line 202 |
+| change-manager | `change-manager-execute-bearer` | `change-manager-m2m-bearer` | `change-manager` | No: no `rotated_by_sds` key | Revision 1, generated by the proposer: Devon by name | Open item D86-B (its flag), and HQ's D-84 condition 2 check that its scope (change-manager #168) writes nothing the executor trusts, unverified here | change-manager `.cred-consumers.toml` line 240 |
+
+#### What approves each rotation
+
+Every rotation is a new package revision. The rotation proposer takes a standing package to a
+revision carrying the new occurrence and the registry's destinations, and revises any package that
+isn't a draft (`src/rotation_proposer/standing.py` lines 256-291). So each in-pass row needs one
+revision approved, and none is approved by policy:
+
+- **Revision 2 and later** needs Devon's approval by name (sds-hq standing answer 2026-11-10, D-34
+  A: "Reissues, revision 2 and later, still need Devon's approval by name"). Seven rows.
+- **Revision 1** is approved by the standing approval's policy only for a lane type
+  (`bws-lane-token` or `healthchecks-ping-url`, `standing_approval.py` lines 38-41; amendment 22).
+  `orchestrator-factory-runner-bearer` and `change-manager-execute-bearer` are neither, so Devon
+  approves them by name too.
+
+No paired intent-packages revision is needed before the rotation's own: the two destination
+mismatches (the observer and read bearers) are corrected by the revision each rotation makes.
+
+**One sitting.** All nine revisions reach `ready_for_review` through the proposer's passes, and
+Devon approves them in one sitting in the intent-packages checkout. The `work` records that follow
+are approved by change-manager's work policy (standing rotation packages, change class
+`credential-rotation`). The units then run one at a time: each restarts the orchestrator or
+change-manager in the `live_estate` window, change-manager's restarts wait for its readers, and the
+orchestrator's wait for no dispatched run to be live.
+
+#### What the pass leaves out
+
+Each line is a Phase 2 input, with the rule or answer that puts it out.
+
+orchestrator (`d5793c2e`):
+
+- `orchestrator-system-bearer`, `orchestrator-verifier-bearer`: D-86 (2) C.
+- `work-carrier-observer-bearer`: D-86 (4) C.
+- `bws-sds-operator-token`: (iii), `bws-machine-token` has a person mint and revoke (`types.py`
+  lines 43-45).
+- `rotation-canary`: (ii), its class has no type; the canary rotates by the fake adapter by name.
+- `coolify-estate-lander-token`, `coolify-revision-watcher-read-token`,
+  `coolify-change-window-token`: (iii), `coolify-api-token` has a person mint and revoke (line 64).
+  Amendment 33's hand-overs continue under it.
+- `alert-hub-sds-orchestrator-sender`, `alert-hub-report-change-window-sender`: (ii), no type;
+  D-86 (5) C.
+- `secrets-broker-bws-token`: (iii), `bws-lane-token` has a person mint (lines 54-56). Rotated
+  since the move at G-114.
+- `lanes-read-app-private-key`, `lanes-push-app-private-key`: (iii), `github-app-key` (line 67).
+  Amendment 35's hand-overs continue under it.
+- `factory-events-append-password`, `factory-events-read-password`: D-86 (6), and (iv), since
+  `postgres-role` doesn't fit them (amendment 24, FE-4).
+- `bws-bump-proposer-token`, `bws-factory-events-session-token`: (iii); D-86 (7) C.
+- `anthropic-change-window-key`: (iii), `anthropic-key` (line 70). Amendment 36's hand-over
+  continues under it.
+- The 17 ping-URL rows (`execution-watch`, `landing-ledger`, `deploy-watcher`,
+  `revision-watcher`, `unit-verifier`, `pin-watcher`, `membership-check`, `change-proposer`,
+  `rotation-decomposer`, `work-carrier`, `bump-proposer`, `rotation-proposer`, `inert-landing`,
+  `estate-landing`, `bump-driver`, `follow-up-mint` and `change-window`, each `-ping-url`):
+  `healthchecks-ping-url` has no rotation plan once issued (`plans.py` lines 61-63, D-77). The
+  18th ping URL is sds-hq's. Open item D86-A.
+
+factory-runner (`5aadb110`):
+
+- `factory-pr-token`: (iii), `github-pat` has a person mint (line 38).
+- `anthropic-api-key`: (iii), `anthropic-key`, which also refuses this row (amendment 36).
+
+infraops-mcp-server (`35b82caf`):
+
+- `github-finegrained-mirror`: (iii), `github-pat`; and (i), its one reader is
+  github-to-bitbucket-mirror.
+- `bitbucket-mirror-token`: (iii), `bitbucket` has a person mint and revoke (line 39); and (i), as
+  the preceding row.
+- `openrouter-generic`: (i). Its row names only its keeper ("the only stored copy"), and a grep of
+  its BWS UUID across orchestrator, change-manager, factory-runner, intent-packages and sds-hq
+  finds only test fixtures and its own package.
+- `alobar-id-postgres`: (i). Its reader is Alobar ID's server and worker containers; the same grep
+  finds only its own package.
+- `bws-tok-ops-mini-20260730`, `bws-tok-content-mini`, `bws-tok-brain-ops`,
+  `bws-cred-rotation-token`: (iii), `bws-machine-token`.
+- `porkbun-api-keypair`: (ii), no type.
+
+localops (`34319282`):
+
+- `fork-sync-app-private-key`: (iii), `github-app-key`; and (iv), localops isn't in
+  `REGISTRY_REPOSITORIES` (D-86 (3)).
+
+security-standards (`568376e7`):
+
+- `bws-factory-events-nightly-token`: (iii); (iv); D-86 (7) C.
+
+sds-hq (`ed06e3ab`):
+
+- `sds-hq-healthchecks-ping-url`: as orchestrator's ping URLs; and (iv). Open item D86-A.
+- `sds-hq-alert-hub-token`, `sds-hq-slack-bot-token`, `sds-report-writer-hq`: (ii), no type;
+  (iv); D-86 (5) C and (8) C.
+- `code-brain-contributor-key`, `infra-brain-contributor-key`, `app-brain-contributor-key`: (ii),
+  no type (the Brain key adapter is Phase 2); (iv); D-86 (8) C.
+- `bws-sds-hq-token`: (iii); (iv).
+
+The 11 credentials with no registry row (amendment 38's second table) are out: each needs a row,
+which D-86 (3) defers with item 10. The executor's own credentials among them stay at their normal
+age (D-86 (9) B).
+
+**Count.** 8 rows in, 1 waiting on Open item D86-B, and 56 out: 65 rows. Of the 56, 18 are ping
+URLs, which Open item D86-A may move.
+
+#### The pass's proof
+
+Two types run in the pass, `orchestrator` and `change-manager`, both machine-only on the VPS host
+executor. Neither has rotated on the host since the move (amendment 38, "Rows already rotatable"),
+so each type's first rotation in the pass is its proof there. The other types this amendment's
+inventory names wait for Phase 2 or for their own amendments.
+
+#### D-86's open items
+
+- **D86-A. Open, for Devon: Healthchecks ping URLs.** D-86's clarification names ping URLs as P1,
+  but an issued ping URL has no rotation plan (`plans.py` lines 61-63, D-77), and amendment 38's
+  scope puts them out. (A) Out, as amendment 38 says. (B) In, by recreating each check, which is a
+  person's Healthchecks act and so P2 by D-86's own rule. HQ recommends A: B needs a person's act
+  for every row, which D-86 sends to Phase 2.
+- **D86-B. Open, for Devon: edits inside a row's own registry.** D-86 (3) says "no registry change
+  in this pass". Two edits would stay inside a row's existing registry, which HQ's reading (iv)
+  allows: `change-manager-execute-bearer`'s `rotated_by_sds = true`, and a `rotate_requested` date
+  on each in-pass row. infraops reports a row due by an open exposure, by its class's maximum age,
+  or by a `rotate_requested` date later than its last rotation
+  (`src/rotation_proposer/findings.py` lines 3-6 and 124-137). A row that isn't due by exposure or
+  age rotates only after that date is written. (A) Both edits are allowed: (3) covers moves
+  between registries and new rows. (B) Neither is allowed: the execute bearer is out, and the eight
+  rows rotate only as infraops reports them due. (C) `rotate_requested` dates only: the execute
+  bearer is out. HQ recommends A, with the execute bearer's flag only after HQ's D-84 condition 2
+  check: both edits add no reach, keeper or type, and without the dates the pass rotates only
+  what is already due.
 
 ### What it grants, and nothing more
 
