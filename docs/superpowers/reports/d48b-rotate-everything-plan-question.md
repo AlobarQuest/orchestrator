@@ -42,14 +42,38 @@ The executor reads only infraops-mcp-server, orchestrator, change-manager and fa
 (`REGISTRY_REPOSITORIES`). sds-hq (seven in-scope rows), security-standards (one) and localops
 (one) are outside it.
 
-- **A.** Add sds-hq and security-standards, each with a `credential_rotation` grant you give on
-  its member record; localops stays hand-rotated, because your 2026-11-19 answer keeps the fork
-  chain on the Mac.
-- **B.** Move their rows into orchestrator's registry.
-- **C.** Every row in those three registries stays hand-rotated.
+The executor reads registries only through its git mirrors (`registry.py` lines 4-6 at
+`bd3fb190`), which fetch with no credential because every repository they read is public
+(`git_mirror.py` lines 1-7). security-standards is public; sds-hq is private (`gh repo view`,
+2026-11-28). So this item has two answers: a letter for security-standards and localops, and a
+numeral for sds-hq.
 
-**Recommendation: A.** It's a small code change (task T1) plus your grant, and each repository keeps
-owning its own rows.
+For security-standards and localops:
+
+- **A.** Add security-standards (task T1), with a `credential_rotation` grant you give on its
+  member record; localops stays hand-rotated, because your 2026-11-19 answer keeps the fork chain
+  on the Mac.
+- **B.** Move their rows into orchestrator's registry.
+- **C.** Every row in those two registries stays hand-rotated.
+
+**Recommendation: A.** It's a small code change plus your grant, it needs no new reach because
+the repository is public, and security-standards keeps owning its row.
+
+For sds-hq's seven in-scope rows:
+
+- **(i)** The mirror gets a read-only GitHub credential for sds-hq. This is a new reach for the
+  executor and the proposer, and it changes the mirror's no-credential design. sds-hq then joins
+  `REGISTRY_REPOSITORIES` with a `credential_rotation` grant you give on its member record.
+- **(ii)** Move the rows into orchestrator's registry, as B does. The executor gates a row by its
+  registry's repository's grant (`grants.py`), so the moved rows fall under orchestrator's existing
+  `credential_rotation` grant.
+- **(iii)** They stay hand-rotated.
+
+**Recommendation: (ii).** It adds no identity or network reach and keeps the mirror's
+no-credential design. It does put seven HQ credentials under orchestrator's existing grant, so
+that grant then covers them; you approve that by choosing (ii). (i) would give the root read on HQ's private state repository to rotate seven rows, a
+wider credential than the pass needs (your 2026-11-18 narrowest-credential answer). The cost is
+that sds-hq no longer owns those rows' registry entries.
 
 ## 4. The work carrier's observer bearer
 
@@ -80,10 +104,11 @@ Cloudflare Access (`accessMiddleware`). They can create a sender or revoke one p
 sender `PATCH` can't change its token.
 
 - **A.** The executor gets a Cloudflare Access service token of its own, scoped to
-  `/admin/senders`, and reissues by machine. This adds a new identity and path; the alert-hub MCP's
-  existing service token is another identity's.
-- **B.** A person reissues in the dashboard and pastes into the inbox; the executor proves, stores
-  and waits for readers (the shape of amendments 33, 35 and 36).
+  `/admin/senders`, and creates the new sender and revokes the old one by machine. This adds a new
+  identity and path; the alert-hub MCP's existing service token is another identity's.
+- **B.** A person creates a new sender in the dashboard and pastes its token into the inbox; the
+  executor proves, stores and waits for readers, and the person then revokes the old sender (the
+  shape of amendments 33, 35 and 36).
 - **C.** Every sender token stays hand-rotated.
 
 **Recommendation: B.** It adds no identity, and it matches the three adapters you approved this
@@ -160,6 +185,6 @@ existing rows were placed.
 
 ## Reply
 
-Reply line, items 1 to 10 in order:
+Reply line, items 1 to 10 in order (item 3 takes a letter and a numeral):
 
-`D-n: C, C, A, B, B, B, A, B, A, A`
+`D-n: C, C, A (ii), B, B, B, A, B, A, A`

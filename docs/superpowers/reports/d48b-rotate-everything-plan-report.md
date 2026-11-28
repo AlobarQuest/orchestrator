@@ -17,7 +17,8 @@ Pull request: https://github.com/AlobarQuest/orchestrator/pull/832 (open, not me
   items. It changes nothing that runs.
 - **The question file**, `docs/superpowers/reports/d48b-rotate-everything-plan-question.md`: each
   of the ten open items has options A, B and C, a recommendation with its reason, and the reply
-  line `D-n: C, C, A, B, B, B, A, B, A, A`.
+  line `D-n: C, C, A, B, B, B, A, B, A, A`. Round 1 split item 3 and changed this line; see
+  "Round 1".
 
 ## What I read
 
@@ -157,3 +158,57 @@ Also read:
   - 2026-11-18: narrowest credential.
   - D-82: proof setup.
   - D-83 and D-84: root reach, with D-84's exclusion applied to the observer bearer.
+
+## Round 1
+
+Fix round 1 of 2, by W-337 (sds-hq `state/handoffs/d48b-rotate-everything-plan-fix-1.md`), after
+HQ's Opus whole-branch review of `5e6a0274`. `git log 5e6a0274..origin/hq/d48b-rotate-everything-plan`
+was empty before the work began. Head before this round: `5e6a0274`; new head: the commit that
+adds this section (see the pull request's commit list).
+
+### Edits
+
+1. **sds-hq needs a reach T1 didn't name (blocking).** `git_mirror.py` lines 1-7 at `bd3fb190`
+   say every repository the executor reads is public and no credential is passed; `registry.py`
+   lines 4-6 read registries only through `RepoMirror`. `gh repo view` (2026-11-28): sds-hq is
+   PRIVATE, security-standards PUBLIC. T1 now adds security-standards only, states the fact with
+   both citations, and leaves sds-hq to Open item 3. Item 3 is now two choices in both files: A, B
+   or C for security-standards and localops, and (i) a read-only GitHub credential for the mirror
+   (new reach, then sds-hq joins `REGISTRY_REPOSITORIES` with its grant), (ii) the rows move into
+   orchestrator's registry, under orchestrator's existing grant (`grants.py` gates a row by its
+   registry's repository), or (iii) hand-rotated, for sds-hq. The question file recommends A and
+   (ii), with reasons, and says (ii) puts seven HQ credentials under orchestrator's grant. The amendment's "every grant, reach or
+   path is an open item or a gate" is true for T1: the security-standards grant is Devon's act
+   before the first flag PR, and sds-hq's reach is item 3 (i).
+2. **Proof setup** restates D-82 exactly: one canary application holding a single non-secret
+   variable and up to three throwaway dev Coolify tokens Devon mints and revokes (gates), for the
+   same kinds of proof only; production probe tokens stay Devon's decision.
+3. **`UNTYPED`:** "Seven classes have none (`UNTYPED`); among them are …".
+4. **Item 5:** B now says a person creates a new sender, pastes its token into the inbox, and
+   revokes the old sender after the executor's proof and reader wait. A said "reissues by machine",
+   the same unsupported claim, so it now says "creates the new sender and revokes the old one by
+   machine". Both files agree.
+
+New reply line: `D-n: C, C, A (ii), B, B, B, A, B, A, A` (item 3 takes a letter and a numeral).
+The round-0 line earlier in this report is the record of the first draft.
+
+### Checks
+
+- Token-shape grep of the added lines of `git diff bd3fb190..HEAD` (the BWS token shape, and an
+  inline assignment of the bootstrap token variable): 0 matches in 787 added lines.
+- Docs only, so `make check` wasn't rerun; no code, manifest or ignore file changed.
+
+### Concerns
+
+- Follow-ups 5 to 12 from the fix handoff are written into #832's body, not edited here.
+- Item 5 A was edited though the handoff named only B: A said "reissues by machine", the same
+  claim alert-hub's routes don't support. HQ may revert it if it wants B alone changed.
+- The worker report for this round is `d48b-rotate-everything-plan-fix-1-report.md`, left
+  uncommitted so the pull request touches only the three named files.
+
+### Standards followed, round 1
+
+The section `Standards followed` still holds. Round 1 adds: Code Brain 5 and Infra Brain 591-593,
+no value and no token-shaped string written (grep, 0 matches); the 2026-11-06 limit 2, sds-hq's
+new reach is an open item and not carried into T1; the 2026-11-18 narrowest-credential answer,
+the reason item 3 recommends (ii) over (i); D-82, restated as given.

@@ -6705,9 +6705,9 @@ can write: `Rotation / Keepers` for the VPS host instance (decision 4), the Mac 
 the Keychain instance (amendment 12; `com.devon.rotation-worker` is loaded in launchd on
 2026-11-28, and its configuration's one BWS secret is its inbox, `config.py` lines 8-10).
 
-Types exist for 12 classes (`CLASS_TYPES`). These classes have none: `alert-hub-sender-token`,
-`brain-mcp-key`, `porkbun-api-key` and `rotation-canary` (`UNTYPED`; the canary rotates by the
-fake adapter by name).
+Types exist for 12 classes (`CLASS_TYPES`). Seven classes have none (`UNTYPED`); among them are
+`alert-hub-sender-token`, `brain-mcp-key`, `porkbun-api-key` and `rotation-canary` (the canary
+rotates by the fake adapter by name).
 
 #### D-48's exposure is closed by revoke
 
@@ -6746,8 +6746,10 @@ Infra Brain rule 1032 (`cred.exposure-rotate`) requires, and not by #828's row d
   or adapter that touches a new host is an open item here, and nothing merges as granted.
 - **Narrowest credential** (2026-11-18). Where a credential gets a new row or a new reader, HQ
   plans the narrowest one; the pass widens no credential to make it rotatable.
-- **Proof setup** (2026-11-26, D-82). An adapter planned here measures with a canary or up to
-  three throwaway dev tokens without a new decision; anything beyond that is open.
+- **Proof setup** (2026-11-26, D-82). An adapter planned here measures, without a new decision,
+  with one canary application holding a single non-secret variable and up to three throwaway
+  tokens on dev Coolify that Devon mints and revokes (gates), for the same kinds of proof only.
+  Production probe tokens stay Devon's decision, and anything beyond that is open.
 - **Root reach in development** (2026-11-26, D-83 and D-84). A keeper the root reads through
   another identity's token, or a key the root holds with write reach that an approval record the
   root can't produce gates, is accepted for development and recorded in the threat model (T1).
@@ -6872,12 +6874,17 @@ repository's PR after the two queued registry writers merge.
 
 Each is planned work for its own pull request; none starts before its open item is answered.
 
-- **T1. Registries outside the four** (Open item 3 A). Add sds-hq and security-standards to
-  `REGISTRY_REPOSITORIES` and to `membership_check`'s agreement with it. **Exit check:** the
-  rotation proposer's `--submit` pass reads both registries and considers their handed-over rows;
-  `membership_check` reports no `rotated_by_sds` row outside the tuple; the members' records carry
-  the `credential_rotation` grant (Devon's act) before the first flag PR. Whether sds-hq and
-  security-standards have member rows today is unverified here.
+- **T1. A registry outside the four** (Open item 3 A). Add security-standards to
+  `REGISTRY_REPOSITORIES` and to `membership_check`'s agreement with it. The executor reads every
+  registry through `RepoMirror` (`registry.py` lines 4-6 at `bd3fb190`), whose mirrors fetch with
+  no credential because every repository it reads is public (`git_mirror.py` lines 1-7 at
+  `bd3fb190`). security-standards is public, so T1 adds no reach beyond its grant. sds-hq is
+  private (`gh repo view`, 2026-11-28), so adding it needs a reach this task doesn't add: Open
+  item 3's separate sds-hq choice decides it. **Exit check:** the rotation proposer's `--submit`
+  pass reads security-standards' registry and considers its handed-over rows; `membership_check`
+  reports no `rotated_by_sds` row outside the tuple; the member record carries the
+  `credential_rotation` grant (Devon's act) before the first flag PR. Whether security-standards
+  has a member row today is unverified here.
 - **T2. Rows for the unregistered credentials** (Open item 10). Registry PRs in the owning
   repositories, each reader list from a UUID grep. **Exit check:** the next 03:00 security-drift
   scan reads each changed registry clean.
@@ -6916,10 +6923,21 @@ Each is planned work for its own pull request; none starts before its open item 
    (A) Rotate both by hand in the pass. (B) Hand them to the executor: their keepers move into
    `Rotation / Keepers`, which reverses that part of decision 4. (C) Leave them hand-rotated at their
    normal age.
-3. **Open, for Devon: registries outside the four.** (A) T1 adds sds-hq and security-standards,
-   with a `credential_rotation` grant on each; localops stays hand-rotated (the 2026-11-19 standing
-   answer keeps the fork chain on the Mac). (B) Their rows move into orchestrator's registry.
-   (C) Every row in those three registries stays hand-rotated.
+3. **Open, for Devon: registries outside the four.** The executor's mirrors fetch with no
+   credential, because every repository they read is public (`git_mirror.py` lines 1-7 at
+   `bd3fb190`; `registry.py` lines 4-6 read registries only through them). security-standards is
+   public and sds-hq is private (`gh repo view`, 2026-11-28), so the two are separate choices.
+   For security-standards and localops: (A) T1 adds security-standards, with a
+   `credential_rotation` grant on its member record; localops stays hand-rotated (the 2026-11-19
+   standing answer keeps the fork chain on the Mac). (B) Their rows move into orchestrator's
+   registry. (C) Every row in those two registries stays hand-rotated. For sds-hq's in-scope rows:
+   (i) the mirror gets a read-only GitHub credential for sds-hq, a new reach for the executor and
+   the proposer that changes the mirror's no-credential design, and sds-hq then joins
+   `REGISTRY_REPOSITORIES` with a `credential_rotation` grant on its member record; (ii) the rows
+   move into orchestrator's registry, as B does; (iii) they stay hand-rotated. A row the executor
+   reads is gated by the grant of its registry's repository (`grants.py`, called with the entry's
+   `repository` in `rotation_decomposer/cli.py` line 141 at `bd3fb190`), so B's and (ii)'s moved
+   rows fall under orchestrator's existing `credential_rotation` grant.
 4. **Open, for Devon: the work carrier's observer bearer.** Its identity files the
    `standing_approval_check` record that admits a policy approval (amendment 22). The root already
    reads its keeper through the broker's token (D-83 (10) A, for development). A hand-over adds the
@@ -6929,10 +6947,11 @@ Each is planned work for its own pull request; none starts before its open item 
 5. **Open, for Devon: the alert-hub sender's reach.** alert-hub's `/admin/*` routes sit behind
    Cloudflare Access (`accessMiddleware`, `routes.ts` at `35daeb47`), and a sender `PATCH` can't
    change a token (`SENDER_PATCH_KEYS`). (A) The executor gets a Cloudflare Access service token of
-   its own, scoped to `/admin/senders`, and reissues by machine (a new identity and path; the alert-hub
-   MCP's existing service token is another identity's). (B) A person reissues in the dashboard and pastes into the inbox, and the
-   executor proves, stores and waits for readers (the amendment 33, 35 and 36 shape). (C) Every
-   sender token stays hand-rotated.
+   its own, scoped to `/admin/senders`, and creates the new sender and revokes the old one by
+   machine (a new identity and path; the alert-hub MCP's existing service token is another
+   identity's). (B) A person creates a new sender in the dashboard and pastes its token into the
+   inbox; the executor proves, stores and waits for readers, and the person then revokes the old
+   sender (the amendment 33, 35 and 36 shape). (C) Every sender token stays hand-rotated.
 6. **Open, for Devon: the factory-events passwords' type (FE-4).** (A) Extend `postgres-role` to
    a database with no Coolify consumer (a new helper target on `prod-vps`). (B) A new type, its own
    amendment (T4). (C) Both rotate by hand in the pass.
