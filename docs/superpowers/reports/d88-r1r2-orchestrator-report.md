@@ -5,7 +5,8 @@ Outcome: done
 Worker W-346, handoff `d88-r1r2-orchestrator`.
 
 - **PR:** AlobarQuest/orchestrator#839, open and not merged. HQ merges it.
-- **Branch:** `hq/d88-r1r2-orchestrator`, head `c51d535fa8908bf6a0796df739cb7cc78d2b5fdf`.
+- **Branch:** `hq/d88-r1r2-orchestrator`. All code is at `c51d535fa8908bf6a0796df739cb7cc78d2b5fdf`;
+  the PR's head adds only this report's commits after it.
 - **Base:** `origin/main` `73b77ea761b9fc49abd40fb60c411b80b1bb4f95`, the base the handoff names.
 
 At that base, amendment 39's text matched what the handoff cited: "What refuses a reissue today" at
