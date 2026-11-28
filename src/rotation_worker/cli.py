@@ -227,8 +227,7 @@ def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int
     if keeper is None:
         print("read-consumers: the keeper isn't kept where this executor reads", file=sys.stderr)
         return EXIT_UNREADABLE
-    credential_class = entry.credential.get("class")
-    consumers = consumer_reads(setup, reads, keeper, str(credential_class))
+    consumers = consumer_reads(setup, reads, keeper, entry.credential.get("class"))
     unreadable = 0
     for destination in sorted(reads):
         try:
@@ -533,7 +532,7 @@ def probe(config: Config, credential_id: str, mirror: RepoMirror, out: TextIO) -
         keeper_id = store.locate(keeper)
         if keeper_id is None:
             raise StoreError("the keeper isn't kept in this instance's store")
-        key = read_as(store, str(credential_class), keeper_id)
+        key = read_as(store, credential_class, keeper_id)
     except Exception:
         # The store's own identity is the only one read through; whatever it can't read, the
         # cause stays unnamed, because a value read in this process might stand in its message.
