@@ -69,7 +69,7 @@ from rotation_worker.registry import (
     standing_credential,
     standing_destinations,
 )
-from rotation_worker.secret_store import SecretStore
+from rotation_worker.secret_store import SecretStore, read_as
 
 PROFILE: Final = "non-software-operational"
 UNIT_KEY: Final = "rotation_unit"
@@ -151,7 +151,15 @@ def check_unit(
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
-    rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
+    credential_class = entry.credential.get("class")
+    rotation = Rotation(
+        credential_id,
+        occurrence,
+        keeper,
+        work_project_id,
+        tuple(packaged),
+        credential_class if isinstance(credential_class, str) else None,
+    )
     _check_issue_fact(adapter, plan, rotation, store)
     return Approved(adapter, plan, unit, rotation, entry, reads, without_overlap)
 
@@ -201,7 +209,7 @@ def _check_issue_fact(adapter: Adapter, plan: Plan, rotation: Rotation, store: S
     and store writes only after reading the marker there, so neither needs refusing here."""
     if adapter.capabilities is None or not adapter.capabilities.issues:
         return
-    keeper = store.read(rotation.keeper_id)
+    keeper = read_as(store, rotation.credential_class, rotation.keeper_id)
     if not plan.issue:
         if keeper.reveal() == EMPTY:
             raise ContractError("the keeper holds only the marker: nothing is issued to rotate")
@@ -209,7 +217,7 @@ def _check_issue_fact(adapter: Adapter, plan: Plan, rotation: Rotation, store: S
     staging = store.find(rotation.work_project_id, rotation.staging_key)
     if keeper.reveal() == EMPTY or staging is None:
         return
-    if not store.read(staging.id).same_as(keeper):
+    if not read_as(store, rotation.credential_class, staging.id).same_as(keeper):
         raise ContractError("an issue runs only on a keeper holding only the marker")
 
 

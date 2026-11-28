@@ -110,7 +110,7 @@ from rotation_worker.registry import (
     standing_credential,
 )
 from rotation_worker.revokes import ObservedRevokes, Revoke, person_revokes_beside, revoke_wait
-from rotation_worker.secret_store import SecretStore, StoreError
+from rotation_worker.secret_store import SecretStore, StoreError, read_as
 from rotation_worker.values import Fingerprint, Value, scrub
 
 LOG = logging.getLogger("rotation_worker")
@@ -664,7 +664,8 @@ def _loaded_waits(
     keeper_id = approved.rotation.keeper_id
     try:
         reason = provider.loaded_wait(
-            approved.unit, lambda: setup.store.read(keeper_id).fingerprint
+            approved.unit,
+            lambda: read_as(setup.store, approved.rotation.credential_class, keeper_id).fingerprint,
         )
     except (ContractError, StoreError) as error:
         # Deliberately not raised: an unreadable answer (a refusal, no answer, a key the store
@@ -900,7 +901,8 @@ def _other_keepers(setup: Setup, approved: Approved) -> list[tuple[str, Value]]:
             continue
         secret_id = setup.store.locate(parse(entry.keeper))
         if secret_id is not None:
-            found.append((credential, setup.store.read(secret_id)))
+            value = read_as(setup.store, entry.credential.get("class"), secret_id)
+            found.append((credential, value))
     return found
 
 
@@ -915,7 +917,11 @@ def _revoke_waits(
     key = _revoke_key(unit_id)
     try:
         quarantine = setup.store.find(rotation.work_project_id, rotation.quarantine_key)
-        old = setup.store.read(quarantine.id) if quarantine is not None else None
+        old = (
+            read_as(setup.store, rotation.credential_class, quarantine.id)
+            if quarantine is not None
+            else None
+        )
         state, reason = revoke_wait(
             provider,
             old,
@@ -965,7 +971,9 @@ def _revoke_guide(setup: Setup, provider: Provider, rotation: Rotation, unit_id:
     if not isinstance(provider, GuidesTheRevoke):
         return _REVOKE_GUIDE
     try:
-        return provider.revoke_guide(setup.store.read(rotation.keeper_id))
+        return provider.revoke_guide(
+            read_as(setup.store, rotation.credential_class, rotation.keeper_id)
+        )
     except (*REFUSALS, StoreError) as error:
         LOG.warning("revoke_guide_unread", extra={"unit": unit_id, "reason": scrub(str(error))})
         return f"{_REVOKE_GUIDE} The key to keep can't be named: {scrub(str(error))}."
@@ -1025,10 +1033,13 @@ def _person_revokes_next(approved: Approved) -> bool:
 
 
 def _consumer_reads(setup: Setup, approved: Approved) -> ConsumerReads:
-    return consumer_reads(setup, approved.reads, approved.rotation.keeper_id)
+    rotation = approved.rotation
+    return consumer_reads(setup, approved.reads, rotation.keeper_id, rotation.credential_class)
 
 
-def consumer_reads(setup: Setup, reads: Mapping[str, Read], keeper: str) -> ConsumerReads:
+def consumer_reads(
+    setup: Setup, reads: Mapping[str, Read], keeper: str, credential_class: str | None
+) -> ConsumerReads:
     """One rotation's reads for one pass: a scheduled reader's, and an Actions copy's report,
     compared with what the keeper holds."""
     return ConsumerReads(
@@ -1036,7 +1047,7 @@ def consumer_reads(setup: Setup, reads: Mapping[str, Read], keeper: str) -> Cons
         setup.healthchecks,
         setup.client,
         reports=FingerprintReports(setup.github_app) if setup.github_app else None,
-        keeper=lambda: setup.store.read(keeper).fingerprint,
+        keeper=lambda: read_as(setup.store, credential_class, keeper).fingerprint,
     )
 
 

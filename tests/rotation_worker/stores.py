@@ -64,6 +64,33 @@ class MemoryStore:
         self.deleted.append(secret_id)
 
 
+class PastedStore(MemoryStore):
+    """BWS's read rules over a secret's text as a console paste stores it: `read` refuses
+    surrounding whitespace, as `Value` does, and `read_key` strips it (`BwsStore.read_key`)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pasted: dict[str, str] = {}
+
+    def paste(self, secret_id: str, text: str) -> None:
+        """Hold `text` as `secret_id`'s stored value, padding included, until it is written."""
+        self.pasted[secret_id] = text
+
+    def read(self, secret_id: str) -> Value:
+        if secret_id in self.pasted:
+            return Value(self.pasted[secret_id])
+        return super().read(secret_id)
+
+    def read_key(self, secret_id: str) -> Value:
+        if secret_id in self.pasted:
+            return Value(self.pasted[secret_id].strip())
+        return super().read_key(secret_id)
+
+    def write(self, secret_id: str, value: Value) -> None:
+        self.pasted.pop(secret_id, None)
+        super().write(secret_id, value)
+
+
 def member_record(*granted: str, retired: Iterable[str] = ()) -> dict[str, Any]:
     """The member record as `GET /api/v1/members` serves it: each repository granted
     `credential_rotation`, on a live member unless it is also named in `retired`."""
