@@ -419,14 +419,16 @@ observation's facts carry `form: "reissue"` (`"issue"` at revision 1), and the f
 the observation's reference and key.
 
 A reissue also builds on revision 1's approval and on the last approval before the tip, which
-`intent-packages verify-approval` doesn't check. For a later revision a policy approved,
-`orchestrator emit-intake-payload` matches each of the two to a verified `package.approved`
+`intent-packages verify-approval` doesn't check. For a rotation package's later revision a policy
+approved, `orchestrator emit-intake-payload` matches each of the two to a verified `package.approved`
 event, by the tip's rules (approver, hash, revision, commit and event id) and in the tip's one
 chain read, and states them in the payload's `earlier_approvals`, each with `verified` and a
 `reason`. The emitter refuses nothing for them. The carrier refuses the reissue unless both
 entries are verified and equal the lineage's approvals field for field, and the refusal names
-which approval is unbacked. Every other payload has no `earlier_approvals`, and the intake route
-ignores the key.
+which approval is unbacked; it runs after the carry form, so a reissue of the wrong shape is
+reported by its own condition. The observation's facts then name each earlier role's event id and
+commit (`earlier_approvals`). Every other payload, a policy-approved bump's among them, has no
+`earlier_approvals`, and the intake route ignores the key.
 
 The carrier matches the lineage's one approval on the payload's revision, wherever the lineage
 lists it, and refuses a lineage that records an approval of a later revision.

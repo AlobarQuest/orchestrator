@@ -29,8 +29,12 @@ _POLICY_APPROVER_RE: Final = re.compile(r"^policy:[a-z0-9][a-z0-9-]*@v[1-9][0-9]
 _CHAIN_VERIFY_TIMEOUT_SECONDS = 30
 _EXECUTABLE_INTAKE_STATE = "approved"
 _PROTOCOL_FIXTURE_STATE = "closed"
-# An earlier approval's fields as the payload states them, the ones the tip's event is matched on.
+# An earlier approval's fields as the payload states them, the ones the tip's event is matched on,
+# and the one profile whose later revisions state them. The work carrier's copies are held equal
+# by `tests/work_carrier/test_standing.py`.
 _APPROVAL_FIELDS: Final = ("revision", "approver", "approved_hash", "commit", "event_id")
+_EARLIER_ROLES: Final = ("revision_1", "last_earlier")
+_ROTATION_PROFILE: Final = "non-software-operational"
 
 
 @dataclass(frozen=True)
@@ -413,7 +417,7 @@ def _verify_current_approval(
     approved_hash: str,
     revision: object,
     approval: Mapping[str, Any],
-    chain: Callable[[], list[dict[str, Any]]] = _verified_package_approval_events,
+    chain: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> VerifiedApproval:
     approver = approval.get("approver")
     commit = approval.get("commit")
@@ -432,7 +436,7 @@ def _verify_current_approval(
     if not sibling_verification:
         raise _approval_refused("intent-packages verify-approval failed")
     return _verified_approval_from_events(
-        chain(),
+        (chain or _verified_package_approval_events)(),
         package_id=package_id,
         approved_hash=approved_hash,
         revision=revision,
@@ -477,8 +481,8 @@ def _earlier_approvals(
     last = max((item["revision"] for item in earlier), default=None)
     latest = [item for item in earlier if item["revision"] == last]
     return [
-        _earlier_entry("revision_1", package_id, first, chain),
-        _earlier_entry("last_earlier", package_id, latest, chain),
+        _earlier_entry(role, package_id, candidates, chain)
+        for role, candidates in zip(_EARLIER_ROLES, (first, latest), strict=True)
     ]
 
 
@@ -743,11 +747,12 @@ def _load_intake_payload(
     # being missing from the stored event.
     if originating_observation_id is not None:
         payload["originating_observation_id"] = originating_observation_id
-    # Stated only for a later revision a policy approved, the one shape whose reader builds on an
-    # earlier approval (a reissue, ADR-0055 amendment 39); every other payload is unchanged. The
-    # intake route ignores the key.
+    # Stated only for a rotation package's later revision a policy approved, the one shape whose
+    # reader builds on an earlier approval (a reissue, ADR-0055 amendment 39); every other
+    # payload, a policy-approved bump's among them, is unchanged. The intake route ignores the key.
     if (
-        isinstance(revision, int)
+        package.get("profile") == _ROTATION_PROFILE
+        and isinstance(revision, int)
         and revision > 1
         and _POLICY_APPROVER_RE.match(verified_approval.approved_by) is not None
     ):

@@ -194,10 +194,12 @@ def test_a_chain_that_can_t_be_read_is_unbacked_never_verified() -> None:
 # ---- through the emitter ----------------------------------------------------------------------
 
 
-def _approved_reissue(tmp_path: Path, approvals: list[dict[str, Any]]) -> Path:
+def _approved_reissue(
+    tmp_path: Path, approvals: list[dict[str, Any]], profile: str | None = None
+) -> Path:
     """The operator bearer's revision 2, approved, with `approvals` as its lineage's."""
     entry, _, tip, lineage = reissue_fixtures._covered()
-    package = {**tip, "status": "approved"}
+    package = {**tip, "status": "approved", **({"profile": profile} if profile else {})}
     lineage = {**copy.deepcopy(lineage), "current_state": "approved", "approvals": approvals}
     directory = tmp_path / PACKAGE_ID
     directory.mkdir()
@@ -207,11 +209,15 @@ def _approved_reissue(tmp_path: Path, approvals: list[dict[str, Any]]) -> Path:
 
 
 def _emit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, approver: str, chain: list[dict[str, Any]]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    approver: str,
+    chain: list[dict[str, Any]],
+    profile: str | None = None,
 ) -> dict[str, object]:
     """Emit with the tip's verification passing as `approver`, and `chain` as the one read."""
     reads: list[int] = []
-    directory = _approved_reissue(tmp_path, [approval(1)])
+    directory = _approved_reissue(tmp_path, [approval(1)], profile)
     tip_hash = package_sources.canonical_package_hash(
         yaml.safe_load((directory / "package.yaml").read_text())
     )
@@ -269,4 +275,14 @@ def test_a_person_approved_revision_states_no_earlier_approvals(
     """Only a policy's later revision builds on an earlier approval; every other payload is
     unchanged."""
     payload = _emit(tmp_path, monkeypatch, "devon", [event(approval(1))])
+    assert "earlier_approvals" not in payload
+
+
+def test_a_policy_approved_later_revision_of_another_profile_states_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A standing bump's later revision is policy-approved too, and builds on no earlier one."""
+    payload = _emit(
+        tmp_path, monkeypatch, "policy:dependency-update@v3", [event(approval(1))], "software"
+    )
     assert "earlier_approvals" not in payload

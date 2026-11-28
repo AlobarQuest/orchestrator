@@ -445,7 +445,41 @@ def _third_revision() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], R
 def test_a_third_revision_with_both_earlier_approvals_verified_passes(tmp_path: Path) -> None:
     package, lineage, payload, found = _third_revision()
     assert [e["revision"] for e in payload["earlier_approvals"]] == [1, 2]
-    assert isinstance(_check_reissue(tmp_path, package, lineage, payload, found), standing.Checked)
+    checked = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(checked, standing.Checked), checked
+    # The record names the earlier events it relied on, for whoever reads it later.
+    assert checked.observation["facts"]["earlier_approvals"] == [
+        {
+            "role": "revision_1",
+            "event_id": lineage["approvals"][0]["event_id"],
+            "commit": lineage["approvals"][0]["commit"],
+        },
+        {"role": "last_earlier", "event_id": "evt-r2", "commit": "2" * 40},
+    ]
+
+
+def test_a_revision_1_record_states_no_earlier_approvals(tmp_path: Path) -> None:
+    checked = _check(tmp_path)
+    assert isinstance(checked, standing.Checked)
+    assert "earlier_approvals" not in checked.observation["facts"]
+
+
+def test_a_wrong_shape_reissue_is_reported_by_its_condition_first(tmp_path: Path) -> None:
+    """An unbacked earlier approval doesn't hide the carry form's own refusal."""
+    row = {**reissue_fixtures._real_row("orchestrator-system-bearer"), "rotated_by_sds": True}
+    package, lineage, payload, found = _reissue(row=row)
+    payload.pop("earlier_approvals")
+    refused = _check_reissue(tmp_path, package, lineage, payload, found)
+    assert isinstance(refused, str)
+    assert refused.startswith("the carry form refused: ") and "not_hand_rotated (" in refused
+
+
+def test_the_carrier_reads_the_emitter_s_roles_and_fields() -> None:
+    from orchestrator import package_sources
+
+    assert tuple(standing.EARLIER_ROLES) == package_sources._EARLIER_ROLES
+    assert standing.EARLIER_FIELDS == package_sources._APPROVAL_FIELDS
+    assert standing.ROTATION_PROFILE == package_sources._ROTATION_PROFILE
 
 
 @pytest.mark.parametrize(
@@ -468,15 +502,14 @@ def test_a_forged_earlier_approval_the_chain_doesn_t_back_refuses(
 
 
 @pytest.mark.parametrize("role", ["revision_1", "last_earlier"])
-@pytest.mark.parametrize("field", [f for f in EARLIER if f != "revision"])
+@pytest.mark.parametrize("field", EARLIER)
 def test_an_earlier_approval_other_than_the_one_verified_refuses(
     tmp_path: Path, role: str, field: str
 ) -> None:
-    """The lineage's approval was changed after the emitter verified another one. (A changed
-    revision moves the approval to another role, or past the tip, and refuses there.)"""
+    """The emitter verified another approval than the one the lineage holds for the role."""
     package, lineage, payload, found = _third_revision()
-    index = 0 if role == "revision_1" else 1
-    lineage["approvals"][index][field] = "changed-after-verification"
+    (entry,) = [e for e in payload["earlier_approvals"] if e["role"] == role]
+    entry[field] = 9 if field == "revision" else "another-verified-approval"
     refused = _check_reissue(tmp_path, package, lineage, payload, found)
     assert isinstance(refused, str)
     assert "isn't the one the emitter verified in the chain" in refused

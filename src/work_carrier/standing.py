@@ -159,7 +159,6 @@ def _check(
         conditions = carry(entry, package, lineage, package_hash=content_hash)
     else:
         form = REISSUE_FORM
-        _earlier_backed(payload, lineage, verified["revision"])
         conditions = carry_reissue(
             entry, package, lineage, package_hash=content_hash, verified=verified
         )
@@ -169,7 +168,11 @@ def _check(
             "the carry form refused: "
             + "; ".join(f"{condition.name} ({condition.reason})" for condition in refused)
         )
-    return Checked(_observation(payload, approval, entry, credential_id, form))
+    # After the carry form, so a reissue of the wrong shape is reported by its own condition.
+    earlier = (
+        _earlier_backed(payload, lineage, verified["revision"]) if form == REISSUE_FORM else []
+    )
+    return Checked(_observation(payload, approval, entry, credential_id, form, earlier))
 
 
 def _verified(payload: Mapping[str, Any], content_hash: str) -> dict[str, Any]:
@@ -212,11 +215,12 @@ def _verified_approval(
 
 def _earlier_backed(
     payload: Mapping[str, Any], lineage: Mapping[str, Any], revision: object
-) -> None:
+) -> list[dict[str, Any]]:
     """A reissue builds on two earlier approvals, revision 1's and the last before the tip
     (`proposer_revised` compares with it), so each must be the one the emitter matched to a
     verified chain event, as the tip's is: the payload's `earlier_approvals` entry for its role
-    says verified and names the lineage's approval field for field (ADR-0055 amendment 39)."""
+    says verified and names the lineage's approval field for field (ADR-0055 amendment 39).
+    Returns each role's event id and commit, for the observation's facts."""
     stated = payload.get("earlier_approvals")
     if not isinstance(stated, list):
         raise StandingRefusal("the payload states no earlier approvals the emitter verified")
@@ -231,6 +235,7 @@ def _earlier_backed(
         "revision_1": [item for item in earlier if item["revision"] == 1],
         "last_earlier": [item for item in earlier if numbers and item["revision"] == max(numbers)],
     }
+    backed: list[dict[str, Any]] = []
     for role, approval in roles.items():
         entries = [e for e in stated if isinstance(e, Mapping) and e.get("role") == role]
         if len(entries) != 1 or len(approval) != 1:
@@ -249,6 +254,10 @@ def _earlier_backed(
                 f"{EARLIER_ROLES[role]} isn't the one the emitter verified in the chain "
                 f"(differs in {', '.join(differing)})"
             )
+        backed.append(
+            {"role": role, "event_id": entry.get("event_id"), "commit": entry.get("commit")}
+        )
+    return backed
 
 
 def _is_earlier(number: object, revision: object) -> bool:
@@ -277,6 +286,7 @@ def _observation(
     entry: RegistryEntry,
     credential_id: str,
     form: str,
+    earlier: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """The record of a pass. Every field is fixed by the revision, the registry commit and the
     form, so a second pass over the same three replays the row; `observed_at` is the verified
@@ -307,6 +317,8 @@ def _observation(
         "form": form,
         "refused": [],
     }
+    if earlier:
+        facts["earlier_approvals"] = earlier
     summary = (
         f"the work carrier's {form} carry form refused nothing on {package_id} revision "
         f"{revision}, with the registry at {entry.repository}@{entry.commit[:12]}"

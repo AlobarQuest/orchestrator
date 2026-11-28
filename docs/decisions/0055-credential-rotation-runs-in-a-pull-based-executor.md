@@ -7645,12 +7645,12 @@ HQ's answer to W-346's question (2026-11-28, option B, in the same pull request)
 path. `intent-packages verify-approval` and the emitter matched only the tip's approval to the
 chain, so revision 1's named approval, and the last earlier approval `proposer_revised` compares
 against, were the lineage's word. A writer to intent-packages `main` with no append password (the
-rotation proposer lane's push, for example) could write both. For a later revision a policy
-approved, `orchestrator emit-intake-payload` now matches revision 1's approval and the last
+rotation proposer lane's push, for example) could write both. For a rotation package's later
+revision a policy approved, `orchestrator emit-intake-payload` now matches revision 1's approval and the last
 earlier approval to verified `package.approved` events, by the tip's rules and in its one chain
 read, and states each in the payload's `earlier_approvals`. The carrier refuses a reissue unless
-both are verified and equal the lineage's, naming which is unbacked. It adds no credential and no
-chain read.
+both are verified and equal the lineage's, naming which is unbacked, and records the two events
+it relied on in its observation. It adds no credential and no chain read.
 
 Two residuals stay, and neither is a new acceptance. First, the rotation root can append a
 `package.approved` event itself, through the broker's token and the append password (W-328's #826
