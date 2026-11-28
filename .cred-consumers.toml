@@ -624,8 +624,10 @@ rotated_by_sds = true
 # read, write and deploy, never read:sensitive (probed in-process that day: env values come
 # back hidden). The lander's client bounds it to one repository's member-record applications.
 # sha256[:8] computed in-process 2026-10-30. The coolify-api-token adapter (ADR-0055 amendment 33)
-# types this class, but the row is not rotated_by_sds: the executor can't write its keeper in
-# `SDS Operator` until Devon moves it to `Rotation / Keepers` (D-82 item 11 A).
+# types this class. Devon moved the keeper from `SDS Operator` to `Rotation / Keepers` at HQ gate
+# G-116 on 2026-11-28 (D-82 item 11 A), id unchanged; the lane secrets broker reads it by a direct
+# grant, and the executor's root by its project grant. The row is not rotated_by_sds yet: the
+# root's read of the keeper is unproven (no probe class), and that proof comes before the flip.
 [[credential]]
 id = "coolify-estate-lander-token"
 class = "coolify-api-token"
@@ -640,7 +642,7 @@ abilities = ["read", "write", "deploy"]
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "f9f59233-0794-4ea8-9806-b4f3011e6147"
-  note = "COOLIFY_TOKEN_SDS_ESTATE_LANDER (SDS Operator) — keeper; the launcher fetches by UUID"
+  note = "COOLIFY_TOKEN_SDS_ESTATE_LANDER (Rotation / Keepers) — keeper; the launcher fetches by UUID, through the broker's direct grant"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -654,9 +656,11 @@ abilities = ["read", "write", "deploy"]
 # only, never read:sensitive, and stored as `prod-coolify-read-token` in `Ops / Platform`. It
 # replaces `prod-coolify-api-token` (infraops-mcp-server's, which can write envs) for the lane's one
 # call, listing applications. No fingerprint: no session has read the value. The coolify-api-token
-# adapter (ADR-0055 amendment 33) types this class, but the row is not rotated_by_sds: the executor
-# can't write its keeper in `Ops / Platform` until Devon moves it to `Rotation / Keepers` (D-82
-# item 11 A), so it falls to the manual checklist.
+# adapter (ADR-0055 amendment 33) types this class. Devon moved the keeper to `Rotation / Keepers`
+# at HQ gate G-116 on 2026-11-28 (D-82 item 11 A), id unchanged; the lane secrets broker reads it
+# by a direct grant (G-109), and the executor's root by its project grant. The row is not
+# rotated_by_sds yet, so it falls to the manual checklist: the root's read of the keeper is
+# unproven (no probe class), and that proof comes before the flip.
 [[credential]]
 id = "coolify-revision-watcher-read-token"
 class = "coolify-api-token"
@@ -670,7 +674,7 @@ abilities = ["read"]
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "0bf066e9-28c1-4aa7-8c3d-b50300d492a6"
-  note = "prod-coolify-read-token (Ops / Platform) — keeper; the launcher fetches by UUID"
+  note = "prod-coolify-read-token (Rotation / Keepers) — keeper; the launcher fetches by UUID, through the broker's direct grant"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -1096,7 +1100,7 @@ healthchecks_check = "sds-follow-up-mint"
 # and item 5's bind on a project grant was settled, and due for its first rotation by
 # `rotate_requested`; that rotation is check 4, which can't run before the flip because the
 # proposer and the executor act only on a handed-over row.
-# Its reach is project-level for SDS Operator and SDS / Lane Apps, plus single-secret grants:
+# Its reach is project-level for SDS Operator alone, plus single-secret grants:
 # - Rotation / Keepers: change-manager/M2M_TOKEN_READ, inert-landing-ping-url,
 #   estate-landing-ping-url, bump-driver-ping-url, follow-up-mint-ping-url,
 #   change-window-coolify-token, change-manager/M2M_TOKEN_EXECUTE, change-window-anthropic-key,
@@ -1105,11 +1109,11 @@ healthchecks_check = "sds-follow-up-mint"
 #   change-manager/M2M_TOKEN_OBSERVE, unit-verifier-ping-url, membership-check-ping-url,
 #   deploy-watcher-ping-url, change-manager/M2M_TOKEN_PROPOSE, change-proposer-ping-url,
 #   rotation-decomposer-ping-url, rotation-proposer-ping-url, work-carrier-ping-url,
-#   bump-proposer-ping-url and revision-watcher-ping-url.
+#   bump-proposer-ping-url, revision-watcher-ping-url, prod-coolify-read-token,
+#   COOLIFY_TOKEN_SDS_ESTATE_LANDER, lanes-push-app-private-key and lanes-read-app-private-key.
 # - Brains - Contributor: CODE_BRAIN_CONTRIBUTOR_KEY and INFRA_BRAIN_CONTRIBUTOR_KEY.
 # - Factory Events: factory-events-read-password and factory-events-append-password (the second for
 #   the bump proposer only, D-81 (4) A).
-# - Ops / Platform: prod-coolify-read-token.
 # - brains: APP_BRAIN_READ_KEY.
 # Devon gave the bump driver's four (bump-driver-ping-url, the two Brain keys and the read
 # password) at HQ gate G-84 on 2026-11-21, and follow-up-mint-ping-url at HQ gate G-87; the
@@ -1126,6 +1130,11 @@ healthchecks_check = "sds-follow-up-mint"
 # Devon gave the work-carrier, bump-proposer and revision-watcher ping URLs,
 # factory-events-append-password, prod-coolify-read-token and APP_BRAIN_READ_KEY at HQ gate G-109,
 # for Phase C's fourth and last batch.
+# At HQ gate G-116 (2026-11-28, D-82 (11) A, D-84 (8) A) Devon gave the account single-secret
+# grants on COOLIFY_TOKEN_SDS_ESTATE_LANDER and the two lane App keys, then moved those three and
+# prod-coolify-read-token (granted at G-109) into Rotation / Keepers, ids unchanged; a broker read
+# proof per moved keeper read it `ok`. That emptied SDS / Lane Apps, and Devon removed the
+# account's project grant on it, so SDS Operator is its one project grant.
 # Devon's choice: "Project by project", with single-secret grants in Rotation / Keepers so the
 # broker can't read every lane's keeper.
 [[credential]]
@@ -1137,8 +1146,8 @@ rotated_by_sds = true
 rotate_requested = "2026-11-27"
 helper_target = "secrets-broker"
 created = "2026-11-20"
-reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5", "3d41395a-06c3-47d5-ac85-b50a00dfbc2f", "aa7c76af-bd52-4796-9d13-b50a00e035de", "0e9ebf2d-5b62-4f81-a731-b50a00e0df18", "71616bf5-14ba-4888-b3f8-b50a00e13ed2", "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3", "f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "97802aac-5a7f-45e8-8185-b4fc00cd318e", "ebabdd63-2eff-4b8e-99b7-b4fd01754eae", "872684c0-899e-43b7-9c2d-b50000e88b21", "3b9503da-eb7e-401d-b4a7-b4a400c07efb", "1cfc8352-c960-4afc-bd49-b4ff00e8783e", "5fc44897-b4df-44ae-8491-b5000129d9be", "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875", "acccb346-4baa-43ec-a1d4-b4a400c048ee", "7651ccc2-7e13-417b-86da-b50100c0d4b2", "936bbbf2-dc3b-4343-979a-b501013afc87", "506a5436-4643-4040-8a8b-b50601312be2", "55fbae20-e503-4eb5-b75c-b5040164d394", "786f75e2-3d02-4667-8607-b50601312a9d", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931", "2ce0dbc7-eeac-4bf0-8204-b50200c97516", "0bf066e9-28c1-4aa7-8c3d-b50300d492a6", "726a18ba-7a38-4ecc-aa03-b49a015fd302"]
-reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a157-b4fd01259df8"]
+reach_secrets = ["314f276d-55ca-4ddc-a24d-b4a3013508cd", "35557473-f80c-44e3-892a-b507013158b1", "11e940d7-e43a-4ebd-9026-b508017d9cef", "750f737f-4cb6-4876-9a98-b48200ea1c0b", "da8134b0-565f-45c8-8965-b48200ea1c40", "2f708d08-ea5d-4d11-bde0-b50200c9a60b", "430691e2-4a36-4261-a28f-b50900e064b7", "46e714ca-32b7-4e89-9817-b509013363a5", "3d41395a-06c3-47d5-ac85-b50a00dfbc2f", "aa7c76af-bd52-4796-9d13-b50a00e035de", "0e9ebf2d-5b62-4f81-a731-b50a00e0df18", "71616bf5-14ba-4888-b3f8-b50a00e13ed2", "1d6a0ab4-e164-4fe2-8ccb-b50a00e255c3", "f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "97802aac-5a7f-45e8-8185-b4fc00cd318e", "ebabdd63-2eff-4b8e-99b7-b4fd01754eae", "872684c0-899e-43b7-9c2d-b50000e88b21", "3b9503da-eb7e-401d-b4a7-b4a400c07efb", "1cfc8352-c960-4afc-bd49-b4ff00e8783e", "5fc44897-b4df-44ae-8491-b5000129d9be", "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875", "acccb346-4baa-43ec-a1d4-b4a400c048ee", "7651ccc2-7e13-417b-86da-b50100c0d4b2", "936bbbf2-dc3b-4343-979a-b501013afc87", "506a5436-4643-4040-8a8b-b50601312be2", "55fbae20-e503-4eb5-b75c-b5040164d394", "786f75e2-3d02-4667-8607-b50601312a9d", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931", "2ce0dbc7-eeac-4bf0-8204-b50200c97516", "0bf066e9-28c1-4aa7-8c3d-b50300d492a6", "726a18ba-7a38-4ecc-aa03-b49a015fd302", "f9f59233-0794-4ea8-9806-b4f3011e6147", "b8f547b9-67d7-4417-adc0-b4fd0126b0f0", "314a966c-5654-4e3c-8358-b4fd01268775"]
+reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a"]
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -1156,8 +1165,11 @@ reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a1
 
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
-# BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
-# form on stdin. Modelled on factory-runner's `fork-sync-app-private-key` row (factory-runner
+# BWS project `SDS / Lane Apps`. At HQ gate G-116 on 2026-11-28 (D-84 item 8 A) Devon moved both
+# keepers to `Rotation / Keepers`, ids unchanged: the lane secrets broker reads each by a direct
+# grant, the executor's root by its project grant, and no other machine account reads either.
+# `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that form on stdin. Modelled on
+# factory-runner's `fork-sync-app-private-key` row (factory-runner
 # `4b1580f7246b7a12f08b33181dc691ee50487133`).
 # The executor's route (ADR-0055 amendment 35, D-84 item 13 A): the `github-app-key` adapter. Devon
 # generates a key pair on each App's settings page and pastes base64 of its PEM into the inbox;
@@ -1165,15 +1177,14 @@ reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a1
 # then a `metadata: read` mint on `proof_repository` whose installation is the row's
 # `installation_id`, revoked before the step returns), stores it, waits for every reader's green
 # ping, and after Devon deletes the App's other key pairs proves the old key refused. Neither row is
-# rotated_by_sds yet: amendment 35's exit checks 2 and 3 and the keepers' move to `Rotation /
-# Keepers` (D-84 item 8 A, Devon's act after Phase C's revoke sitting) come first, so each still
-# falls to the manual checklist. `created` is the age anchor: at 365 days (infraops CLASS_POLICY)
-# the 03:00 scan posts `cred.rotation-age`, and the rotation proposer reports the row `legacy` and
-# proposes no package. `proof_repository` is intent-packages, where both Apps are installed
-# (ADR-0059 Q9, HQ D-17, and Q1).
+# rotated_by_sds yet: amendment 35's exit checks 2 and 3 come first, so each still falls to the
+# manual checklist. `created` is the age anchor: at 365 days (infraops CLASS_POLICY) the 03:00 scan
+# posts `cred.rotation-age`, and the rotation proposer reports the row `legacy` and proposes no
+# package. `proof_repository` is intent-packages, where both Apps are installed (ADR-0059 Q9, HQ
+# D-17, and Q1).
 # Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher,
 # revision-watcher, unit-verifier, pin-watcher, membership-check and change-proposer lanes' accounts
-# hold read grants on the read App's keeper (HQ gates G-18, G-28, G-30, G-33, G-37, G-39 and G-49),
+# held read grants on the read App's keeper (HQ gates G-18, G-28, G-30, G-33, G-37, G-39 and G-49),
 # so that row lists each lane's reader. The work-carrier lane's reader lands with its registry rows
 # (deploy.md, the work carrier's cut-over item 3), ahead of its account's grant (item 4). The
 # bump-proposer and rotation-proposer lanes' readers land with their registry rows (deploy.md, the
@@ -1184,9 +1195,9 @@ reach_projects = ["b09acc9d-87af-4830-9361-b49700d2bc8a", "b3df5419-c5be-4abf-a1
 # grant (item 4). The estate-landing lane's reader lands with its ping URL's row (deploy.md, estate
 # landing's cut-over item 3); it reads through the secrets broker, whose account's grant is item 4.
 # The bump-driver lane's reader lands with its ping URL's row (deploy.md, the bump driver's cut-over
-# item 4); it reads through the secrets broker, whose account reads `SDS / Lane Apps`. The
-# landing-ledger, pin-watcher, unit-verifier, membership-check, deploy-watcher, change-proposer,
-# revision-watcher, work-carrier and bump-proposer lanes read it through the broker too (ADR-0055
+# item 4); it reads through the secrets broker. The landing-ledger, pin-watcher, unit-verifier,
+# membership-check, deploy-watcher, change-proposer, revision-watcher, work-carrier and
+# bump-proposer lanes read it through the broker too (ADR-0055
 # Amendment 32, item 4), and the rotation-proposer and bump-proposer lanes read the push App's key
 # through it. Their lane tokens were revoked and their token rows removed (Amendment 32, item 5.3).
 [[credential]]
@@ -1206,7 +1217,7 @@ rotation_preconditions = ["mint it with lanes-push-app-private-key in one sittin
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "314a966c-5654-4e3c-8358-b4fd01268775"
-  note = "the keeper, in SDS / Lane Apps; base64 of the PEM"
+  note = "the keeper, in Rotation / Keepers; base64 of the PEM; the broker reads it by a direct grant"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -1309,7 +1320,7 @@ rotation_preconditions = ["mint it with lanes-read-app-private-key in one sittin
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
-  note = "the keeper, in SDS / Lane Apps; base64 of the PEM"
+  note = "the keeper, in Rotation / Keepers; base64 of the PEM; the broker reads it by a direct grant"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
