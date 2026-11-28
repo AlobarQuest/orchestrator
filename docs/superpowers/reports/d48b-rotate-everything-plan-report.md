@@ -5,6 +5,8 @@ Outcome: done
 Handoff: sds-hq `state/handoffs/d48b-rotate-everything-plan.md`. Branch
 `hq/d48b-rotate-everything-plan`, based on `bd3fb190`. Docs only.
 
+Pull request: https://github.com/AlobarQuest/orchestrator/pull/832 (open, not merged).
+
 ## What I built
 
 - **ADR-0055 amendment 38 (Proposed)**, appended to
