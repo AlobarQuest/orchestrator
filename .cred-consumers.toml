@@ -292,6 +292,7 @@ bws_uuid = "bd71bed1-4aac-4af8-9094-b4970180bc59"
 created = "2026-07-30"
 disposition = "reissue"
 rotated_by_sds = true
+rotate_requested = "2026-11-28"
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -336,6 +337,7 @@ disposition = "reissue"
 # value sha256 6640e02a, hosted with no overlap because the drift-reporter entry held the old value.
 # Request cleared.
 rotated_by_sds = true
+rotate_requested = "2026-11-28"
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -446,7 +448,7 @@ disposition = "reissue"
 # Handed to the rotation executor 2026-10-21 (intent-packages rotation-orchestrator-drift-reporter-bearer
 # rev 1, approved by Devon 2026-10-21, after the observer's mint completed).
 rotated_by_sds = true
-rotate_requested = "2026-10-21"
+rotate_requested = "2026-11-28"
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -542,6 +544,7 @@ bws_uuid = "d2a4c0fc-128b-4bf5-8e25-b481010e1be0"
 created = "2026-07-08"
 disposition = "reissue"
 rotated_by_sds = true
+rotate_requested = "2026-11-28"
 
   [[credential.consumer]]
   kind = "bws-secret"
