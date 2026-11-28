@@ -151,7 +151,15 @@ def check_unit(
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
-    rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
+    credential_class = entry.credential.get("class")
+    rotation = Rotation(
+        credential_id,
+        occurrence,
+        keeper,
+        work_project_id,
+        tuple(packaged),
+        credential_class if isinstance(credential_class, str) else None,
+    )
     _check_issue_fact(adapter, plan, rotation, store)
     return Approved(adapter, plan, unit, rotation, entry, reads, without_overlap)
 

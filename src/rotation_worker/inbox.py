@@ -48,7 +48,7 @@ from rotation_worker.envelope import ADAPTER_KEY, is_rotation_unit
 from rotation_worker.envelope import constraints as envelope_constraints
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.plans import person_acts_beside
-from rotation_worker.secret_store import SecretStore
+from rotation_worker.secret_store import SecretStore, read_as
 from rotation_worker.values import Value, scrub
 
 LOG = logging.getLogger("rotation_worker")
@@ -189,7 +189,7 @@ def bind(
         refusal = _waiting_refusal(new, provider, others_waiting, others_declare)
         if refusal is not None:
             return refusal
-    old = store.read(rotation.keeper_id)
+    old = read_as(store, rotation.credential_class, rotation.keeper_id)
     if new.same_as(old):
         return "it is the value the keeper already holds"
     refusal = _identity_refusal(new, old, provider)

@@ -39,9 +39,10 @@ from rotation_worker.adapters import ADAPTERS, github_app_key
 from rotation_worker.contract import ContractError, Provider, Rotation, ScopeChecked, UnitRun
 from rotation_worker.inbox import ConfirmsIdentity, NamesItsCredential, bind
 from rotation_worker.plans import derive
+from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 from rotation_worker.values import Value
-from tests.rotation_worker.stores import MemoryStore
+from tests.rotation_worker.stores import MemoryStore, PastedStore
 from tests.rotation_worker.test_inbox import Provides
 
 WORK = "work-project"
@@ -181,9 +182,15 @@ class GitHub:
 class Rotating:
     """One rotation of the read App's key, with the old key in its keeper."""
 
-    def __init__(self, github: GitHub, old: str, row: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        github: GitHub,
+        old: str,
+        row: dict[str, Any] | None = None,
+        store: MemoryStore | None = None,
+    ) -> None:
         self.github = github
-        self.store = MemoryStore()
+        self.store = store or MemoryStore()
         self.keeper = self.store.put(WORK, "lanes-read-app-private-key", _stored(old))
         self.rotation = Rotation(
             "lanes-read-app-private-key",
@@ -191,6 +198,7 @@ class Rotating:
             self.keeper,
             WORK,
             (f'bws-secret uuid="{self.keeper}"', 'provider name="github"'),
+            github_app_key.CLASS,
         )
         self.provider = github_app_key.build_provider(
             rotation=self.rotation,
@@ -617,3 +625,109 @@ def test_the_worker_s_revoke_alert_names_the_key_pair_or_says_it_can_t() -> None
     assert "The key to keep can't be named: no such secret." in fallback
     plain = cast(Provider, Provides([]))
     assert worker._revoke_guide(setup, plain, rotating.rotation, "u1") == worker._REVOKE_GUIDE
+
+
+# ---- a console paste's padding (amendment 35 exit check 2) ------------------------------------
+
+
+def _padded(github: GitHub) -> tuple[Rotating, PastedStore, str, str]:
+    """A rotation whose keeper holds the old key as a console paste stores it: a trailing newline,
+    which `read` refuses and `read_key` strips."""
+    old, new = github.issue(), github.issue()
+    store = PastedStore()
+    rotating = Rotating(github, old, store=store)
+    store.paste(rotating.keeper, _stored(old).reveal() + "\n")
+    rotating.stage(_stored(new))
+    return rotating, store, old, new
+
+
+def test_a_rotation_reads_a_padded_keeper_and_stores_the_new_key_unpadded() -> None:
+    rotating, store, old, new = _padded(GitHub())
+    rotating.run("store")
+    quarantine = store.find(WORK, rotating.rotation.quarantine_key)
+    assert quarantine is not None and store.read(quarantine.id).same_as(_stored(old))
+    # The keeper was written with the new key's `Value`, which holds no surrounding whitespace.
+    assert rotating.keeper not in store.pasted
+    assert store.read(rotating.keeper).same_as(_stored(new))
+    rotating.run("verify")
+    rotating.github.delete(old)
+    rotating.run("confirm")
+    assert store.secrets.keys() == {rotating.keeper}
+
+
+def test_a_padded_keeper_equals_its_key_quarantined_stripped_by_an_earlier_attempt() -> None:
+    rotating, store, old, new = _padded(GitHub())
+    store.put(WORK, rotating.rotation.quarantine_key, _stored(old))
+    rotating.run("store")
+    assert store.read(rotating.keeper).same_as(_stored(new))
+
+
+def test_the_inbox_reads_a_padded_keeper_and_knows_the_key_it_holds() -> None:
+    rotating, store, old, new = _padded(GitHub())
+    _unstage(rotating)
+
+    def bound(value: Value) -> str | None:
+        return bind(
+            value,
+            rotation=rotating.rotation,
+            store=store,
+            provider=cast(Provider, rotating.provider),
+            others_waiting=[],
+            other_keepers=list,
+        )
+
+    assert bound(_stored(old)) == "it is the value the keeper already holds"
+    assert bound(_stored(new)) is None
+
+
+def test_the_worker_s_revoke_alert_reads_a_padded_keeper() -> None:
+    rotating, store, old, _ = _padded(GitHub())
+    setup = cast(worker.Setup, SimpleNamespace(store=store))
+    guide = worker._revoke_guide(setup, cast(Provider, rotating.provider), rotating.rotation, "u1")
+    assert guide == rotating.provider.revoke_guide(_stored(old))
+
+
+def test_other_keepers_read_a_padded_app_key_and_still_refuse_a_padded_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A fine-grained PAT shares the `github` provider, so a GitHub rotation reads both classes.
+    store = PastedStore()
+    key = _stored(_pem(1))
+    twin = store.put(WORK, "twin", key)
+    store.paste(twin, key.reveal() + "\n")
+    token = store.put(WORK, "pat", Value("pat-placeholder"))
+    store.paste(token, "pat-placeholder\n")
+    app_row = {"id": "twin", "class": github_app_key.CLASS, "bws_uuid": twin}
+    pat_row = {"id": "pat", "class": "github-pat-fine-grained", "bws_uuid": token}
+    entries: list[RegistryEntry] = []
+    monkeypatch.setattr(worker, "provider_entries", lambda _mirror, _provider: entries)
+    setup = cast(worker.Setup, SimpleNamespace(store=store, mirror=None))
+    approved = cast(
+        worker.Approved,
+        SimpleNamespace(
+            adapter=ADAPTERS[github_app_key.NAME],
+            rotation=SimpleNamespace(credential_id="lanes-read-app-private-key"),
+        ),
+    )
+    entries[:] = [RegistryEntry("o/r", "c", {**app_row, "rotated_by_sds": True})]
+    assert worker._other_keepers(setup, approved) == [("twin", key)]
+    entries[:] = [RegistryEntry("o/r", "c", {**pat_row, "rotated_by_sds": True})]
+    with pytest.raises(ValueError, match="no surrounding whitespace"):
+        worker._other_keepers(setup, approved)
+
+
+def test_a_padded_keeper_of_another_class_is_still_refused() -> None:
+    store = PastedStore()
+    keeper = store.put(WORK, "a-lane-token", Value("lane-token-placeholder"))
+    store.paste(keeper, "lane-token-placeholder\n")
+    rotation = Rotation("a-lane", "2026-11-28-requested", keeper, WORK, (), "bws-lane-token")
+    run = UnitRun(
+        rotation=rotation,
+        store=store,
+        provider=cast(Provider, Provides([])),
+        attestations=(),
+        record=lambda _step, _evidence: None,
+        before_step=lambda: None,
+    )
+    with pytest.raises(ValueError, match="no surrounding whitespace"):
+        run.old()

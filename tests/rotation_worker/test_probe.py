@@ -27,7 +27,7 @@ from rotation_worker.registry import REGISTRY_PATH, REGISTRY_REPOSITORIES
 from rotation_worker.secret_store import StoredSecret, StoreError
 from rotation_worker.values import Value
 from tests.rotation_worker.conftest import Origins
-from tests.rotation_worker.stores import MemoryStore
+from tests.rotation_worker.stores import MemoryStore, PastedStore
 from tests.rotation_worker.test_anthropic_key import WORKSPACE, Anthropic, _key, _sent
 from tests.rotation_worker.test_github_app_key import (
     APP,
@@ -595,3 +595,45 @@ def test_the_entry_point_runs_the_probe_with_the_configured_store(
     (line,) = capsys.readouterr().out.splitlines()
     assert json.loads(line)["key_x_api_key"]["status"] == 200
     assert len(anthropic.requests) == 4
+
+
+# ---- a console paste's padding (amendment 35 exit check 2) ------------------------------------
+
+
+@pytest.fixture
+def pasted(monkeypatch: pytest.MonkeyPatch) -> PastedStore:
+    held = PastedStore()
+    monkeypatch.setattr(cli, "open_store", lambda config: held)
+    return held
+
+
+def _paste(store: PastedStore, value: Value) -> None:
+    """Keep `value` as a console paste stores it: with a trailing newline."""
+    _keep(store, value)
+    store.paste(KEEPER, value.reveal() + "\n")
+
+
+def test_a_padded_app_key_keeper_is_read_stripped_and_proved(
+    tmp_path: Path, origins: Origins, mirror: RepoMirror, pasted: PastedStore, answers: list[Any]
+) -> None:
+    github = GitHub()
+    _paste(pasted, _stored(github.issue()))
+    _registry(origins, GITHUB_ROW)
+    code, _, [line] = _probe(tmp_path, mirror, GITHUB_ID, github.handle, answers)
+    assert (code, line["status"], line["passed"]) == (0, "ok", True)
+
+
+def test_a_padded_keeper_of_another_class_is_still_not_readable(
+    tmp_path: Path,
+    origins: Origins,
+    mirror: RepoMirror,
+    pasted: PastedStore,
+    capsys: pytest.CaptureFixture[str],
+    answers: list[Any],
+) -> None:
+    anthropic = Anthropic()
+    _paste(pasted, Value(anthropic.issue()))
+    _registry(origins, ANTHROPIC_ROW)
+    code, text, _ = _probe(tmp_path, mirror, ANTHROPIC_ID, anthropic.handle, answers)
+    assert (code, text, anthropic.requests) == (2, "", [])
+    assert f"{ANTHROPIC_ID}'s keeper is not readable by this identity" in capsys.readouterr().err

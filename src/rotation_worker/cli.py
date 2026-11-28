@@ -90,7 +90,13 @@ from rotation_worker.registry import (
     find_credential,
     latest_package_destinations,
 )
-from rotation_worker.secret_store import BwsStore, KeychainStore, SecretStore, StoreError
+from rotation_worker.secret_store import (
+    BwsStore,
+    KeychainStore,
+    SecretStore,
+    StoreError,
+    read_as,
+)
 from rotation_worker.values import Value, scrub
 from rotation_worker.worker import SOURCE_PREFIX, Setup, consumer_reads, run_pass
 
@@ -221,7 +227,8 @@ def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int
     if keeper is None:
         print("read-consumers: the keeper isn't kept where this executor reads", file=sys.stderr)
         return EXIT_UNREADABLE
-    consumers = consumer_reads(setup, reads, keeper)
+    credential_class = entry.credential.get("class")
+    consumers = consumer_reads(setup, reads, keeper, str(credential_class))
     unreadable = 0
     for destination in sorted(reads):
         try:
@@ -526,7 +533,7 @@ def probe(config: Config, credential_id: str, mirror: RepoMirror, out: TextIO) -
         keeper_id = store.locate(keeper)
         if keeper_id is None:
             raise StoreError("the keeper isn't kept in this instance's store")
-        key = store.read(keeper_id)
+        key = read_as(store, str(credential_class), keeper_id)
     except Exception:
         # The store's own identity is the only one read through; whatever it can't read, the
         # cause stays unnamed, because a value read in this process might stand in its message.

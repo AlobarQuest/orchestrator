@@ -54,7 +54,7 @@ from typing import Any, Final, Literal, Protocol, runtime_checkable
 
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.evidence import ProbeAnswer, State, StepEvidence, Subject, Which
-from rotation_worker.secret_store import SecretStore, StoredSecret
+from rotation_worker.secret_store import SecretStore, StoredSecret, read_as
 from rotation_worker.values import Fingerprint, Value
 
 LIVE_STATUS: Final = 200
@@ -402,6 +402,8 @@ class Rotation:
     keeper_id: str
     work_project_id: str
     destinations: tuple[str, ...]
+    # The registry row's `class`, which decides how its secrets are read (`read_as`).
+    credential_class: str | None = None
 
     @property
     def staging_key(self) -> str:
@@ -502,6 +504,10 @@ class UnitRun:
                 f"{failure}; discarding the minted key failed too ({error}), so a key may be left"
             ) from failure
 
+    def read(self, secret_id: str) -> Value:
+        """One of this rotation's secrets, read as its class's values are."""
+        return read_as(self.store, self.rotation.credential_class, secret_id)
+
     def staged(self) -> StoredSecret | None:
         return self.store.find(self.rotation.work_project_id, self.rotation.staging_key)
 
@@ -515,14 +521,14 @@ class UnitRun:
             return Value(EMPTY)
         quarantine = self.quarantined()
         if quarantine is not None:
-            return self.store.read(quarantine.id)
-        return self.store.read(self.rotation.keeper_id)
+            return self.read(quarantine.id)
+        return self.read(self.rotation.keeper_id)
 
     def new(self) -> Value:
         staging = self.staged()
         if staging is None:
             raise ContractError("no staged value: the new value exists nowhere")
-        return self.store.read(staging.id)
+        return self.read(staging.id)
 
     def new_and_old(self) -> tuple[Value, Value]:
         new, old = self.new(), self.old()
@@ -623,7 +629,7 @@ class UnitRun:
             return self.provider.consumer_loaded(consumer, new)
         secret_id = self.store.locate(consumer)
         if secret_id is not None:
-            return self.store.read(secret_id).same_as(new)
+            return self.read(secret_id).same_as(new)
         raise ContractError(f"no way to verify a {kind} consumer")
 
 
@@ -703,7 +709,7 @@ def _store(run: UnitRun, step: Step) -> None:
         _store_issue(run, step)
         return
     new = run.new()
-    keeper = run.store.read(run.rotation.keeper_id)
+    keeper = run.read(run.rotation.keeper_id)
     quarantine = run.quarantined()
     if quarantine is None:
         if keeper.same_as(new):
@@ -711,14 +717,14 @@ def _store(run: UnitRun, step: Step) -> None:
         run.store.create(run.rotation.work_project_id, run.rotation.quarantine_key, keeper)
         old = keeper
     else:
-        old = run.store.read(quarantine.id)
+        old = run.read(quarantine.id)
         if not keeper.same_as(new) and not keeper.same_as(old):
             raise ContractError("the keeper holds neither the old value nor the new one")
     if new.same_as(old):
         raise ContractError("the new value's fingerprint equals the old one's")
     if not keeper.same_as(new):
         run.store.write(run.rotation.keeper_id, new)
-    if not run.store.read(run.rotation.keeper_id).same_as(new):
+    if not run.read(run.rotation.keeper_id).same_as(new):
         raise ContractError("the keeper doesn't read back the new value")
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old)))
 
@@ -730,7 +736,7 @@ def _store_issue(run: UnitRun, step: Step) -> None:
     is a state no step could have left, so the unit fails rather than guess.
     """
     new, old = run.new_and_old()
-    keeper = run.store.read(run.rotation.keeper_id)
+    keeper = run.read(run.rotation.keeper_id)
     note = None
     if keeper.same_as(new):
         note = "the keeper already held the staged value: an earlier attempt stored it"
@@ -738,7 +744,7 @@ def _store_issue(run: UnitRun, step: Step) -> None:
         run.store.write(run.rotation.keeper_id, new)
     else:
         raise ContractError("the keeper holds neither the marker nor the staged value")
-    if not run.store.read(run.rotation.keeper_id).same_as(new):
+    if not run.read(run.rotation.keeper_id).same_as(new):
         raise ContractError("the keeper doesn't read back the new value")
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
@@ -868,11 +874,11 @@ def _confirm_dead(run: UnitRun, step: Step) -> None:
     # the keeper already holds the new value, so after a crash between the two deletions the next
     # attempt still has the quarantine to prove death with.
     new = (
-        run.store.read(staging.id)
+        run.read(staging.id)
         if staging is not None
-        else run.store.read(run.rotation.keeper_id)
+        else run.read(run.rotation.keeper_id)
     )
-    old = run.store.read(quarantine.id)
+    old = run.read(quarantine.id)
     if new.same_as(old):
         raise ContractError("the new value's fingerprint equals the old one's")
     probes = run.probe(old, "old", "dead") + run.probe(new, "new", "live")

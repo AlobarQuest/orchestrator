@@ -52,14 +52,14 @@ from estate_clients.github_app_mint import (
 )
 from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.plans import derive
-from rotation_worker.secret_store import SecretStore
+from rotation_worker.secret_store import KEY_CLASS, SecretStore
 from rotation_worker.types import TYPES
 from rotation_worker.values import Value
 
 NAME: Final = "github-app-key"
 # The rows' `provider`: every registry row of this type names it.
 PROVIDER: Final = "github"
-CLASS: Final = "github-app-private-key"
+CLASS: Final = KEY_CLASS
 API: Final = "https://api.github.com"
 USER_AGENT: Final = "rotation-worker/1 (+AlobarQuest/orchestrator)"
 HEADERS: Final = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -213,7 +213,7 @@ def build_provider(
         # The value the new one replaces, read as the contract reads it for a rotation: the
         # quarantine once store has moved it there, the keeper before.
         quarantine = store.find(rotation.work_project_id, rotation.quarantine_key)
-        return store.read(quarantine.id if quarantine is not None else rotation.keeper_id)
+        return store.read_key(quarantine.id if quarantine is not None else rotation.keeper_id)
 
     return GitHubAppKeyProvider(
         confined_client(proof, transport),

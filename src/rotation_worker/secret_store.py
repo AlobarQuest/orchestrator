@@ -41,6 +41,12 @@ TRANSIENT = re.compile(r"\[(?:429|5\d\d) ")
 RETRY_DELAYS: tuple[float, ...] = (5.0, 20.0, 60.0, 90.0)
 
 
+# The registry class whose value is a multi-line private key, which a console paste stores with
+# surrounding whitespace. Its secrets are read with `read_key`; every other class keeps `read`,
+# which refuses a padded value.
+KEY_CLASS: Final = "github-app-private-key"
+
+
 class StoreError(RuntimeError):
     """BWS refused or could not be reached. The message never carries a value."""
 
@@ -78,6 +84,13 @@ class SecretStore(Protocol):
     def write(self, secret_id: str, value: Value) -> None: ...
 
     def delete(self, secret_id: str) -> None: ...
+
+
+def read_as(store: SecretStore, credential_class: str | None, secret_id: str) -> Value:
+    """A secret holding a value of `credential_class`: stripped for an App key, else as stored."""
+    if credential_class == KEY_CLASS:
+        return store.read_key(secret_id)
+    return store.read(secret_id)
 
 
 class BwsStore:
